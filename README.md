@@ -13,9 +13,9 @@ Lightweight runtime server for Karpfen models with an HTTP API and WebSocket sup
 
 ## DSL Tool Guides
 
-- [KMeta Grammar Guide](karpfen-dsl-tools/guides/kmeta_grammar_guide.md)
-- [KModel Grammar Guide](karpfen-dsl-tools/guides/kmodel_grammar_guide.md)
-- [KStates Grammar Guide](karpfen-dsl-tools/guides/kstates_grammar_guide.md)
+- [KMeta Grammar Guide](https://github.com/karpfenproject/karpfen-dsl-tools/blob/main/guides/kmeta_grammar_guide.md)
+- [KModel Grammar Guide](https://github.com/karpfenproject/karpfen-dsl-tools/blob/main/guides/kmodel_grammar_guide.md)
+- [KStates Grammar Guide](https://github.com/karpfenproject/karpfen-dsl-tools/blob/main/guides/kstates_grammar_guide.md)
 
 ## Build
 
