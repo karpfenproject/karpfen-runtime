@@ -120,46 +120,6 @@ ws.onmessage = (event) => {
 curl -X POST "http://localhost:8080/stopEnvironment?envKey=env-123"
 ```
 
-## 🔍 Architecture Overview
-
-```
-Client (HTTP/WebSocket)
-    ↓
-KtorServer (Netty)
-    ├→ HTTPRoutes ← APIService (Business Logic)
-    └→ WebSocket Handler
-        ├→ Authenticate client
-        ├→ Parse & validate message
-        └→ Queue to EnvironmentThread
-
-EnvironmentThread
-    ├→ Poll event queue
-    ├→ Execute engine
-    └→ Trigger callbacks
-
-ClientSessionManager
-    ├→ Track subscriptions
-    └→ Queue notifications
-
-WebSocketBroadcaster
-    ├→ Poll outgoing queue
-    └→ Send to clients
-```
-
-## 🔐 Security Notes
-
-Current implementation includes:
-- Access key-based client authentication
-- Thread-safe concurrent access
-- No data persistence (runtime-only)
-
-For production, consider adding:
-- HTTPS/WSS encryption
-- Advanced authentication (OAuth2/JWT)
-- Rate limiting
-- Input validation
-- Audit logging
-
 ## 📊 Technical Stack
 
 - **Language**: Kotlin
@@ -188,14 +148,6 @@ server {
 1. Verify server running: `curl http://localhost:8080/health`
 2. Check URL format: `ws://localhost:8080/ws`
 3. First message must be: `clientId:envKey:accessKey`
-
-## 📞 Support
-
-For help:
-1. **Setup**: See [GETTING_STARTED.md](GETTING_STARTED.md)
-2. **API**: See [HTTP_API_ENDPOINTS.md](HTTP_API_ENDPOINTS.md)
-3. **Navigation**: See [INDEX.md](INDEX.md)
-4. **Examples**: See test files in `src/test/kotlin`
 
 ---
 
