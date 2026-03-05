@@ -401,10 +401,3 @@ curl -X POST http://localhost:8080/createEnvironment
 2. Verify client is subscribed to correct domain/object
 3. Check that execution engine is processing events (look at console output)
 
-## Next Steps
-
-- Review [HTTP_API_ENDPOINTS.md](HTTP_API_ENDPOINTS.md) for detailed endpoint documentation
-- Add custom domain listeners for your specific event types
-- Extend `APIService` with additional business logic
-- Modify `application.conf` for your deployment environment
-
