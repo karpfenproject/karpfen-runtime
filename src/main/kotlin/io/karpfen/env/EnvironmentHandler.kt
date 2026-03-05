@@ -15,10 +15,16 @@
  */
 package io.karpfen.env
 
+import io.karpfen.websocket.ClientSessionManager
+
 object EnvironmentHandler {
 
     val envs = mutableMapOf<String, Environment>()
     val activeEnvs = mutableMapOf<String, Environment>()
+
+    val executionThreads = mutableMapOf<String, EnvironmentThread>()
+
+    val clientSessionManager = ClientSessionManager()
 
     fun createEnv(key: String): Environment {
         val env = Environment(key)
@@ -30,11 +36,39 @@ object EnvironmentHandler {
         return envs[key]
     }
 
-    fun activeEnv(key: String): Environment {
-        throw NotImplementedError("Active environment handling is not implemented yet")
+    fun activeEnv(key: String): Unit {
+        val env = envs[key] ?: throw IllegalArgumentException("Environment with key '$key' does not exist.")
+        activeEnvs[key] = env
+        val envThread = EnvironmentThread(env)
+        envThread.setup()
+        executionThreads[key] = envThread
     }
 
     fun isActiveEnv(key: String): Boolean {
         return activeEnvs.containsKey(key)
+    }
+
+    fun registerClientSession(clientId: String, envKey: String): String {
+        if (envs[envKey] == null) {
+            throw IllegalArgumentException("Environment with key '$envKey' does not exist.")
+        }
+        return clientSessionManager.registerClientAccess(clientId, envKey)
+    }
+
+    fun startEnvironmentThread(envKey: String) {
+        val envThread = executionThreads[envKey]
+            ?: throw IllegalStateException("Environment with key '$envKey' has no execution thread")
+        val thread = Thread(envThread, "EnvironmentThread-$envKey")
+        thread.isDaemon = false
+        thread.start()
+        println("[EnvironmentHandler] Started execution thread for environment $envKey")
+    }
+
+    fun stopEnvironmentThread(envKey: String) {
+        val envThread = executionThreads[envKey]
+            ?: throw IllegalStateException("Environment with key '$envKey' has no execution thread")
+        envThread.stop()
+        clientSessionManager.closeEnvironmentSessions(envKey)
+        println("[EnvironmentHandler] Stopped execution thread for environment $envKey")
     }
 }

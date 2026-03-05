@@ -35,6 +35,13 @@ object APIService {
         }
     }
 
+    private fun assertActiveEnv(envKey: String): Boolean {
+        if (EnvironmentHandler.getEnv(envKey) == null) {
+            throw IllegalArgumentException("Environment with key $envKey does not exist")
+        }
+        return EnvironmentHandler.isActiveEnv(envKey)
+    }
+
     fun createEnvironment(): String {
         val envKey = "env-${System.currentTimeMillis()}"
         EnvironmentHandler.createEnv(envKey)
@@ -74,7 +81,33 @@ object APIService {
     fun addDomainListener(envKey: String, clientId: String, domain: String) {
         assertEnv(envKey)
         EnvironmentHandler.getEnv(envKey)!!.domainListeners.add(DomainListener(clientId, domain))
+    }
 
+    fun runEnvironment(envKey: String) {
+        val env = EnvironmentHandler.getEnv(envKey) ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        if (env.model == null || env.metamodel == null) {
+            throw IllegalStateException("Environment with key $envKey must have both a metamodel and a model before it can be run")
+        }
+        EnvironmentHandler.activeEnv(envKey)
+    }
+
+    fun startEnvironment(envKey: String) {
+        assertActiveEnv(envKey)
+        EnvironmentHandler.startEnvironmentThread(envKey)
+    }
+
+    fun stopEnvironment(envKey: String) {
+        assertActiveEnv(envKey)
+        EnvironmentHandler.stopEnvironmentThread(envKey)
+    }
+
+    fun registerClientForWebSocket(clientId: String, envKey: String): String {
+        if (EnvironmentHandler.getEnv(envKey) == null) {
+            throw IllegalArgumentException("Environment with key $envKey does not exist")
+        }
+        val accessKey = EnvironmentHandler.registerClientSession(clientId, envKey)
+        println("[APIService] Client $clientId registered for environment $envKey with accessKey $accessKey")
+        return accessKey
     }
 
 }

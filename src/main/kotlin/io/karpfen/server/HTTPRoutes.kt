@@ -119,6 +119,41 @@ object HTTPRoutes {
                 }
             }
 
+            post("/registerClientForWebSocket") {
+                try {
+                    val clientId = call.request.queryParameters["clientId"]
+                        ?: throw IllegalArgumentException("Missing required parameter: clientId")
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val accessKey = APIService.registerClientForWebSocket(clientId, envKey)
+                    call.respond(HttpStatusCode.OK, accessKey)
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            post("/startEnvironment") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    APIService.startEnvironment(envKey)
+                    call.respond(HttpStatusCode.OK, "")
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            post("/stopEnvironment") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    APIService.stopEnvironment(envKey)
+                    call.respond(HttpStatusCode.OK, "")
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
             }

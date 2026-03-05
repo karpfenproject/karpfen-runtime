@@ -15,10 +15,10 @@
  */
 import io.karpfen.config.ApplicationConfig
 import io.karpfen.server.KtorServer
-import io.karpfen.websocket.WebSocketManager
+import io.karpfen.env.EnvironmentHandler
+import io.karpfen.websocket.WebSocketBroadcaster
 
 fun main() {
-    // Load configuration from file
     val config = ApplicationConfig.loadFromFile("application.conf")
 
     println("[Main] Configuration loaded:")
@@ -26,49 +26,24 @@ fun main() {
     println("[Main]   WebSocket enabled: ${config.websocket.enabled}")
     println("[Main]   Log level: ${config.logging.level}")
 
-    // Initialize components
-    val webSocketManager = WebSocketManager()
+    val sessionManager = EnvironmentHandler.clientSessionManager
     val server = KtorServer(
         port = config.server.port,
         host = config.server.host,
-        webSocketManager = webSocketManager
+        sessionManager = sessionManager
     )
-
-    // Start WebSocket manager in its own thread (if enabled)
     if (config.websocket.enabled) {
-        webSocketManager.start()
+        val broadcaster = WebSocketBroadcaster(sessionManager)
+        broadcaster.start()
     }
-
-    // Start HTTP server
     server.start()
 
     println("[Main] Server is running. Press Ctrl+C to stop.")
 
-    // TODO: Use this thread later to control the execution engine
-    // nextMessage() is then only be called as a get next event callback from the execution engine, not in a loop like this
-    Thread {
-        try {
-            while (true) {
-                val message = webSocketManager.nextMessage(timeoutMs = config.websocket.queueTimeoutMs)
-                if (message != null) {
-                    println("[Main] Processing message from queue: env=${message.environmentKey}, type=${message.messageType}")
-                    // TODO: Process message accordingly
-                }
-            }
-        } catch (e: Exception) {
-            println("[Main] Error processing queue: ${e.message}")
-        }
-    }.apply {
-        isDaemon = true
-        start()
-    }
-
-    // Keep main thread alive
     Runtime.getRuntime().addShutdownHook(Thread {
         println("[Main] Shutting down...")
-        webSocketManager.stop()
         server.stop()
     })
-
     Thread.sleep(Long.MAX_VALUE)
 }
+

@@ -44,8 +44,6 @@ class WebSocketManager {
         isRunning = true
         webSocketThread = Thread({
             println("[WebSocketManager] Started on thread: ${Thread.currentThread().name}")
-            // WebSocket server will be integrated with Ktor in KtorServer
-            // For now, this thread is ready to receive messages from Ktor
             while (isRunning) {
                 Thread.sleep(100) // Keep thread alive
             }

@@ -15,7 +15,9 @@
  */
 package io.karpfen.server
 
-import io.karpfen.websocket.WebSocketManager
+import io.karpfen.env.EnvironmentHandler
+import io.karpfen.io.karpfen.messages.Event
+import io.karpfen.websocket.ClientSessionManager
 import io.karpfen.websocket.WebSocketMessage
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
@@ -31,7 +33,7 @@ import java.time.Duration
 class KtorServer(
     private val port: Int = 8080,
     private val host: String = "127.0.0.1",
-    private val webSocketManager: WebSocketManager
+    private val sessionManager: ClientSessionManager = EnvironmentHandler.clientSessionManager
 ) {
     private var engine: ApplicationEngine? = null
 
@@ -52,18 +54,60 @@ class KtorServer(
 
         routing {
             webSocket("/ws") {
-                val remoteHost = call.request.headers["Host"] ?: "unknown"
-                println("[WebSocket] New connection from $remoteHost")
+                var authenticatedEnvKey: String? = null
+                var authenticatedAccessKey: String? = null
+
                 try {
+                    // Expect first message to contain authentication (clientId:envKey:accessKey)
+                    val firstFrame = incoming.receive()
+                    if (firstFrame !is Frame.Text) {
+                        println("[WebSocket] Invalid first frame")
+                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "First message must be text"))
+                        return@webSocket
+                    }
+
+                    val authMessage = firstFrame.readText()
+                    val parts = authMessage.split(":")
+                    if (parts.size != 3) {
+                        println("[WebSocket] Invalid auth format. Expected clientId:envKey:accessKey")
+                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Invalid auth format"))
+                        return@webSocket
+                    }
+
+                    val clientId = parts[0]
+                    val envKey = parts[1]
+                    val accessKey = parts[2]
+
+                    val attached = sessionManager.verifyAndAttachSession(clientId, envKey, accessKey, this)
+                    if (!attached) {
+                        println("[WebSocket] Authentication failed for client $clientId")
+                        close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Invalid credentials"))
+                        return@webSocket
+                    }
+
+                    authenticatedEnvKey = envKey
+                    authenticatedAccessKey = accessKey
+                    println("[WebSocket] Authenticated client $clientId for environment $envKey")
+
+                    // Process incoming messages
                     for (frame in incoming) {
                         if (frame is Frame.Text) {
                             val text = frame.readText()
-                            println("[WebSocket] Received: $text")
+                            println("[WebSocket] Received from $clientId: $text")
 
                             // Try to parse as WebSocketMessage
                             val message = WebSocketMessage.fromJson(text)
                             if (message != null) {
-                                webSocketManager.enqueueMessage(message)
+                                // Get the event queue for this environment
+                                val envThread = EnvironmentHandler.executionThreads[envKey]
+                                if (envThread != null) {
+                                    // Convert WebSocketMessage to Event
+                                    val event = Event(message.messageType, message.payload)
+                                    envThread.getEventQueue().offer(event)
+                                    println("[WebSocket] Queued event for environment $envKey")
+                                } else {
+                                    println("[WebSocket] No active environment thread for $envKey")
+                                }
                             } else {
                                 println("[WebSocket] Could not parse message: $text")
                             }
@@ -71,7 +115,11 @@ class KtorServer(
                     }
                 } catch (e: Exception) {
                     println("[WebSocket] Error: ${e.message}")
+                    e.printStackTrace()
                 } finally {
+                    if (authenticatedEnvKey != null && authenticatedAccessKey != null) {
+                        sessionManager.unregisterClientSession(authenticatedEnvKey!!, authenticatedAccessKey!!)
+                    }
                     println("[WebSocket] Connection closed")
                 }
             }
