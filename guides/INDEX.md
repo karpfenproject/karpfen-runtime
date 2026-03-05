@@ -28,17 +28,4 @@ Welcome to the Karpfen Runtime documentation.
 - Required parameters
 - Error model
 - HTTP and WebSocket examples
-
-## Quick Commands
-
-```bash
-./gradlew build
-./gradlew test
-./gradlew run
-```
-
-## Related DSL Guides
-
-- [KMeta Grammar Guide](../karpfen-dsl-tools/guides/kmeta_grammar_guide.md)
-- [KModel Grammar Guide](../karpfen-dsl-tools/guides/kmodel_grammar_guide.md)
-- [KStates Grammar Guide](../karpfen-dsl-tools/guides/kstates_grammar_guide.md)
+ 
