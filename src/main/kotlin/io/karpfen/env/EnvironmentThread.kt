@@ -18,39 +18,63 @@ package io.karpfen.env
 import io.karpfen.DataObservationListener
 import io.karpfen.Engine
 import io.karpfen.io.karpfen.messages.Event
-import io.karpfen.websocket.ClientSessionManager
+import io.karpfen.io.karpfen.messages.EventBus
 import java.util.concurrent.LinkedBlockingQueue
 
 class EnvironmentThread(val environment: Environment) : Runnable {
 
-    private val eventQueue = LinkedBlockingQueue<Event>()
+    /**
+     * One shared [EventBus] per environment so that all Engine instances within it
+     * exchange events via the same bus.
+     */
+    val sharedEventBus: EventBus = EventBus(
+        defaultTtlMs = environment.eventTtlMs
+    )
+
+    private val incomingExternalEvents = LinkedBlockingQueue<Event>()
     private var isRunning = false
 
     val engine = Engine(
         environment.metamodel!!,
         environment.model!!,
         environment.stateMachines,
-        environment.tickDelayMS
+        environment.tickDelayMS,
+        sharedEventBus
     )
 
     fun setup() {
         val clientSessionManager = EnvironmentHandler.clientSessionManager
 
-        // Register observation listeners for object changes
+        // Register a ModelChangePublisher that pushes JSON updates to subscribed WebSocket clients.
+        engine.modelQueryProcessor.addChangePublisher(ModelChangePublisher { objectId, jsonValue ->
+            clientSessionManager.notifyObjectChange(environment.key, objectId, jsonValue)
+        })
+
+        // Register DataObservation listeners (from the Environment configuration).
         for (observation in environment.objectObservations) {
-            engine.registerDataObservationListener(observation.observedObjectId, object : DataObservationListener {
-                override fun onChange(clientId: String, objectId: String) {
-                    // For now, just notify with empty value
-                    // TODO: Get the actual new value from the object
-                    clientSessionManager.notifyObjectChange(environment.key, objectId, "")
+            engine.registerDataObservationListener(
+                observation.observedObjectId,
+                object : DataObservationListener {
+                    override fun onChange(clientId: String, objectId: String) {
+                        // The ModelChangePublisher above already pushes the JSON value,
+                        // so nothing extra needed here.
+                    }
                 }
-            })
+            )
+        }
+
+        // Subscribe domain listeners so that events arriving on their domain are forwarded.
+        for (dl in environment.domainListeners) {
+            clientSessionManager.subscribeToDomain(environment.key, dl.clientId, dl.domain)
         }
 
         println("[EnvironmentThread] Setup complete for environment ${environment.key}")
     }
 
-    fun getEventQueue(): LinkedBlockingQueue<Event> = eventQueue
+    /** Accepts an externally produced Event and queues it for publication on the bus. */
+    fun acceptExternalEvent(event: Event) {
+        incomingExternalEvents.offer(event)
+    }
 
     fun stop() {
         isRunning = false
@@ -62,13 +86,13 @@ class EnvironmentThread(val environment: Environment) : Runnable {
 
         try {
             while (isRunning) {
-                // Poll for incoming events from WebSocket clients
-                val event = eventQueue.poll(1000, java.util.concurrent.TimeUnit.MILLISECONDS)
-                if (event != null) {
-                    println("[EnvironmentThread] Processing event from domain: ${event.domain}")
-                    // TODO: Forward event to the engine for processing
-                    // engine.processEvent(event)
+                // Drain all queued external events into the shared bus
+                val batch = mutableListOf<Event>()
+                incomingExternalEvents.drainTo(batch)
+                for (event in batch) {
+                    engine.receiveExternalEvent(event)
                 }
+                Thread.sleep(10)
             }
         } catch (e: InterruptedException) {
             println("[EnvironmentThread] Interrupted")
@@ -81,4 +105,3 @@ class EnvironmentThread(val environment: Environment) : Runnable {
         }
     }
 }
-
