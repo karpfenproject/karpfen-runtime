@@ -13,10 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.karpfen
+package io.karpfen.io.karpfen.exec
 
-interface Channel {
+import instance.DataObject
+import instance.Model
+import meta.Metamodel
 
-    fun push(clientId: String, message: String)
+class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
+
+    fun getDataObjectById(id: String): Any? {
+        //TODO find the data object with the given id in the model and return it
+        return null
+    }
+
+     fun getValueOfThing(startObjectId: String, argumentPath: List<String>): Any? {
+        return null
+    }
+
+    fun getValueOfThing(startObject: DataObject, argumentPath: List<String>): Any? {
+        return null
+    }
+
 
 }

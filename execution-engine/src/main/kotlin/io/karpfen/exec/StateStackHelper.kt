@@ -13,10 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.karpfen
+package io.karpfen.io.karpfen.exec
 
-interface Channel {
+object StateStackHelper {
 
-    fun push(clientId: String, message: String)
+    fun getChangedStackSequence(oldStack: List<String>, newStack: List<String>): List<String> {
+        //TODO find the sequence of states that need to be entered when changing from the old stack to the new stack
+        //  for example, if the old stack is [A, B, C, D] and the new stack is [A, B, E, F], then the changed stack sequence would be [E, F]
+        return listOf()
+    }
 
 }

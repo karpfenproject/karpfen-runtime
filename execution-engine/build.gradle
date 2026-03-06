@@ -11,6 +11,9 @@ repositories {
 
 dependencies {
     implementation project(':karpfen-dsl-tools')
+
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
+
     // Testing
     testImplementation 'org.jetbrains.kotlin:kotlin-test'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.9.3'
