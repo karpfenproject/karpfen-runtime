@@ -102,8 +102,13 @@ class KtorServer(
                                 val envThread = EnvironmentHandler.executionThreads[envKey]
                                 if (envThread != null) {
                                     // Convert WebSocketMessage to Event
-                                    val event = Event(message.messageType, message.payload)
-                                    envThread.getEventQueue().offer(event)
+                                    val event = Event(
+                                        domain = message.messageType,
+                                        name = message.messageType,
+                                        payload = message.payload,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                    envThread.acceptExternalEvent(event)
                                     println("[WebSocket] Queued event for environment $envKey")
                                 } else {
                                     println("[WebSocket] No active environment thread for $envKey")

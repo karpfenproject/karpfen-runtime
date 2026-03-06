@@ -89,6 +89,19 @@ object HTTPRoutes {
                 }
             }
 
+            post("/setEventTtl") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val ttlMs = call.request.queryParameters["ttlMs"]?.toLongOrNull()
+                        ?: throw IllegalArgumentException("Missing or invalid required parameter: ttlMs")
+                    APIService.updateEventTtl(envKey, ttlMs)
+                    call.respond(HttpStatusCode.OK, "")
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
             post("/registerObjectObserver") {
                 try {
                     val envKey = call.request.queryParameters["envKey"]

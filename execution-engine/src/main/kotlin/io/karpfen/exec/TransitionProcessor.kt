@@ -19,8 +19,10 @@ import instance.Model
 import meta.Metamodel
 import states.StateMachine
 import states.Transition
-import java.awt.EventQueue
-import java.util.concurrent.BlockingQueue
+import states.conditions.ConditionType
+import states.conditions.EvalCondition
+import states.conditions.EventCondition
+import states.conditions.ValueCondition
 
 class TransitionProcessor(
     val stateMachine: StateMachine,
@@ -31,13 +33,82 @@ class TransitionProcessor(
     val stateMachineQueryHelper: StateMachineQueryHelper,
     val modelQueryProcessor: ModelQueryProcessor,
     val eventProcessor: EventProcessor
-){
+) {
 
     val transitions = stateMachine.transitions
 
-    fun findFirstExecutableTransition(currentState: String, eventQueue: EventQueue): Transition? {
-        //TODO find the first transition that can be executed based on the current state of the model and the conditions of the transitions
+    /**
+     * Finds the first transition that can be executed from [currentState].
+     *
+     * Evaluation order per transition:
+     * 1. [ConditionType.EVENT]  – checks the [EventProcessor] (shared EventBus) for the event.
+     * 2. [ConditionType.EVAL]   – executes the inline macro code and expects a boolean result.
+     * 3. [ConditionType.VALUE]  – compares a model property value against a literal.
+     *
+     * When a matching transition is found for an EVENT condition the event is consumed
+     * (marked as processed by this engine) so that the same engine won't react to it twice.
+     *
+     * @param currentState The name of the active state.
+     * @return The first executable [Transition], or null if none applies.
+     */
+    fun findFirstExecutableTransition(currentState: String): Transition? {
+        val candidates = transitions.filter { t ->
+            t.fromState == currentState && (t.allowLoops || t.fromState != t.toState)
+        }
+
+        for (transition in candidates) {
+            val condition = transition.condition
+            val fires = when (condition.conditionType) {
+
+                ConditionType.EVENT -> {
+                    val ec = condition as EventCondition
+                    if (eventProcessor.hasEvent(ec.eventDomain, ec.eventValue)) {
+                        // Consume the event so we don't react to it a second time
+                        eventProcessor.consumeEvent(ec.eventDomain, ec.eventValue)
+                        true
+                    } else {
+                        false
+                    }
+                }
+
+                ConditionType.EVAL -> {
+                    val ec = condition as EvalCondition
+                    try {
+                        val result = macroProcessor.executeInlineMacro(ec.code, "boolean")
+                        result == true
+                    } catch (e: Exception) {
+                        System.err.println("[TransitionProcessor] EVAL condition failed: ${e.message}")
+                        false
+                    }
+                }
+
+                ConditionType.VALUE -> {
+                    val vc = condition as ValueCondition
+                    try {
+                        evaluateValueCondition(vc)
+                    } catch (e: Exception) {
+                        System.err.println("[TransitionProcessor] VALUE condition failed: ${e.message}")
+                        false
+                    }
+                }
+            }
+
+            if (fires) return transition
+        }
         return null
     }
 
+    /**
+     * Evaluates a [ValueCondition] by resolving the boolean variable path against the context
+     * model element. The path must resolve to a Boolean value.
+     */
+    private fun evaluateValueCondition(vc: ValueCondition): Boolean {
+        val context = modelQueryProcessor.getDataObjectById(stateMachineAttachedToModelElement)
+        val resolved = modelQueryProcessor.resolvePathFromObject(context, vc.boolVariable)
+        return when (resolved) {
+            is Boolean -> resolved
+            is String  -> resolved.lowercase() == "true"
+            else       -> false
+        }
+    }
 }

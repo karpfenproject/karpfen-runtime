@@ -16,33 +16,60 @@
 package io.karpfen
 
 import instance.Model
+import io.karpfen.io.karpfen.exec.EventProcessor
+import io.karpfen.io.karpfen.exec.ModelChangePublisher
+import io.karpfen.io.karpfen.exec.ModelQueryProcessor
 import io.karpfen.io.karpfen.messages.Event
-import kotlinx.coroutines.Runnable
+import io.karpfen.io.karpfen.messages.EventBus
+import io.karpfen.io.karpfen.messages.EventSource
 import meta.Metamodel
 import states.State
 import states.StateMachine
 import states.Transition
-import java.util.Queue
-import java.util.concurrent.BlockingQueue
-import java.util.concurrent.LinkedBlockingQueue
+import java.util.UUID
 import kotlin.concurrent.thread
 
 class Engine(
     val metamodel: Metamodel,
     val model: Model,
     val statemachineMap: Map<String, StateMachine>,
-    val tickDelayMS: Int
+    val tickDelayMS: Int,
+    /** Shared bus for all engines within one environment. Created externally so engines can share it. */
+    val eventBus: EventBus = EventBus(),
+    /** Stable unique id for this engine instance; used to track event processing. */
+    val engineId: String = UUID.randomUUID().toString()
 ) {
 
-    private val eventQueue: BlockingQueue<Event> = LinkedBlockingQueue()
     private val dataObservationListeners: MutableMap<String, MutableList<DataObservationListener>> = mutableMapOf()
     private var messageOutChannel: Channel? = null
 
     private var isRunning: Boolean = false
     private var executionThread: Thread? = null
 
-    fun getEventQueue(): Queue<Event> {
-        return eventQueue
+    /** Per-engine event processor that wraps the shared bus with this engine's identity. */
+    val eventProcessor = EventProcessor(engineId, eventBus)
+
+    /** Model query processor – access and update model data; also hosts change publishers. */
+    val modelQueryProcessor = ModelQueryProcessor(metamodel, model)
+
+    // ---- Legacy compatibility: forward to EventBus -----------------------
+
+    /**
+     * Accepts an event from an external source (e.g., WebSocket) and publishes it to the bus.
+     * The domain of the event determines the routing bucket.
+     */
+    fun receiveExternalEvent(event: Event) {
+        eventProcessor.publishExternalEvent(event)
+    }
+
+    /**
+     * Accepts an event from an external source using the legacy messageType-as-domain convention.
+     * Kept for backward compatibility with [io.karpfen.server.KtorServer].
+     *
+     * @param legacyEvent An Event whose [Event.name] is the event name and [Event.domain] the domain.
+     */
+    fun acceptLegacyEvent(legacyEvent: Event) {
+        eventProcessor.publishExternalEvent(legacyEvent)
     }
 
     fun setMessageOutChannel(channel: Channel) {
@@ -53,11 +80,21 @@ class Engine(
         val listeners = dataObservationListeners.getOrDefault(objectId, mutableListOf())
         listeners.add(listener)
         dataObservationListeners[objectId] = listeners
+
+        // Also register as a ModelChangePublisher so that engine-driven model updates
+        // are forwarded to the listener.
+        modelQueryProcessor.addChangePublisher(ModelChangePublisher { changedId, jsonValue ->
+            if (changedId == objectId) {
+                listener.onChange(objectId, changedId)
+            }
+        })
     }
 
     fun start() {
         if (!isRunning) {
             executionThread = thread(start = false) {
+
+                //TODO initialize all required helper classes here, e.g. transition processor, macro processor, query helper, etc.
 
                 val stateStack: MutableList<State> = mutableListOf()
                 val notEnteredSubstack: MutableList<State> = mutableListOf()
@@ -66,6 +103,9 @@ class Engine(
                 stateStack.addAll(listOf()) //TODO find initial state and its stack
 
                 while (isRunning) {
+                    // Purge expired events once per tick
+                    eventProcessor.purgeExpired()
+
                     if (nextTransition != null){
                         //0. set up the new state stack according to the transition's target state
                         nextTransition = null

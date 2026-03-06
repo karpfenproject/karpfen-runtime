@@ -25,6 +25,8 @@ data class Environment(
     var model: Model? = null,
     val stateMachines: MutableMap<String, StateMachine> = mutableMapOf(), // modelElement -> attached state machine
     var tickDelayMS: Int = 1000,
+    /** Time-to-live for events in milliseconds. 0 means events live forever. */
+    var eventTtlMs: Long = 0L,
     val objectObservations: MutableList<Observation> = mutableListOf(),
     val domainListeners: MutableList<DomainListener> = mutableListOf()
 )

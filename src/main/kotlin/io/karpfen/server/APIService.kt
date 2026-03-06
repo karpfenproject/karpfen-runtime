@@ -73,6 +73,11 @@ object APIService {
         EnvironmentHandler.getEnv(envKey)!!.tickDelayMS = tickDelayMS
     }
 
+    fun updateEventTtl(envKey: String, ttlMs: Long) {
+        assertEnv(envKey)
+        EnvironmentHandler.getEnv(envKey)!!.eventTtlMs = ttlMs
+    }
+
     fun addObjectObservation(envKey: String, clientId: String, objectId: String) {
         assertEnv(envKey)
         EnvironmentHandler.getEnv(envKey)!!.objectObservations.add(Observation(clientId, objectId))
