@@ -1,0 +1,209 @@
+STATEMACHINE ATTACHED TO "Robot" {
+
+    STATES {
+
+        INITIAL STATE "ready" { }
+
+        STATE "observe" {
+            ENTRY {
+                // Update the distances to the closest obstacle and wall, and the closest obstacle and wall themselves.
+                // This simulates the robot's sensors and perception system.
+                // In this example, the position of the obstacles are fixed and we assume the robot's position is perfectly known.
+
+                SET("closest_obstacle", MACRO("get_closest_obstacle", "boundingBox->position", "obstacles"))
+                SET("d_closest_obstacle", MACRO("circular_bounding_box_distance", "boundingBox", "closest_obstacle->boundingBox"))
+                SET("closest_wall", MACRO("get_closest_wall", "boundingBox->position", "walls"))
+                SET("d_closest_wall", MACRO("point_to_line_distance", "boundingBox->position", "closest_wall->p", "closest_wall->u_vec"))
+            }
+            STATE "react to obstacle" {
+                DO {
+                    APPEND("log", "Reacting to obstacle")
+                    EVENT("public", "oh nooo there is an obstacle")
+                    // Simple reactive behavior: just move in the opposite direction of the obstacle
+                    // with a little bit of randomness to avoid getting stuck.
+                    SET("direction", MACRO("opposite_direction_with_variance", "boundingBox->position", "closest_obstacle->boundingBox->position"))
+                }
+            }
+            STATE "react to wall" {
+                DO {
+                    APPEND("log", "Reacting to wall")
+                    EVENT("public", "oh nooo there is a wall")
+                    // Simple reactive behavior: just move in the opposite direction of the obstacle
+                    // with a little bit of randomness to avoid getting stuck.
+                    SET("direction", MACRO("opposite_direction_from_wall_with_variance", "boundingBox->position", "closest_wall->p", "closest_wall->u_vec"))
+                }
+            }
+        }
+        STATE "drive" {
+
+            STATE "drive fast" {
+                DO {
+                    APPEND("log", "Driving in save zone")
+                    // Drive fast (0.3 units per time step) in the direction the robot is facing.
+                    SET("x", EVAL { return $(boundingBox->position->x) + 0.3 * $(direction->x) } )
+                    SET("y", EVAL { return $(boundingBox->position->y) + 0.3 * $(direction->y) } )
+                }
+            }
+            STATE "drive slow" {
+                DO {
+                    APPEND("log", "Driving in risky zone")
+                    // Drive slow (0.1 units per time step) in the direction the robot is facing.
+                    SET("x", EVAL { return $(boundingBox->position->x) + 0.1 * $(direction->x) } )
+                    SET("y", EVAL { return $(boundingBox->position->y) + 0.1 * $(direction->y) } )
+                 }
+            }
+        }
+    }
+
+    TRANSITIONS { // The runtime will always execute the first valid transition in this list. Therefore, the ordering matters.
+        TRANSITION "ready" -> "observe" {
+            CONDITION {
+                EVENT("public", "start")
+            }
+        }
+        TRANSITION "observe" -> "react to obstacle" NOT LOOPING {
+            CONDITION {
+                EVAL { return $(d_closest_obstacle) < $(d_closest_wall) and $(d_closest_obstacle) < 0.25 }
+            }
+        }
+        TRANSITION "observe" -> "react to wall" NOT LOOPING {
+            CONDITION {
+                EVAL { return $(d_closest_wall) < $(d_closest_obstacle) and $(d_closest_wall) < 0.25 }
+            }
+        }
+        TRANSITION "observe" -> "drive" { }
+
+        TRANSITION "drive" -> "drive slow" NOT LOOPING {
+            CONDITION {
+                EVAL { return $(distance_closest_obstacle) < 1.0 or $(distance_closest_wall) < 1.0 }
+            }
+        }
+        TRANSITION "drive" -> "drive fast" NOT LOOPING {
+            CONDITION {
+                EVAL { return $(distance_closest_obstacle) >= 1.0 and $(distance_closest_wall) >= 1.0 }
+            }
+        }
+        TRANSITION "drive" -> "observe" { }
+    }
+
+    MACROS {
+        MACRO "circular_bounding_box_distance" {
+            TAKES("p1", "TwoDObject")
+            TAKES("p2", "TwoDObject")
+            RETURNS("number")
+            DEFINITION {
+                EVAL {
+                    import math
+                    distance = @point_to_point_distance($(p1->position), $(p2->position))
+                    distance = distance - $(p1->diameter) / 2 - $(2->diameter) / 2
+                    return distance
+                }
+            }
+        }
+        MACRO "point_to_point_distance" {
+            TAKES("p1", "Vector")
+            TAKES("p2", "Vector")
+            RETURNS("number")
+            DEFINITION {
+                EVAL {
+                    import math
+                    return math.sqrt(($point1->x - $point2->x) ** 2 + ($(point1->y) - $(point2->y)) ** 2)
+                }
+            }
+        }
+        MACRO "point_to_line_distance" {
+            TAKES("point", "Vector")
+            TAKES("line_point", "Vector")
+            TAKES("line_dir", "Vector")
+            RETURNS("number")
+            DEFINITION {
+                EVAL {
+                    import math
+                    import numpy as np
+                    q = np.array([$(point->x), $(point->y)])
+                    p = np.array([$(line_point->x), $(line_point->y)])
+                    u = np.array([$(line_dir->x), $(line_dir->y)])
+                    u = u / np.linalg.norm(u)
+                    distance = np.linalg.norm(np.cross(q - p, u))
+                }
+            }
+        }
+        MACRO "get_closest_obstacle" {
+            TAKES("robot_position", "Vector")
+            TAKES("obstacles", list("Obstacle"))
+            RETURNS(reference("Obstacle"))
+            DEFINITION {
+                EVAL {
+                    closest_distance = 100.0 # Start with a large number, much larger than any possible distance in the room
+                    closest_obstacle = None
+                    for obstacle in $(obstacles) :
+                        distance = @point_to_point_distance($(robot_position), $(obstacle->boundingBox->position))
+                        if distance < closest_distance :
+                            closest_distance = distance
+                            closest_obstacle = $(obstacle)
+                    return $(closest_obstacle)
+                }
+            }
+        }
+        MACRO "get_closest_wall" {
+            TAKES("robot_position", "Vector")
+            TAKES("walls", list("Wall"))
+            RETURNS(reference("Wall"))
+            DEFINITION {
+                EVAL {
+                    closest_distance = 100.0 # Start with a large number, much larger than any possible distance in the room
+                    closest_wall = None
+                    for wall in $(walls) :
+                        distance = @point_to_line_distance($(robot_position), $(wall->p), $(wall->u_vec))
+                        if distance < closest_distance :
+                            closest_distance = distance
+                            closest_wall = $(wall)
+                    return $(closest_wall)
+                }
+            }
+        }
+        MACRO "opposite_direction_with_variance" {
+            TAKES("point_robot", "Vector")
+            TAKES("point_obstacle", "Vector")
+            RETURNS("Vector")
+            DEFINITION {
+                EVAL {
+                    import random
+                    import math
+                    obstacle_x = $(point_obstacle->x) + random.uniform(-0.1, 0.1) # Add some randomness to the obstacle position to avoid getting stuck
+                    obstacle_y = $(point_obstacle->y) + random.uniform(-0.1, 0.1)
+                    x_facing_away_from_obstacle = $(point_robot->x) - obstacle_x
+                    y_facing_away_from_obstacle = $(point_robot->y) - obstacle_y
+
+                    # Normalize the vector to have a again length of 1
+                    length = math.sqrt(x_facing_away_from_obstacle ** 2 + y_facing_away_from_obstacle ** 2)
+                    x_new = x_facing_away_from_obstacle / length
+                    y_new = y_facing_away_from_obstacle / length
+
+                    return {"x": x_new, "y": y_new} # Return a dict which has the format of a Vector from our metamodel.
+                }
+            }
+        }
+        MACRO "opposite_direction_from_wall_with_variance" {
+            TAKES("point_robot", "Vector")
+            TAKES("wall_point", "Vector")
+            TAKES("wall_dir", "Vector")
+            RETURNS("Vector")
+            DEFINITION {
+                EVAL {
+                    import numpy as np
+                    import random
+                    # first, we need the foot of the perpendicular from the robot to the wall, which is the closest point on the wall to the robot.
+                    wall_dir = np.array([$(wall_dir->x), $(wall_dir->y)])
+                    wall_dir = wall_dir / np.linalg.norm(wall_dir) # Normalize the wall direction
+                    wall_point = np.array([$(wall_point->x), $(wall_point->y)])
+                    robot_point = np.array([$(point_robot->x), $(point_robot->y)])
+                    foot_of_perpendicular = wall_point + np.dot(robot_point - wall_point, wall_dir) * wall_dir
+
+                    # Now it's the same problem as in the above macro.
+                    return @opposite_direction_with_variance($(point_robot), {"x": foot_of_perpendicular[0], "y": foot_of_perpendicular[1]})
+                }
+            }
+        }
+    }
+}

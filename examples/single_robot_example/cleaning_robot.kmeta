@@ -1,0 +1,40 @@
+type "Vector" "A vector in 2D space" {
+    prop("x", "number")
+    prop("y", "number")
+}
+
+type "TwoDObject" "A two-dimensional object with a position and diameter" {
+    prop("diameter", "number")
+    has("position", "Vector")
+}
+
+type "Obstacle" "circular obstacle in the room" {
+    has("boundingBox", "TwoDObject")
+}
+
+type "Wall" "An obstacle that represents a wall as an infinite line" {
+    has("p", "Vector")
+    has("u_vec", "Vector")
+}
+
+type "Robot" "A cleaning robot that can move around the room and log its actions" {
+    prop("log", list("string"))
+
+    prop("d_closest_obstacle", "number")
+    prop("d_closest_wall", "number")
+
+    has("boundingBox", "TwoDObject")
+    has("direction", "Vector")
+
+    knows("obstacles", list("Obstacle"))
+    knows("walls", list("Wall"))
+
+    knows("closest_obstacle", "Obstacle")
+    knows("closest_wall", "Wall")
+}
+
+type "Room" "A room that contains a robot and obstacles" {
+    has("robot", "Robot")
+    has("obstacles", list("Obstacle"))
+    has("walls", list("Wall"))
+}

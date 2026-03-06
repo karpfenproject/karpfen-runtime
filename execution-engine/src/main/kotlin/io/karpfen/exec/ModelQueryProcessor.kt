@@ -21,18 +21,13 @@ import meta.Metamodel
 
 class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
 
-    fun getDataObjectById(id: String): Any? {
+    fun getDataObjectById(id: String): DataObject {
         //TODO find the data object with the given id in the model and return it
-        return null
+        throw NotImplementedError("getDataObjectById is not implemented yet")
     }
 
      fun getValueOfThing(startObjectId: String, argumentPath: List<String>): Any? {
         return null
     }
-
-    fun getValueOfThing(startObject: DataObject, argumentPath: List<String>): Any? {
-        return null
-    }
-
 
 }

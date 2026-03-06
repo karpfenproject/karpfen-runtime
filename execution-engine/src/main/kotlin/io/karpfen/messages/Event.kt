@@ -15,4 +15,4 @@
  */
 package io.karpfen.io.karpfen.messages
 
-data class Event(val domain: String, val payload: String)
+data class Event(val domain: String, val payload: String, val timestamp: Long)

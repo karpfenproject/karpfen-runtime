@@ -15,6 +15,7 @@
  */
 package io.karpfen.io.karpfen.exec
 
+import instance.DataObject
 import instance.Model
 import meta.Metamodel
 import states.Macro
@@ -27,14 +28,19 @@ class MacroProcessor(
     val modelQueryProcessor: ModelQueryProcessor
 ) {
 
-    //val context: DataObject = ...
+    val context: DataObject = modelQueryProcessor.getDataObjectById(currentContextModelElement)
 
     fun executeInlineMacro(code: String, args: List<Any>, expectedTarget: String): Any? {
         return null
     }
 
      fun executeFullMacro(macroName: String) {
-        //TODO find the macro with the given name in the metamodel and execute it by evaluating its body
+
+    }
+
+    fun runPythonCode(code: String, args: List<Any>): Any? {
+        //TODO run the given python code as a subprocess with the given arguments and return the result
+        return null
     }
 
 }

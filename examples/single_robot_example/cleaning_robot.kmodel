@@ -1,0 +1,92 @@
+make object "APB 2101":"Room" {
+
+    has("robot") -> make object "turtle":"Robot" {
+
+        prop("d_closest_obstacle") -> "100.0" // Will be updated by the state machine
+        prop("d_closest_obstacle") -> "100.0" // Will be updated by the state machine
+
+        has("boundingBox") -> make object "turtleBoundingBox":"TwoDObject" {
+            prop("diameter") -> "0.2"
+            has("position") -> make object "turtlePosition":"Vector" {
+                prop("x") -> "5.0"
+                prop("y") -> "5.0"
+            }
+        }
+        has("direction") -> make object "turtleDirection":"Vector" {
+            prop("x") -> "0.0"
+            prop("y") -> "1.0"
+        }
+
+        knows("obstacles") -> "chair"
+        knows("obstacles") -> "table"
+
+        knows("walls") -> "wall_top"
+        knows("walls") -> "wall_right"
+        knows("walls") -> "wall_bottom"
+        knows("walls") -> "wall_left"
+
+        knows("closest_obstacle") -> "chair" // Will be updated by the state machine
+        knows("closest_wall") -> "wall_top" // Will be updated by the state machine
+    }
+
+    has("obstacles") -> make object "chair":"Obstacle" {
+        has("boundingBox") -> make object "chairBoundingBox":"TwoDObject" {
+            prop("diameter") -> "1.0"
+            has("position") -> make object "chairPosition":"Vector" {
+                prop("x") -> "2.0"
+                prop("y") -> "3.0"
+            }
+        }
+    }
+    has("obstacles") -> make object "table":"Obstacle" {
+        has("boundingBox") -> make object "tableBoundingBox":"TwoDObject" {
+            prop("diameter") -> "3.0"
+            has("position") -> make object "tablePosition":"Vector" {
+                prop("x") -> "5.0"
+                prop("y") -> "7.0"
+            }
+        }
+    }
+
+    has("walls") -> make object "wall_top":"Wall" {
+        has("p") -> make object "wallTopP":"Vector" {
+            prop("x") -> "0.0"
+            prop("y") -> "10.0"
+        }
+        has("u_vec") -> make object "wallTopUVec":"Vector" {
+            prop("x") -> "1.0"
+            prop("y") -> "0.0"
+        }
+    }
+    has("walls") -> make object "wall_right":"Wall" {
+        has("p") -> make object "wallRightP":"Vector" {
+            prop("x") -> "10.0"
+            prop("y") -> "0.0"
+        }
+        has("u_vec") -> make object "wallRightUVec":"Vector" {
+            prop("x") -> "0.0"
+            prop("y") -> "1.0"
+        }
+    }
+    has("walls") -> make object "wall_bottom":"Wall" {
+        has("p") -> make object "wallBottomP":"Vector" {
+            prop("x") -> "0.0"
+            prop("y") -> "0.0"
+        }
+        has("u_vec") -> make object "wallBottomUVec":"Vector" {
+            prop("x") -> "1.0"
+            prop("y") -> "0.0"
+        }
+    }
+    has("walls") -> make object "wall_left":"Wall" {
+        has("p") -> make object "wallLeftP":"Vector" {
+            prop("x") -> "0.0"
+            prop("y") -> "0.0"
+        }
+        has("u_vec") -> make object "wallLeftUVec":"Vector" {
+            prop("x") -> "0.0"
+            prop("y") -> "1.0"
+        }
+    }
+
+}

@@ -20,6 +20,7 @@ import meta.Metamodel
 import states.StateMachine
 import states.Transition
 import java.awt.EventQueue
+import java.util.concurrent.BlockingQueue
 
 class TransitionProcessor(
     val stateMachine: StateMachine,
@@ -28,7 +29,9 @@ class TransitionProcessor(
     val stateMachineAttachedToModelElement: String,
     val macroProcessor: MacroProcessor,
     val stateMachineQueryHelper: StateMachineQueryHelper,
-    val modelQueryProcessor: ModelQueryProcessor){
+    val modelQueryProcessor: ModelQueryProcessor,
+    val eventProcessor: EventProcessor
+){
 
     val transitions = stateMachine.transitions
 
