@@ -15,6 +15,8 @@
  */
 package io.karpfen.websocket
 
+import org.json.JSONObject
+
 /**
  * Represents a message received from a WebSocket client.
  *
@@ -33,17 +35,12 @@ data class WebSocketMessage(
          * Expected format: {"environmentKey": "...", "messageType": "...", "payload": "..."}
          */
         fun fromJson(json: String): WebSocketMessage? = try {
-            val regex = """"(\w+)"\s*:\s*"([^"]*)"""".toRegex()
-            val matches = regex.findAll(json).toList()
-            if (matches.size >= 3) {
-                WebSocketMessage(
-                    environmentKey = matches[0].groupValues[2],
-                    messageType = matches[1].groupValues[2],
-                    payload = matches[2].groupValues[2]
-                )
-            } else {
-                null
-            }
+            val obj = JSONObject(json)
+            WebSocketMessage(
+                environmentKey = obj.getString("environmentKey"),
+                messageType = obj.getString("messageType"),
+                payload = obj.optString("payload", "")
+            )
         } catch (e: Exception) {
             null
         }

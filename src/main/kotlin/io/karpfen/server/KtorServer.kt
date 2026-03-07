@@ -102,14 +102,16 @@ class KtorServer(
                                 val envThread = EnvironmentHandler.executionThreads[envKey]
                                 if (envThread != null) {
                                     // Convert WebSocketMessage to Event
+                                    // messageType is used as the event domain (routing bucket)
+                                    // payload is the event name/content
                                     val event = Event(
-                                        domain = message.messageType,
+                                        domain = message.environmentKey,
                                         name = message.messageType,
                                         payload = message.payload,
                                         timestamp = System.currentTimeMillis()
                                     )
                                     envThread.acceptExternalEvent(event)
-                                    println("[WebSocket] Queued event for environment $envKey")
+                                    println("[WebSocket] Queued event for environment $envKey: domain=${message.environmentKey}, name=${message.messageType}")
                                 } else {
                                     println("[WebSocket] No active environment thread for $envKey")
                                 }
@@ -123,7 +125,7 @@ class KtorServer(
                     e.printStackTrace()
                 } finally {
                     if (authenticatedEnvKey != null && authenticatedAccessKey != null) {
-                        sessionManager.unregisterClientSession(authenticatedEnvKey!!, authenticatedAccessKey!!)
+                        sessionManager.unregisterClientSession(authenticatedEnvKey, authenticatedAccessKey)
                     }
                     println("[WebSocket] Connection closed")
                 }

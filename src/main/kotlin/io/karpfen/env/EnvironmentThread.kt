@@ -17,11 +17,15 @@ package io.karpfen.env
 
 import io.karpfen.DataObservationListener
 import io.karpfen.Engine
+import io.karpfen.EngineTraceLogger
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
 import java.util.concurrent.LinkedBlockingQueue
 
-class EnvironmentThread(val environment: Environment) : Runnable {
+class EnvironmentThread(
+    val environment: Environment,
+    val traceLogger: EngineTraceLogger? = null
+) : Runnable {
 
     /**
      * One shared [EventBus] per environment so that all Engine instances within it
@@ -32,6 +36,7 @@ class EnvironmentThread(val environment: Environment) : Runnable {
     )
 
     private val incomingExternalEvents = LinkedBlockingQueue<Event>()
+    @Volatile
     private var isRunning = false
 
     val engine = Engine(
@@ -39,16 +44,17 @@ class EnvironmentThread(val environment: Environment) : Runnable {
         environment.model!!,
         environment.stateMachines,
         environment.tickDelayMS,
-        sharedEventBus
+        sharedEventBus,
+        traceLogger = traceLogger
     )
 
     fun setup() {
         val clientSessionManager = EnvironmentHandler.clientSessionManager
 
         // Register a ModelChangePublisher that pushes JSON updates to subscribed WebSocket clients.
-        engine.modelQueryProcessor.addChangePublisher(ModelChangePublisher { objectId, jsonValue ->
+        engine.modelQueryProcessor.addChangePublisher { objectId, jsonValue ->
             clientSessionManager.notifyObjectChange(environment.key, objectId, jsonValue)
-        })
+        }
 
         // Register DataObservation listeners (from the Environment configuration).
         for (observation in environment.objectObservations) {
@@ -78,6 +84,7 @@ class EnvironmentThread(val environment: Environment) : Runnable {
 
     fun stop() {
         isRunning = false
+        engine.stop()
     }
 
     override fun run() {
@@ -85,6 +92,9 @@ class EnvironmentThread(val environment: Environment) : Runnable {
         println("[EnvironmentThread] Running for environment ${environment.key}")
 
         try {
+            // Start the engine (it runs in its own thread)
+            engine.start()
+
             while (isRunning) {
                 // Drain all queued external events into the shared bus
                 val batch = mutableListOf<Event>()
@@ -92,6 +102,10 @@ class EnvironmentThread(val environment: Environment) : Runnable {
                 for (event in batch) {
                     engine.receiveExternalEvent(event)
                 }
+
+                // Purge expired events periodically
+                sharedEventBus.purgeExpired()
+
                 Thread.sleep(10)
             }
         } catch (e: InterruptedException) {
@@ -101,6 +115,7 @@ class EnvironmentThread(val environment: Environment) : Runnable {
             println("[EnvironmentThread] Error: ${e.message}")
             e.printStackTrace()
         } finally {
+            engine.stop()
             println("[EnvironmentThread] Stopped for environment ${environment.key}")
         }
     }

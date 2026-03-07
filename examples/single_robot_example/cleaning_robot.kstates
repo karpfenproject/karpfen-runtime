@@ -40,16 +40,16 @@ STATEMACHINE ATTACHED TO "Robot" {
                 DO {
                     APPEND("log", "Driving in save zone")
                     // Drive fast (0.3 units per time step) in the direction the robot is facing.
-                    SET("x", EVAL { return $(boundingBox->position->x) + 0.3 * $(direction->x) } )
-                    SET("y", EVAL { return $(boundingBox->position->y) + 0.3 * $(direction->y) } )
+                    SET("boundingBox->position->x", EVAL { return $(boundingBox->position->x) + 0.3 * $(direction->x) } )
+                    SET("boundingBox->position->y", EVAL { return $(boundingBox->position->y) + 0.3 * $(direction->y) } )
                 }
             }
             STATE "drive slow" {
                 DO {
                     APPEND("log", "Driving in risky zone")
                     // Drive slow (0.1 units per time step) in the direction the robot is facing.
-                    SET("x", EVAL { return $(boundingBox->position->x) + 0.1 * $(direction->x) } )
-                    SET("y", EVAL { return $(boundingBox->position->y) + 0.1 * $(direction->y) } )
+                    SET("boundingBox->position->x", EVAL { return $(boundingBox->position->x) + 0.1 * $(direction->x) } )
+                    SET("boundingBox->position->y", EVAL { return $(boundingBox->position->y) + 0.1 * $(direction->y) } )
                  }
             }
         }
@@ -75,12 +75,12 @@ STATEMACHINE ATTACHED TO "Robot" {
 
         TRANSITION "drive" -> "drive slow" NOT LOOPING {
             CONDITION {
-                EVAL { return $(distance_closest_obstacle) < 1.0 or $(distance_closest_wall) < 1.0 }
+                EVAL { return $(d_closest_obstacle) < 1.0 or $(d_closest_wall) < 1.0 }
             }
         }
         TRANSITION "drive" -> "drive fast" NOT LOOPING {
             CONDITION {
-                EVAL { return $(distance_closest_obstacle) >= 1.0 and $(distance_closest_wall) >= 1.0 }
+                EVAL { return $(d_closest_obstacle) >= 1.0 and $(d_closest_wall) >= 1.0 }
             }
         }
         TRANSITION "drive" -> "observe" { }
@@ -95,7 +95,7 @@ STATEMACHINE ATTACHED TO "Robot" {
                 EVAL {
                     import math
                     distance = @point_to_point_distance($(p1->position), $(p2->position))
-                    distance = distance - $(p1->diameter) / 2 - $(2->diameter) / 2
+                    distance = distance - $(p1->diameter) / 2 - $(p2->diameter) / 2
                     return distance
                 }
             }
@@ -107,7 +107,7 @@ STATEMACHINE ATTACHED TO "Robot" {
             DEFINITION {
                 EVAL {
                     import math
-                    return math.sqrt(($point1->x - $point2->x) ** 2 + ($(point1->y) - $(point2->y)) ** 2)
+                    return math.sqrt(($(p1->x) - $(p2->x)) ** 2 + ($(p1->y) - $(p2->y)) ** 2)
                 }
             }
         }
@@ -124,7 +124,7 @@ STATEMACHINE ATTACHED TO "Robot" {
                     p = np.array([$(line_point->x), $(line_point->y)])
                     u = np.array([$(line_dir->x), $(line_dir->y)])
                     u = u / np.linalg.norm(u)
-                    distance = np.linalg.norm(np.cross(q - p, u))
+                    return np.linalg.norm(np.cross(q - p, u))
                 }
             }
         }

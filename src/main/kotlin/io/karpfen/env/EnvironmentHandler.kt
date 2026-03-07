@@ -15,16 +15,24 @@
  */
 package io.karpfen.env
 
+import io.karpfen.EngineTraceLogger
 import io.karpfen.websocket.ClientSessionManager
+import java.util.concurrent.ConcurrentHashMap
 
 object EnvironmentHandler {
 
-    val envs = mutableMapOf<String, Environment>()
-    val activeEnvs = mutableMapOf<String, Environment>()
+    val envs: MutableMap<String, Environment> = ConcurrentHashMap()
+    val activeEnvs: MutableMap<String, Environment> = ConcurrentHashMap()
 
-    val executionThreads = mutableMapOf<String, EnvironmentThread>()
+    val executionThreads: MutableMap<String, EnvironmentThread> = ConcurrentHashMap()
 
     val clientSessionManager = ClientSessionManager()
+
+    /** Directory for engine trace log files. Null disables file logging. */
+    var traceLogDirectory: String? = null
+
+    /** Whether engine trace entries should also be printed to console. */
+    var traceConsoleOutput: Boolean = false
 
     fun createEnv(key: String): Environment {
         val env = Environment(key)
@@ -36,10 +44,20 @@ object EnvironmentHandler {
         return envs[key]
     }
 
-    fun activeEnv(key: String): Unit {
+    fun activeEnv(key: String) {
         val env = envs[key] ?: throw IllegalArgumentException("Environment with key '$key' does not exist.")
         activeEnvs[key] = env
-        val envThread = EnvironmentThread(env)
+
+        val traceLogger = if (traceLogDirectory != null || traceConsoleOutput) {
+            val logFile = traceLogDirectory?.let { "$it/engine-trace-$key.log" }
+            EngineTraceLogger(
+                engineId = key,
+                logFilePath = logFile,
+                consoleOutput = traceConsoleOutput
+            )
+        } else null
+
+        val envThread = EnvironmentThread(env, traceLogger)
         envThread.setup()
         executionThreads[key] = envThread
     }

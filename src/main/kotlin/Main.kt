@@ -25,6 +25,13 @@ fun main() {
     println("[Main]   Server: ${config.server.host}:${config.server.port}")
     println("[Main]   WebSocket enabled: ${config.websocket.enabled}")
     println("[Main]   Log level: ${config.logging.level}")
+    println("[Main]   Engine tracing: ${config.engineTracing.enabled}")
+
+    // Apply engine tracing configuration
+    if (config.engineTracing.enabled) {
+        EnvironmentHandler.traceLogDirectory = config.engineTracing.logDirectory
+        EnvironmentHandler.traceConsoleOutput = config.engineTracing.consoleOutput
+    }
 
     val sessionManager = EnvironmentHandler.clientSessionManager
     val server = KtorServer(

@@ -8,6 +8,7 @@ Welcome to the Karpfen Runtime documentation.
 2. [QUICK_REFERENCE.md](QUICK_REFERENCE.md) - Fast command and endpoint reference
 3. [GETTING_STARTED.md](GETTING_STARTED.md) - End-to-end setup and workflow
 4. [HTTP_API_ENDPOINTS.md](HTTP_API_ENDPOINTS.md) - Full API contract
+5. [STATEMACHINE_EXECUTION_SEMANTICS.md](STATEMACHINE_EXECUTION_SEMANTICS.md) - Engine execution model and non-trivial behavior
 
 ## Guide Scope
 
@@ -28,4 +29,12 @@ Welcome to the Karpfen Runtime documentation.
 - Required parameters
 - Error model
 - HTTP and WebSocket examples
+
+### STATEMACHINE_EXECUTION_SEMANTICS.md
+- Tick loop phases (ENTRY → DO → transition check)
+- State stack and hierarchical state handling
+- Transition evaluation order and priority
+- NOT LOOPING semantics and fallthrough
+- Event consumption model and TTL
+- Threading model and error handling
  

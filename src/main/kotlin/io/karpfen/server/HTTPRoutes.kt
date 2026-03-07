@@ -145,6 +145,17 @@ object HTTPRoutes {
                 }
             }
 
+            post("/runEnvironment") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    APIService.runEnvironment(envKey)
+                    call.respond(HttpStatusCode.OK, "")
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
             post("/startEnvironment") {
                 try {
                     val envKey = call.request.queryParameters["envKey"]

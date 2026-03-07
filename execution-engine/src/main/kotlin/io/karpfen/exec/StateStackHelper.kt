@@ -17,10 +17,30 @@ package io.karpfen.io.karpfen.exec
 
 object StateStackHelper {
 
+    /**
+     * Computes the sequence of states that need to be entered when transitioning
+     * from [oldStack] to [newStack].
+     *
+     * This finds the longest common prefix of both stacks and returns the new
+     * states that are not part of that prefix.
+     *
+     * Example: oldStack = [A, B, C, D], newStack = [A, B, E, F]
+     * → common prefix = [A, B], changed sequence = [E, F]
+     *
+     * If the newStack is entirely different, all states of newStack are returned.
+     * If both stacks are identical, an empty list is returned.
+     */
     fun getChangedStackSequence(oldStack: List<String>, newStack: List<String>): List<String> {
-        //TODO find the sequence of states that need to be entered when changing from the old stack to the new stack
-        //  for example, if the old stack is [A, B, C, D] and the new stack is [A, B, E, F], then the changed stack sequence would be [E, F]
-        return listOf()
+        var commonLength = 0
+        val minLength = minOf(oldStack.size, newStack.size)
+        for (i in 0 until minLength) {
+            if (oldStack[i] == newStack[i]) {
+                commonLength++
+            } else {
+                break
+            }
+        }
+        return newStack.subList(commonLength, newStack.size)
     }
 
 }

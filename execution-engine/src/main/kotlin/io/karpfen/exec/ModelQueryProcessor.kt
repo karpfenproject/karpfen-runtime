@@ -56,12 +56,22 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      */
     fun appendToList(objectId: String, key: String, value: Any) {
         val obj = getDataObjectById(objectId)
-        val prop = obj.properties.firstOrNull { it.key == key }
+        var prop = obj.properties.firstOrNull { it.key == key }
+
+        // If the property does not exist on the instance yet, check the metamodel
+        // and lazily create an empty SimpleListPropertyObject.
+        if (prop == null) {
+            val metaProp = obj.ofType.simpleProperties.firstOrNull { it.key == key }
+            if (metaProp != null && metaProp.isList) {
+                val newListProp = instance.SimpleListPropertyObject(metaProp, key, mutableListOf())
+                obj.properties.add(newListProp)
+                prop = newListProp
+            }
+        }
+
         if (prop != null && prop.isList()) {
             val listProp = prop as instance.SimpleListPropertyObject
-            val current = listProp.getValues().toMutableList()
-            current.add(value)
-            listProp.setValues(current)
+            listProp.appendValue(value)
             notifyChange(obj)
         } else {
             throw IllegalArgumentException(

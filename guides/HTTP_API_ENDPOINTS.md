@@ -74,13 +74,38 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
 
 ## Execution Control
 
+### Set Event TTL
+- **Endpoint**: `POST /setEventTtl`
+- **Parameters**: 
+  - `envKey` (string): The environment key
+  - `ttlMs` (long): Time-to-live in milliseconds for events (0 = live forever)
+- **Request Body**: Empty
+- **Response**: Empty (200 OK on success)
+- **Description**: Sets the time-to-live for events in the environment. Events that exceed their TTL are automatically purged.
+- **Example**:
+  ```bash
+  curl -X POST "http://localhost:8080/setEventTtl?envKey=env-123&ttlMs=30000"
+  ```
+
+### Run Environment
+- **Endpoint**: `POST /runEnvironment`
+- **Parameters**: 
+  - `envKey` (string): The environment key
+- **Request Body**: Empty
+- **Response**: Empty (200 OK on success)
+- **Description**: Activates the environment and prepares the execution thread. Must be called after metamodel, model, and at least one state machine are set. Must be called **before** `/startEnvironment`.
+- **Example**:
+  ```bash
+  curl -X POST "http://localhost:8080/runEnvironment?envKey=env-123"
+  ```
+
 ### Start Environment
 - **Endpoint**: `POST /startEnvironment`
 - **Parameters**: 
   - `envKey` (string): The environment key
 - **Request Body**: Empty
 - **Response**: Empty (200 OK on success)
-- **Description**: Starts the execution thread for the selected environment.
+- **Description**: Starts the execution thread for the selected environment. The environment must have been activated first using `/runEnvironment`.
 - **Example**:
   ```bash
   curl -X POST "http://localhost:8080/startEnvironment?envKey=env-123"

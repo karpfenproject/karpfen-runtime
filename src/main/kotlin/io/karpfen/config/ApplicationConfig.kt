@@ -35,10 +35,17 @@ data class LoggingConfig(
     val consoleOutput: Boolean = true
 )
 
+data class EngineTracingConfig(
+    val enabled: Boolean = false,
+    val logDirectory: String? = null,
+    val consoleOutput: Boolean = false
+)
+
 data class ApplicationConfig(
     val server: ServerConfig = ServerConfig(),
     val websocket: WebSocketConfig = WebSocketConfig(),
-    val logging: LoggingConfig = LoggingConfig()
+    val logging: LoggingConfig = LoggingConfig(),
+    val engineTracing: EngineTracingConfig = EngineTracingConfig()
 ) {
     companion object {
         /**
@@ -68,6 +75,9 @@ data class ApplicationConfig(
             var wsEnabled = true
             var logLevel = "INFO"
             var consoleOutput = true
+            var tracingEnabled = false
+            var tracingLogDirectory: String? = null
+            var tracingConsoleOutput = false
 
             // Simple parsing logic for the conf file
             content.lines().forEach { line ->
@@ -95,13 +105,27 @@ data class ApplicationConfig(
                     trimmed.contains("consoleOutput =") -> {
                         consoleOutput = extractValue(trimmed).toBoolean()
                     }
+                    trimmed.contains("tracingEnabled =") -> {
+                        tracingEnabled = extractValue(trimmed).toBoolean()
+                    }
+                    trimmed.contains("tracingLogDirectory =") -> {
+                        tracingLogDirectory = extractValue(trimmed).ifBlank { null }
+                    }
+                    trimmed.contains("tracingConsoleOutput =") -> {
+                        tracingConsoleOutput = extractValue(trimmed).toBoolean()
+                    }
                 }
             }
 
             return ApplicationConfig(
                 server = ServerConfig(host = host, port = port),
                 websocket = WebSocketConfig(queueTimeoutMs = queueTimeoutMs, enabled = wsEnabled),
-                logging = LoggingConfig(level = logLevel, consoleOutput = consoleOutput)
+                logging = LoggingConfig(level = logLevel, consoleOutput = consoleOutput),
+                engineTracing = EngineTracingConfig(
+                    enabled = tracingEnabled,
+                    logDirectory = tracingLogDirectory,
+                    consoleOutput = tracingConsoleOutput
+                )
             )
         }
 

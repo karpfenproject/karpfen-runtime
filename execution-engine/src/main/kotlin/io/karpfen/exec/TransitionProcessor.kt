@@ -52,8 +52,23 @@ class TransitionProcessor(
      * @return The first executable [Transition], or null if none applies.
      */
     fun findFirstExecutableTransition(currentState: String): Transition? {
+        return findAllExecutableTransitions(currentState).firstOrNull()
+    }
+
+    /**
+     * Finds all transitions whose conditions evaluate to true for [currentState],
+     * returned in definition order. Each transition's condition is evaluated lazily.
+     *
+     * **Important**: For EVENT conditions, the event is consumed (marked as processed)
+     * as soon as the transition is yielded. Callers that iterate but don't fire a
+     * transition should be aware of this side-effect.
+     *
+     * @param currentState The name of the active state.
+     * @return A sequence of executable transitions in definition order.
+     */
+    fun findAllExecutableTransitions(currentState: String): Sequence<Transition> = sequence {
         val candidates = transitions.filter { t ->
-            t.fromState == currentState && (t.allowLoops || t.fromState != t.toState)
+            t.fromState == currentState
         }
 
         for (transition in candidates) {
@@ -93,16 +108,24 @@ class TransitionProcessor(
                 }
             }
 
-            if (fires) return transition
+            if (fires) yield(transition)
         }
-        return null
     }
 
     /**
      * Evaluates a [ValueCondition] by resolving the boolean variable path against the context
      * model element. The path must resolve to a Boolean value.
+     *
+     * Special case: if the variable is the literal "true" or "false", it is treated as a
+     * constant — this is how unconditional transitions (no CONDITION block in the DSL) are
+     * represented after parsing.
      */
     private fun evaluateValueCondition(vc: ValueCondition): Boolean {
+        // Handle literal true/false for unconditional transitions
+        val literal = vc.boolVariable.trim().lowercase()
+        if (literal == "true") return true
+        if (literal == "false") return false
+
         val context = modelQueryProcessor.getDataObjectById(stateMachineAttachedToModelElement)
         val resolved = modelQueryProcessor.resolvePathFromObject(context, vc.boolVariable)
         return when (resolved) {

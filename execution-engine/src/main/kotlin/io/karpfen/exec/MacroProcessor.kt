@@ -442,24 +442,18 @@ class MacroProcessor(
      * Tries 'python3' first, then 'python'.
      */
     private fun findPythonCommand(): String {
-        try {
-            val process = ProcessBuilder("python3", "--version")
-                .redirectErrorStream(true)
-                .start()
-            process.waitFor()
-            if (process.exitValue() == 0) return "python3"
-        } catch (_: Exception) { }
-
-        try {
-            val process = ProcessBuilder("python", "--version")
-                .redirectErrorStream(true)
-                .start()
-            process.waitFor()
-            if (process.exitValue() == 0) return "python"
-        } catch (_: Exception) { }
+        for (cmd in listOf("python3", "python", "py")) {
+            try {
+                val process = ProcessBuilder(cmd, "--version")
+                    .redirectErrorStream(true)
+                    .start()
+                process.waitFor()
+                if (process.exitValue() == 0) return cmd
+            } catch (_: Exception) { }
+        }
 
         throw RuntimeException(
-            "No Python interpreter found. Please ensure 'python3' or 'python' is available on the system PATH."
+            "No Python interpreter found. Please ensure 'python3', 'python' or 'py' is available on the system PATH."
         )
     }
 

@@ -3,7 +3,7 @@ make object "APB 2101":"Room" {
     has("robot") -> make object "turtle":"Robot" {
 
         prop("d_closest_obstacle") -> "100.0" // Will be updated by the state machine
-        prop("d_closest_obstacle") -> "100.0" // Will be updated by the state machine
+        prop("d_closest_wall") -> "100.0" // Will be updated by the state machine
 
         has("boundingBox") -> make object "turtleBoundingBox":"TwoDObject" {
             prop("diameter") -> "0.2"

@@ -47,6 +47,9 @@ data class OutgoingMessage(
     val payload: String
 ) {
     fun toJson(): String {
-        return """{"environmentKey":"$environmentKey","clientId":"$clientId","messageType":"$messageType","payload":"$payload"}"""
+        val escapedEnvKey = environmentKey.replace("\"", "\\\"")
+        val escapedClientId = clientId.replace("\"", "\\\"")
+        val escapedMsgType = messageType.replace("\"", "\\\"")
+        return """{"environmentKey":"$escapedEnvKey","clientId":"$escapedClientId","messageType":"$escapedMsgType","payload":$payload}"""
     }
 }
