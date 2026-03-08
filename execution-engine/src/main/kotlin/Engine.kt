@@ -41,6 +41,9 @@ class Engine(
     private val dataObservationListeners: MutableMap<String, MutableList<DataObservationListener>> = mutableMapOf()
     private var messageOutChannel: Channel? = null
 
+    /** Macro processors created during engine run, tracked for cleanup. */
+    private val macroProcessors: MutableList<MacroProcessor> = mutableListOf()
+
     @Volatile
     private var isRunning: Boolean = false
     private var executionThread: Thread? = null
@@ -114,6 +117,7 @@ class Engine(
             val macroProcessor = MacroProcessor(
                 metamodel, model, stateMachine.macros, modelElementId, modelQueryProcessor
             )
+            macroProcessors.add(macroProcessor)
             val transitionProcessor = TransitionProcessor(
                 stateMachine, metamodel, model, modelElementId,
                 macroProcessor, smQueryHelper, modelQueryProcessor, eventProcessor
@@ -409,6 +413,13 @@ class Engine(
                 Thread.currentThread().interrupt()
             }
         }
+        // Close all persistent Python sessions
+        for (mp in macroProcessors) {
+            try {
+                mp.close()
+            } catch (_: Exception) { }
+        }
+        macroProcessors.clear()
         traceLogger?.close()
     }
 }

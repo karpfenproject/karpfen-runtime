@@ -36,6 +36,13 @@ class MacroProcessor(
     val context: DataObject = modelQueryProcessor.getDataObjectById(currentContextModelElement)
     private val codeTransformer = MacroCodeTransformer(modelQueryProcessor, macros)
 
+    /** Persistent Python session for COMPLEX-tier code. Lazily initialized on first use. */
+    private val persistentSession: PersistentPythonSession by lazy { PersistentPythonSession() }
+    private var persistentSessionInitialized = false
+
+    /** Cached Python command to avoid probing the PATH on every invocation. */
+    private val cachedPythonCommand: String by lazy { findPythonCommand() }
+
     /**
      * Executes an inline macro (EVAL block) with the given code.
      *
@@ -49,8 +56,57 @@ class MacroProcessor(
      */
     fun executeInlineMacro(code: String, expectedTarget: String): Any? {
         val pythonCode = codeTransformer.transformInlineCode(code, context)
-        val rawResult = runPythonCode(pythonCode) ?: return null
-        return parseResult(rawResult.toString(), expectedTarget)
+        return executeWithTieredStrategy(pythonCode, expectedTarget)
+    }
+
+    /**
+     * Dispatches the transformed Python code to the appropriate execution tier:
+     * - SIMPLE: Evaluated natively in Kotlin (no Python subprocess).
+     * - MEDIUM: Executed via `python -c` (no temp file I/O).
+     * - COMPLEX: Executed via a persistent interactive Python session.
+     */
+    private fun executeWithTieredStrategy(pythonCode: String, expectedTarget: String): Any? {
+        val tier = ExpressionClassifier.classify(pythonCode)
+
+        return when (tier) {
+            ExecutionTier.SIMPLE -> {
+                val body = ExpressionClassifier.extractFunctionBody(pythonCode)
+                val expr = body?.let { ExpressionClassifier.extractSimpleReturnExpression(it) }
+                if (expr != null) {
+                    val result = SimpleExpressionEvaluator.evaluate(expr)
+                    // Convert the result to match the expected target type
+                    when (expectedTarget.lowercase()) {
+                        "boolean" -> {
+                            when (result) {
+                                is Boolean -> result
+                                is Double -> result != 0.0
+                                else -> result
+                            }
+                        }
+                        "number" -> {
+                            when (result) {
+                                is Double -> result
+                                is Boolean -> if (result) 1.0 else 0.0
+                                else -> result
+                            }
+                        }
+                        else -> result
+                    }
+                } else {
+                    // Fallback: should not happen if classifier is correct, but be safe
+                    val rawResult = runPythonCodeViaSession(pythonCode) ?: return null
+                    parseResult(rawResult, expectedTarget)
+                }
+            }
+            ExecutionTier.MEDIUM -> {
+                val rawResult = runPythonCodeDirect(pythonCode) ?: return null
+                parseResult(rawResult, expectedTarget)
+            }
+            ExecutionTier.COMPLEX -> {
+                val rawResult = runPythonCodeViaSession(pythonCode) ?: return null
+                parseResult(rawResult, expectedTarget)
+            }
+        }
     }
 
     /**
@@ -76,8 +132,7 @@ class MacroProcessor(
         }
 
         val pythonCode = codeTransformer.transformFullMacroCode(macro, resolvedArgs)
-        val rawResult = runPythonCode(pythonCode) ?: return null
-        return parseResult(rawResult.toString(), macro.returns.returnType)
+        return executeWithTieredStrategy(pythonCode, macro.returns.returnType)
     }
 
     /**
@@ -94,8 +149,7 @@ class MacroProcessor(
         try {
             tempFile.writeText(code)
 
-            val pythonCommand = findPythonCommand()
-            val command = listOf(pythonCommand, tempFile.absolutePath)
+            val command = listOf(cachedPythonCommand, tempFile.absolutePath)
 
             val processBuilder = ProcessBuilder(command)
             processBuilder.redirectErrorStream(false)
@@ -121,6 +175,69 @@ class MacroProcessor(
             return if (stdout.isEmpty()) null else stdout
         } finally {
             tempFile.delete()
+        }
+    }
+
+    /**
+     * Executes Python code directly via `python -c <code>` without creating a temp file.
+     * Used for MEDIUM-tier code that is self-contained and not too long.
+     *
+     * @param code The complete Python code to execute.
+     * @return The stdout output as a trimmed string, or null if no output.
+     */
+    fun runPythonCodeDirect(code: String): String? {
+        // Pipe code via stdin instead of using `python -c` to avoid
+        // Windows command-line escaping issues with double quotes in code.
+        val command = listOf(cachedPythonCommand, "-u", "-")
+
+        val processBuilder = ProcessBuilder(command)
+        processBuilder.redirectErrorStream(false)
+        processBuilder.environment()["PYTHONIOENCODING"] = "utf-8"
+
+        val process = processBuilder.start()
+
+        // Write code to stdin and close it to signal EOF
+        process.outputStream.bufferedWriter().use { writer ->
+            writer.write(code)
+        }
+
+        val stdout = process.inputStream.bufferedReader().readText().trim()
+        val stderr = process.errorStream.bufferedReader().readText().trim()
+
+        val exitCode = process.waitFor()
+
+        if (exitCode != 0) {
+            throw RuntimeException(
+                "Python direct execution failed with exit code $exitCode.\nStderr: $stderr\nCode:\n$code"
+            )
+        }
+
+        if (stderr.isNotEmpty()) {
+            System.err.println("Python stderr (non-fatal): $stderr")
+        }
+
+        return if (stdout.isEmpty()) null else stdout
+    }
+
+    /**
+     * Executes Python code via the persistent interactive Python session.
+     * Used for COMPLEX-tier code. The session is lazily started on first use.
+     *
+     * @param code The complete Python code to execute.
+     * @return The stdout output as a trimmed string, or null if no output.
+     */
+    fun runPythonCodeViaSession(code: String): String? {
+        persistentSessionInitialized = true
+        return persistentSession.execute(code)
+    }
+
+    /**
+     * Closes the persistent Python session if it was initialized.
+     * Should be called when the engine shuts down.
+     */
+    fun close() {
+        if (persistentSessionInitialized) {
+            persistentSession.close()
         }
     }
 
