@@ -169,7 +169,7 @@ class MacroProcessor(
             }
 
             if (stderr.isNotEmpty()) {
-                System.err.println("Python stderr (non-fatal): $stderr")
+                //System.err.println("Python stderr (non-fatal): $stderr")
             }
 
             return if (stdout.isEmpty()) null else stdout
@@ -213,7 +213,7 @@ class MacroProcessor(
         }
 
         if (stderr.isNotEmpty()) {
-            System.err.println("Python stderr (non-fatal): $stderr")
+            //System.err.println("Python stderr (non-fatal): $stderr")
         }
 
         return if (stdout.isEmpty()) null else stdout

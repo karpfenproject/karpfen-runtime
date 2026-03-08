@@ -398,7 +398,7 @@ class Engine(
                 "statesToEnter" to changedSequence.joinToString(",")
             )
         )
-        println("[Engine $engineId] Transition: ${transition.fromState} -> ${transition.toState}")
+        //println("[Engine $engineId] Transition: ${transition.fromState} -> ${transition.toState}")
     }
 
     fun stop() {

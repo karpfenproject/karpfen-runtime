@@ -67,7 +67,7 @@ class WebSocketBroadcaster(
             runBlocking {
                 clientSession.session.send(message.toJson())
             }
-            println("[WebSocketBroadcaster] Sent message to client ${message.clientId}: ${message.messageType}")
+            //println("[WebSocketBroadcaster] Sent message to client ${message.clientId}: ${message.messageType}")
         } catch (e: Exception) {
             println("[WebSocketBroadcaster] Failed to send message to client ${message.clientId}: ${e.message}")
         }

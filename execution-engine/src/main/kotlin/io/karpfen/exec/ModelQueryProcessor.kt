@@ -68,7 +68,7 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     }
 
     private fun fireNotification(obj: DataObject) {
-        println("object change notification --> " + obj.toString())
+        //println("object change notification --> " + obj.toString())
         if (changePublishers.isEmpty()) return
         val json = dataObjectToJson(obj)
         for (publisher in changePublishers) {
@@ -177,7 +177,7 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * provided [props] map (key → typed value) and notifies all registered change publishers.
      */
     fun updateProperties(objectId: String, props: Map<String, Any>) {
-        println("property update --> " + objectId + " ---> " + props.toString())
+        //println("property update --> " + objectId + " ---> " + props.toString())
         val obj = getDataObjectById(objectId)
         obj.assignProps(props)
         notifyChange(obj)
