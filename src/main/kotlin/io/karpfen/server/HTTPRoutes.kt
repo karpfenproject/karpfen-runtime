@@ -15,10 +15,14 @@
  */
 package io.karpfen.server
 
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
+import io.ktor.server.application.install
+import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
@@ -28,6 +32,14 @@ import io.ktor.server.routing.routing
 
 object HTTPRoutes {
     fun configure(application: Application) {
+        application.install(CORS) {
+            anyHost()
+            allowMethod(HttpMethod.Options)
+            allowMethod(HttpMethod.Put)
+            allowMethod(HttpMethod.Post)
+            allowMethod(HttpMethod.Get)
+            allowHeader(HttpHeaders.ContentType)
+        }
         application.routing {
             post("/createEnvironment") {
                 try {
