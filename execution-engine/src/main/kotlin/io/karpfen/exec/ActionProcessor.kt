@@ -55,9 +55,11 @@ class ActionProcessor(
      * @throws RuntimeException if a Python macro execution fails.
      */
     fun executeBlock(block: ActionBlock) {
+        modelQueryProcessor.beginBatch()
         for (rule in block.actions) {
             executeRule(rule)
         }
+        modelQueryProcessor.commitBatch()
     }
 
     /**
@@ -225,6 +227,27 @@ class ActionProcessor(
         if (isSimpleProp) {
             modelQueryProcessor.updateProperty(ownerObj.id, propertyKey, value)
         } else {
+            // When a macro returns an anonymous DataObject (empty id, e.g. a Vector built from
+            // a Python dict like {"x":...,"y":...}), merge its properties into the *existing*
+            // named target object rather than replacing the relation.  This ensures that
+            // change notifications fire for the named child object (e.g. "turtleDirection")
+            // so that WebSocket subscribers receive updates.
+            if (value is DataObject && value.id.isEmpty()) {
+                val existingTargets = ownerObj.getRel(propertyKey)
+                if (existingTargets.isNotEmpty()) {
+                    val target = existingTargets.first()
+                    val propsMap = value.ofType.simpleProperties
+                        .filter { !it.isList }
+                        .mapNotNull { propDef ->
+                            val vals = value.getProp(propDef.key)
+                            if (vals.isNotEmpty()) propDef.key to vals.first() else null
+                        }.toMap()
+                    if (propsMap.isNotEmpty()) {
+                        modelQueryProcessor.updateProperties(target.id, propsMap)
+                        return
+                    }
+                }
+            }
             modelQueryProcessor.updateRelation(ownerObj.id, propertyKey, value)
         }
     }

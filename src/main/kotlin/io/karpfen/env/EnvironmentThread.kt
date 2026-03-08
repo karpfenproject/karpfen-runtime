@@ -58,6 +58,7 @@ class EnvironmentThread(
 
         // Register DataObservation listeners (from the Environment configuration).
         for (observation in environment.objectObservations) {
+            clientSessionManager.subscribeToObject(environment.key, observation.observingClientId, observation.observedObjectId)
             engine.registerDataObservationListener(
                 observation.observedObjectId,
                 object : DataObservationListener {

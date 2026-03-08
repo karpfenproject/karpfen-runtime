@@ -158,6 +158,8 @@ class Engine(
         var tickCount = 0L
         while (isRunning) {
             tickCount++
+            val tickStart = System.currentTimeMillis()
+
             // Purge expired events once per tick
             eventProcessor.purgeExpired()
 
@@ -177,7 +179,9 @@ class Engine(
                 )
             }
 
-            Thread.sleep(tickDelayMS.toLong())
+            val elapsed = System.currentTimeMillis() - tickStart
+            val remaining = tickDelayMS.toLong() - elapsed
+            if (remaining > 0) Thread.sleep(remaining)
         }
 
         traceLogger?.log(
@@ -344,8 +348,33 @@ class Engine(
             return
         }
 
-        // Determine which states need their ENTRY executed
-        val changedSequence = StateStackHelper.getChangedStackSequence(oldStack, newStackBase)
+        // Determine which states need their ENTRY executed.
+        //
+        // getChangedStackSequence strips the longest common prefix of old and new stack and
+        // returns only the new suffix — correct for ordinary cross-transitions.
+        //
+        // It returns empty when:
+        //   (a) self-transition:          oldStack == newStack  (e.g. "drive fast" → "drive fast")
+        //   (b) transition to ancestor:   newStack is a prefix of oldStack (e.g. "drive fast" → "drive")
+        //
+        // In both cases toState is NOT in rawChanged, so we must force re-entry.
+        // The re-entry must start one level ABOVE toState in newStack (i.e. toState's parent),
+        // because exiting a nested state also exits its containing state:
+        //   "drive fast" → "drive fast" : exits drive fast AND drive  →  re-enter [drive, drive fast]
+        //   "drive fast" → "drive"      : exits drive fast AND drive  →  re-enter [drive]
+        //
+        // For a cross-transition (rawChanged is non-empty) toState is always the last element of
+        // rawChanged, so no special handling is needed.
+        val rawChanged = StateStackHelper.getChangedStackSequence(oldStack, newStackBase)
+        val changedSequence = if (rawChanged.isEmpty()) {
+            val targetIdx = newStackBase.indexOf(transition.toState)
+            if (targetIdx >= 0) {
+                val startIdx = maxOf(0, targetIdx - 1)  // include toState's parent
+                newStackBase.subList(startIdx, newStackBase.size)
+            } else newStackBase
+        } else {
+            rawChanged
+        }
 
         ctx.stateStack = newStackBase
         ctx.notEnteredSubstack = changedSequence.toMutableList()

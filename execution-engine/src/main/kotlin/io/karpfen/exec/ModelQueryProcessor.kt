@@ -30,6 +30,12 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     /** Registered listeners that are notified whenever a DataObject changes. */
     private val changePublishers: MutableList<ModelChangePublisher> = mutableListOf()
 
+    /** When true, change notifications are queued rather than fired immediately. */
+    private var batchMode = false
+
+    /** Objects changed during a batch; deduplicated so each fires exactly once. */
+    private val pendingNotifications = LinkedHashSet<DataObject>()
+
     fun addChangePublisher(publisher: ModelChangePublisher) {
         changePublishers.add(publisher)
     }
@@ -38,7 +44,30 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
         changePublishers.remove(publisher)
     }
 
+    /** Begin a notification batch. Notifications are deferred until [commitBatch]. */
+    fun beginBatch() {
+        batchMode = true
+    }
+
+    /** Commit the batch: fire one notification per changed object, then exit batch mode. */
+    fun commitBatch() {
+        batchMode = false
+        val snapshot = pendingNotifications.toList()
+        pendingNotifications.clear()
+        for (obj in snapshot) {
+            fireNotification(obj)
+        }
+    }
+
     private fun notifyChange(obj: DataObject) {
+        if (batchMode) {
+            pendingNotifications.add(obj)
+            return
+        }
+        fireNotification(obj)
+    }
+
+    private fun fireNotification(obj: DataObject) {
         println("object change notification --> " + obj.toString())
         if (changePublishers.isEmpty()) return
         val json = dataObjectToJson(obj)
