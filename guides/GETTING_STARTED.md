@@ -110,6 +110,11 @@ logging {
   level = "INFO"
   consoleOutput = true
 }
+
+engine {
+  # Default tick delay for newly created environments (can be overridden via /setTickDelay)
+  defaultTickDelayMs = 1000
+}
 ```
 
 ### Configuration options
@@ -121,6 +126,7 @@ logging {
 | `websocket.enabled` | Boolean | true | Enable WebSocket broadcaster |
 | `websocket.queueTimeoutMs` | Long | 1000 | Message queue timeout |
 | `logging.level` | String | "INFO" | Log level (DEBUG, INFO, WARN, ERROR) |
+| `engine.defaultTickDelayMs` | Int | 1000 | Default tick delay (ms) for new environments |
 
 ## Main Components
 

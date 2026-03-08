@@ -41,11 +41,17 @@ data class EngineTracingConfig(
     val consoleOutput: Boolean = false
 )
 
+data class EngineConfig(
+    /** Default tick delay in milliseconds applied to every newly created environment. */
+    val defaultTickDelayMs: Int = 1000
+)
+
 data class ApplicationConfig(
     val server: ServerConfig = ServerConfig(),
     val websocket: WebSocketConfig = WebSocketConfig(),
     val logging: LoggingConfig = LoggingConfig(),
-    val engineTracing: EngineTracingConfig = EngineTracingConfig()
+    val engineTracing: EngineTracingConfig = EngineTracingConfig(),
+    val engine: EngineConfig = EngineConfig()
 ) {
     companion object {
         /**
@@ -78,6 +84,7 @@ data class ApplicationConfig(
             var tracingEnabled = false
             var tracingLogDirectory: String? = null
             var tracingConsoleOutput = false
+            var defaultTickDelayMs = 1000
 
             // Simple parsing logic for the conf file
             content.lines().forEach { line ->
@@ -114,6 +121,9 @@ data class ApplicationConfig(
                     trimmed.contains("tracingConsoleOutput =") -> {
                         tracingConsoleOutput = extractValue(trimmed).toBoolean()
                     }
+                    trimmed.contains("defaultTickDelayMs =") -> {
+                        defaultTickDelayMs = extractValue(trimmed).toIntOrNull() ?: 1000
+                    }
                 }
             }
 
@@ -125,7 +135,8 @@ data class ApplicationConfig(
                     enabled = tracingEnabled,
                     logDirectory = tracingLogDirectory,
                     consoleOutput = tracingConsoleOutput
-                )
+                ),
+                engine = EngineConfig(defaultTickDelayMs = defaultTickDelayMs)
             )
         }
 

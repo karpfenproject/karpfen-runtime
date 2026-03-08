@@ -111,6 +111,8 @@ class MacroCodeTransformerDetailedTest {
                     if distance < closest_distance :
                         closest_distance = distance
                         closest_obstacle = $(obstacle)
+                    endif
+                endfor
                 return $(closest_obstacle)
                 """.trimIndent()
             ))
@@ -437,12 +439,12 @@ class MacroCodeTransformerDetailedTest {
     fun `generated code indents inline code inside function body`() {
         val turtle = mqp.getDataObjectById("turtle")
         val result = transformer.transformInlineCode("x = 1\nreturn x", turtle)
-        // Each line of user code should be indented (4 spaces) inside __karpfen_main__
+        // Each line of user code should be indented (tab) inside __karpfen_main__
         val lines = result.lines()
         val mainIdx = lines.indexOfFirst { it.contains("def __karpfen_main__():") }
         assertTrue(mainIdx >= 0)
-        // Next lines should be indented
-        assertTrue(lines[mainIdx + 1].startsWith("    "))
+        // Next lines should be indented with a tab
+        assertTrue(lines[mainIdx + 1].startsWith("\t"))
     }
 
     // ---- get_closest_obstacle pattern tests ----

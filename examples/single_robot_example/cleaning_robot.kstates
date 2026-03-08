@@ -141,6 +141,8 @@ STATEMACHINE ATTACHED TO "Robot" {
                         if distance < closest_distance :
                             closest_distance = distance
                             closest_obstacle = $(obstacle)
+                        endif
+                    endfor
                     return $(closest_obstacle)
                 }
             }
@@ -158,6 +160,8 @@ STATEMACHINE ATTACHED TO "Robot" {
                         if distance < closest_distance :
                             closest_distance = distance
                             closest_wall = $(wall)
+                        endif
+                    endfor
                     return $(closest_wall)
                 }
             }

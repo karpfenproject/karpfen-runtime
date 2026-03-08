@@ -136,8 +136,11 @@ class MacroProcessorDetailedTest {
                     if distance < closest_distance :
                         closest_distance = distance
                         closest_obstacle = obstacle
+                    endif
+                endfor
                 if closest_obstacle is not None :
                     return closest_obstacle
+                endif
                 return None
                 """.trimIndent()
             ))

@@ -26,12 +26,16 @@ fun main() {
     println("[Main]   WebSocket enabled: ${config.websocket.enabled}")
     println("[Main]   Log level: ${config.logging.level}")
     println("[Main]   Engine tracing: ${config.engineTracing.enabled}")
+    println("[Main]   Default tick delay: ${config.engine.defaultTickDelayMs}ms")
 
     // Apply engine tracing configuration
     if (config.engineTracing.enabled) {
         EnvironmentHandler.traceLogDirectory = config.engineTracing.logDirectory
         EnvironmentHandler.traceConsoleOutput = config.engineTracing.consoleOutput
     }
+
+    // Apply engine configuration
+    EnvironmentHandler.defaultTickDelayMs = config.engine.defaultTickDelayMs
 
     val sessionManager = EnvironmentHandler.clientSessionManager
     val server = KtorServer(

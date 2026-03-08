@@ -34,8 +34,11 @@ object EnvironmentHandler {
     /** Whether engine trace entries should also be printed to console. */
     var traceConsoleOutput: Boolean = false
 
+    /** Default tick delay (ms) applied to newly created environments, loaded from application.conf. */
+    var defaultTickDelayMs: Int = 1000
+
     fun createEnv(key: String): Environment {
-        val env = Environment(key)
+        val env = Environment(key, tickDelayMS = defaultTickDelayMs)
         envs[key] = env
         return env
     }

@@ -48,6 +48,7 @@ class MacroCodeTransformer(
     fun transformInlineCode(code: String, contextObj: DataObject): String {
         val functionDefs = mutableListOf<String>()
         val resolvedCode = resolveCode(code, contextObj, functionDefs, mutableSetOf())
+        val rewrittenCode = PythonIndentationRewriter.rewrite(resolvedCode, baseDepth = 1)
         val sb = StringBuilder()
         sb.appendLine("import json")
         sb.appendLine()
@@ -60,9 +61,7 @@ class MacroCodeTransformer(
 
         // Wrap the inline code in a main block that prints the result as JSON
         sb.appendLine("def __karpfen_main__():")
-        for (line in resolvedCode.lines()) {
-            sb.appendLine("    $line")
-        }
+        sb.appendLine(rewrittenCode)
         sb.appendLine()
         sb.appendLine("__result__ = __karpfen_main__()")
         sb.appendLine("if __result__ is not None:")
@@ -89,11 +88,8 @@ class MacroCodeTransformer(
         val functionDefs = mutableListOf<String>()
         val code = macro.definition.codeBlock.code
 
-        // For a full macro, the $(paramName) references refer to the macro's TAKES parameters
-        // which have already been resolved. We create a temporary DataObject-like context approach:
-        // Instead, we do a two-pass: first resolve @macro calls, then replace $(param->...) with
-        // the pre-resolved argument values.
         val resolvedCode = resolveFullMacroCode(code, macro, resolvedArgs, functionDefs, mutableSetOf())
+        val rewrittenCode = PythonIndentationRewriter.rewrite(resolvedCode, baseDepth = 1)
 
         val sb = StringBuilder()
         sb.appendLine("import json")
@@ -105,9 +101,7 @@ class MacroCodeTransformer(
         }
 
         sb.appendLine("def __karpfen_main__():")
-        for (line in resolvedCode.lines()) {
-            sb.appendLine("    $line")
-        }
+        sb.appendLine(rewrittenCode)
         sb.appendLine()
         sb.appendLine("__result__ = __karpfen_main__()")
         sb.appendLine("if __result__ is not None:")
@@ -341,13 +335,11 @@ class MacroCodeTransformer(
         // For the macro body, $(paramName) references refer to the macro's parameters.
         // We need to replace them with Python variable references.
         val resolvedBody = resolveMacroBodyForFunction(body, macro, functionDefs, alreadyResolved)
+        val rewrittenBody = PythonIndentationRewriter.rewrite(resolvedBody, baseDepth = 1)
 
         val sb = StringBuilder()
-        sb.appendLine("def ${ macro.name}($params):")
-        for (line in resolvedBody.lines()) {
-            if (line.isBlank()) continue
-            sb.appendLine("    $line")
-        }
+        sb.appendLine("def ${macro.name}($params):")
+        sb.append(rewrittenBody)
         return sb.toString()
     }
 
@@ -363,13 +355,11 @@ class MacroCodeTransformer(
         val body = macro.definition.codeBlock.code
 
         val resolvedBody = resolveMacroBodyForFunction(body, macro, functionDefs, alreadyResolved)
+        val rewrittenBody = PythonIndentationRewriter.rewrite(resolvedBody, baseDepth = 1)
 
         val sb = StringBuilder()
         sb.appendLine("def ${macro.name}($params):")
-        for (line in resolvedBody.lines()) {
-            if (line.isBlank()) continue
-            sb.appendLine("    $line")
-        }
+        sb.append(rewrittenBody)
         return sb.toString()
     }
 
