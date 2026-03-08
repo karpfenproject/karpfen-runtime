@@ -19,7 +19,7 @@ States can be nested. The engine maintains a **state stack** — an ordered list
 
 ```
 Example: stack = [drive, drive fast]
-         ↑ outer    ↑ inner (current)
+                  ↑ outer    ↑ inner (current)
 ```
 
 - **ENTRY** is executed top-down for every state in the stack that was newly entered.
