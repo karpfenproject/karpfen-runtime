@@ -1,0 +1,12 @@
+# ── Build artefacts (never baked into the image) ----------------------------
+build/
+**/build/
+.gradle/
+**/.gradle/
+
+# ── Runtime log / trace output ----------------------------------------------
+logs/
+
+# ── Editor / OS noise -------------------------------------------------------
+.DS_Store
+*.swp

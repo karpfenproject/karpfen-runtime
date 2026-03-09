@@ -63,22 +63,46 @@ karpfen-runtime/
 
 ## Build and Run
 
-### Build the project
+The recommended way to start the server is via the provided shell scripts.  They handle the Gradle build step for you and require no manual `application.conf` editing — configure the file once, then just run the script.
+
+### Option A – Local (native Java + Python)
+
+**Prerequisites:** Java 21+, Python 3.12+
+
+```bash
+# from the karpfen-runtime/ directory
+./run_local.sh
+
+# or from the repository root
+./run_local.sh
+```
+
+Builds the distribution with `./gradlew installDist` and starts `./build/install/karpfen-runtime/bin/karpfen-runtime` in the foreground. Press `Ctrl+C` to stop.
+
+### Option B – Docker (Debian Trixie)
+
+**Prerequisites:** Docker Engine (or Docker Desktop)
+
+```bash
+# from the karpfen-runtime/ directory (optional HOST_LOG_DIR argument)
+./run_docker.sh [HOST_LOG_DIR]
+
+# or from the repository root
+./run_docker.sh [HOST_LOG_DIR]
+```
+
+Multi-stage build: a `eclipse-temurin:21-jdk` builder stage compiles the project; the resulting distribution is copied into a `debian:trixie-slim` runtime stage that installs only `openjdk-21-jre-headless` and `python3`.  The container is started with `--rm` and removed automatically on exit.
+
+`HOST_LOG_DIR` is an optional host path where engine trace log files are written (default: `./logs` relative to `karpfen-runtime/`).  See [Trace Logging](#trace-logging) below.
+
+### Manually (Gradle)
 
 ```powershell
 ./gradlew build
-```
-
-Output JAR: `build/libs/karpfen-runtime-1.0-SNAPSHOT.jar`
-
-### Run the server
-
-Using Gradle:
-```powershell
 ./gradlew run
 ```
 
-Or directly with Java:
+Direct JAR execution:
 ```powershell
 java -jar build/libs/karpfen-runtime-1.0-SNAPSHOT.jar
 ```
@@ -91,29 +115,39 @@ Press `Ctrl+C` to gracefully shutdown.
 
 ## Configuration
 
-Runtime configuration is loaded from `application.conf` in the project root.
+Runtime configuration is loaded from `application.conf` in the `karpfen-runtime/` directory.  Edit this file **before** starting the server — neither run script overwrites it.
 
-### Example configuration
+### Full configuration reference
 
 ```conf
+# ── Server ------------------------------------------------------------------
 server {
   host = "127.0.0.1"
   port = 8080
 }
 
+# ── WebSocket ---------------------------------------------------------------
 websocket {
   queueTimeoutMs = 1000
-  enabled = true
+  enabled        = true
 }
 
+# ── Logging -----------------------------------------------------------------
 logging {
-  level = "INFO"
-  consoleOutput = true
+  level         = "INFO"   # DEBUG | INFO | WARN | ERROR
+  consoleOutput = false
 }
 
+# ── Engine ------------------------------------------------------------------
 engine {
-  # Default tick delay for newly created environments (can be overridden via /setTickDelay)
-  defaultTickDelayMs = 1000
+  defaultTickDelayMs = 50
+}
+
+# ── Engine Tracing ----------------------------------------------------------
+engineTracing {
+  tracingEnabled      = false
+  tracingLogDirectory = "logs"   # local: relative path; Docker: "/app/logs"
+  tracingConsoleOutput = false
 }
 ```
 
@@ -121,12 +155,41 @@ engine {
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `server.host` | String | "127.0.0.1" | Server bind address |
-| `server.port` | Int | 8080 | Server listen port |
-| `websocket.enabled` | Boolean | true | Enable WebSocket broadcaster |
-| `websocket.queueTimeoutMs` | Long | 1000 | Message queue timeout |
-| `logging.level` | String | "INFO" | Log level (DEBUG, INFO, WARN, ERROR) |
-| `engine.defaultTickDelayMs` | Int | 1000 | Default tick delay (ms) for new environments |
+| `server.host` | String | `"127.0.0.1"` | Server bind address. `run_docker.sh` overrides this to `"0.0.0.0"` automatically; no manual change needed. |
+| `server.port` | Int | `8080` | HTTP and WebSocket listen port. |
+| `websocket.enabled` | Boolean | `true` | Enable WebSocket broadcaster. |
+| `websocket.queueTimeoutMs` | Long | `1000` | Message queue drain timeout (ms). |
+| `logging.level` | String | `"INFO"` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR`. |
+| `logging.consoleOutput` | Boolean | `true` | Print log lines to stdout. |
+| `engine.defaultTickDelayMs` | Int | `1000` | Default tick delay (ms) for new environments (overridable via `/setTickDelay`). |
+| `engineTracing.tracingEnabled` | Boolean | `false` | Write per-environment execution trace log files. |
+| `engineTracing.tracingLogDirectory` | String | `null` | Directory for trace log files (see below). |
+| `engineTracing.tracingConsoleOutput` | Boolean | `false` | Also print trace lines to stdout. |
+
+### Trace logging
+
+When `tracingEnabled = true` the runtime writes one log file per environment to the directory given by `tracingLogDirectory`.
+
+**Local run** — use a relative path (resolved from `karpfen-runtime/`):
+```conf
+engineTracing {
+  tracingEnabled      = true
+  tracingLogDirectory = "logs"
+}
+```
+
+**Docker run** — set the path to the container-side mount point `/app/logs`.  `run_docker.sh` maps this to a host directory so that trace files survive after the container is removed:
+```conf
+engineTracing {
+  tracingEnabled      = true
+  tracingLogDirectory = "/app/logs"
+}
+```
+
+Then start with a custom log location:
+```bash
+./run_docker.sh /path/to/my/traces
+```
 
 ## Main Components
 
@@ -374,7 +437,7 @@ server {
 }
 ```
 
-Then rebuild and run.
+Then restart the server.
 
 ### Build fails
 

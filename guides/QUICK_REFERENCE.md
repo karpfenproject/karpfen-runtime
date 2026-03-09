@@ -14,10 +14,22 @@ All tests: PASSING
 
 ## 🚀 How to Run
 
+### Local (native Java 21+ + Python 3.12+)
+
 ```bash
-./gradlew build
-./gradlew run
+# from karpfen-runtime/ or repo root
+./run_local.sh
 ```
+
+### Docker (Debian Trixie)
+
+```bash
+# from karpfen-runtime/ or repo root
+./run_docker.sh                     # logs → karpfen-runtime/logs/
+./run_docker.sh /path/to/host/logs  # custom host log directory
+```
+
+Edit `karpfen-runtime/application.conf` before running either script — neither script overwrites it.
 
 Default URLs:
 - HTTP: `http://127.0.0.1:8080`
@@ -138,6 +150,14 @@ server {
   port = 8081
 }
 ```
+
+### Docker: Port Not Reachable from Host
+Set `server.host = "0.0.0.0"` in `application.conf` so the server binds to all interfaces inside the container.
+
+### Docker: No Trace Files on Host
+1. Confirm `tracingEnabled = true` and `tracingLogDirectory = "/app/logs"` in `application.conf`.
+2. Confirm the `HOST_LOG_DIR` passed to `run_docker.sh` exists and is writable.
+3. The `-v` volume mount uses absolute paths; `run_docker.sh` resolves the path automatically.
 
 ### Build Failures
 ```bash
