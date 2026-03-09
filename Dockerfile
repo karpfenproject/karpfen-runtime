@@ -30,6 +30,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
            openjdk-21-jre-headless \
            python3 \
+           python3-pip \
+    && pip3 install --break-system-packages \
+           numpy \
+           scipy \
+           sympy \
+           pandas \
+           regex \
+           python-dateutil \
+           chardet \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
