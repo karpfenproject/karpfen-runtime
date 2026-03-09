@@ -118,12 +118,17 @@ class Engine(
                 metamodel, model, stateMachine.macros, modelElementId, modelQueryProcessor
             )
             macroProcessors.add(macroProcessor)
+            // Each state machine gets its own EventProcessor so that event consumption
+            // (marking an event as "processed") is tracked independently per SM.
+            // Without this, the first SM to consume EVENT("public","start") would mark
+            // it processed for all other SMs sharing the same engineId.
+            val smEventProcessor = EventProcessor("$engineId-$modelElementId", eventBus)
             val transitionProcessor = TransitionProcessor(
                 stateMachine, metamodel, model, modelElementId,
-                macroProcessor, smQueryHelper, modelQueryProcessor, eventProcessor
+                macroProcessor, smQueryHelper, modelQueryProcessor, smEventProcessor
             )
             val actionProcessor = ActionProcessor(
-                macroProcessor, modelQueryProcessor, eventProcessor, modelElementId
+                macroProcessor, modelQueryProcessor, smEventProcessor, modelElementId
             )
 
             val initialStack = smQueryHelper.getInitialStateStack()
@@ -148,6 +153,7 @@ class Engine(
                 actionProcessor = actionProcessor,
                 stateStack = initialStack,
                 // All states in the initial stack need their ENTRY blocks executed
+                // (note: each context was given its own EventProcessor above)
                 notEnteredSubstack = initialStack.toMutableList()
             )
         }
