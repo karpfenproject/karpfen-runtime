@@ -17,11 +17,9 @@ Lightweight runtime server for Karpfen models with an HTTP API and WebSocket sup
 - [KModel Grammar Guide](https://github.com/karpfenproject/karpfen-dsl-tools/blob/main/guides/kmodel_grammar_guide.md)
 - [KStates Grammar Guide](https://github.com/karpfenproject/karpfen-dsl-tools/blob/main/guides/kstates_grammar_guide.md)
 
-## Build
+## ⭐ Demos ⭐
 
-```bash
-./gradlew build
-```
+You find a demo for a simulation of a cyber-physical setting using multiple concurrent statecharts and a world model here [Turtle Robot Demo](https://github.com/karpfenproject/robot-model-js-client-demo)
 
 ## License
 
