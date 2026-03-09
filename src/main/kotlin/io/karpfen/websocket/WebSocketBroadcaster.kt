@@ -28,6 +28,10 @@ class WebSocketBroadcaster(
     private var isRunning = false
     private lateinit var broadcasterThread: Thread
 
+    // Track when a client was first seen without an active session (clientId:envKey -> timestamp)
+    private val missingSessionTimestamps = mutableMapOf<String, Long>()
+    private val clientTimeoutMs = 10_000L
+
     fun start() {
         if (isRunning) {
             println("[WebSocketBroadcaster] Already running")
@@ -59,15 +63,28 @@ class WebSocketBroadcaster(
     private fun handleOutgoingMessage(message: OutgoingMessage) {
         val clientSession = sessionManager.getSessionForClient(message.environmentKey, message.clientId)
         if (clientSession == null) {
-            println("[WebSocketBroadcaster] No active session for client ${message.clientId} in environment ${message.environmentKey}")
+            val key = "${message.clientId}:${message.environmentKey}"
+            val now = System.currentTimeMillis()
+            val firstSeen = missingSessionTimestamps.getOrPut(key) { now }
+
+            if (now - firstSeen >= clientTimeoutMs) {
+                // Auto-unsubscribe the stale client after timeout
+                println("[WebSocketBroadcaster] Client ${message.clientId} timed out after ${clientTimeoutMs}ms without session — removing subscriptions")
+                sessionManager.unsubscribeFromObservatory(message.environmentKey, message.clientId)
+                missingSessionTimestamps.remove(key)
+            }
+            // Silently drop the message — no spam logging
             return
         }
+
+        // Client is active, clear any tracked missing timestamp
+        val key = "${message.clientId}:${message.environmentKey}"
+        missingSessionTimestamps.remove(key)
 
         try {
             runBlocking {
                 clientSession.session.send(message.toJson())
             }
-            //println("[WebSocketBroadcaster] Sent message to client ${message.clientId}: ${message.messageType}")
         } catch (e: Exception) {
             println("[WebSocketBroadcaster] Failed to send message to client ${message.clientId}: ${e.message}")
         }

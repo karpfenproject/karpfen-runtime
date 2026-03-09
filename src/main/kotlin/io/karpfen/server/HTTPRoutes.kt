@@ -29,6 +29,8 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
+import org.json.JSONArray
+import org.json.JSONObject
 
 object HTTPRoutes {
     fun configure(application: Application) {
@@ -192,6 +194,52 @@ object HTTPRoutes {
 
             get("/health") {
                 call.respond(mapOf("status" to "ok"))
+            }
+
+            // --- Observatory endpoints ---
+
+            get("/observatory/environments") {
+                try {
+                    val envs = APIService.listActiveEnvironments()
+                    val jsonArray = JSONArray()
+                    for (env in envs) {
+                        val obj = JSONObject()
+                        obj.put("envKey", env["envKey"])
+                        obj.put("modelElements", JSONArray(env["modelElements"] as List<*>))
+                        jsonArray.put(obj)
+                    }
+                    call.respond(HttpStatusCode.OK, jsonArray.toString())
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            get("/observatory/statemachine") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val modelElement = call.request.queryParameters["modelElement"]
+                        ?: throw IllegalArgumentException("Missing required parameter: modelElement")
+                    val source = APIService.getStateMachineSource(envKey, modelElement)
+                    call.respond(HttpStatusCode.OK, source)
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            post("/observatory/registerClient") {
+                try {
+                    val clientId = call.request.queryParameters["clientId"]
+                        ?: throw IllegalArgumentException("Missing required parameter: clientId")
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val modelElement = call.request.queryParameters["modelElement"]
+                        ?: throw IllegalArgumentException("Missing required parameter: modelElement")
+                    val accessKey = APIService.registerObservatoryClient(clientId, envKey, modelElement)
+                    call.respond(HttpStatusCode.OK, accessKey)
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
             }
         }
     }

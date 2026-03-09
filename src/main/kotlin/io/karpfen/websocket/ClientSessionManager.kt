@@ -35,6 +35,9 @@ class ClientSessionManager {
     // Map of environmentKey -> clientId -> list of subscribed domains
     private val domainSubscriptions = mutableMapOf<String, MutableMap<String, MutableSet<String>>>()
 
+    // Map of environmentKey -> clientId -> observed modelElementId
+    private val observatorySubscriptions = mutableMapOf<String, MutableMap<String, String>>()
+
     // Queue for outgoing messages to be broadcasted asynchronously
     private val outgoingMessageQueue = LinkedBlockingQueue<OutgoingMessage>()
 
@@ -267,6 +270,55 @@ class ClientSessionManager {
             clientSessions.remove(environmentKey)
         } finally {
             sessionsLock.writeLock().unlock()
+        }
+    }
+
+    /**
+     * Subscribes a client to observatory trace and state updates for an environment.
+     */
+    fun subscribeToObservatory(environmentKey: String, clientId: String, modelElementId: String) {
+        subscriptionsLock.writeLock().lock()
+        try {
+            observatorySubscriptions.getOrPut(environmentKey) { mutableMapOf() }[clientId] = modelElementId
+        } finally {
+            subscriptionsLock.writeLock().unlock()
+        }
+    }
+
+    /**
+     * Unsubscribes a client from observatory trace and state updates for an environment.
+     */
+    fun unsubscribeFromObservatory(environmentKey: String, clientId: String) {
+        subscriptionsLock.writeLock().lock()
+        try {
+            observatorySubscriptions[environmentKey]?.remove(clientId)
+            if (observatorySubscriptions[environmentKey]?.isEmpty() == true) {
+                observatorySubscriptions.remove(environmentKey)
+            }
+        } finally {
+            subscriptionsLock.writeLock().unlock()
+        }
+    }
+
+    /**
+     * Notifies all observatory-subscribed clients of a trace or state update.
+     */
+    fun notifyObservatory(environmentKey: String, modelElementId: String, messageType: String, payload: String) {
+        subscriptionsLock.readLock().lock()
+        try {
+            observatorySubscriptions[environmentKey]?.forEach { (clientId, subscribedElement) ->
+                if (subscribedElement == modelElementId) {
+                    val message = OutgoingMessage(
+                        environmentKey,
+                        clientId,
+                        messageType,
+                        payload
+                    )
+                    outgoingMessageQueue.offer(message)
+                }
+            }
+        } finally {
+            subscriptionsLock.readLock().unlock()
         }
     }
 

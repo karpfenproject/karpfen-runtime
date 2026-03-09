@@ -24,6 +24,7 @@ data class Environment(
     var metamodel: Metamodel? = null,
     var model: Model? = null,
     val stateMachines: MutableMap<String, StateMachine> = mutableMapOf(), // modelElement -> attached state machine
+    val stateMachineSources: MutableMap<String, String> = mutableMapOf(), // modelElement -> raw kStates DSL text
     var tickDelayMS: Int = 1000,
     /** Time-to-live for events in milliseconds. 0 means events live forever. */
     var eventTtlMs: Long = 0L,

@@ -75,7 +75,52 @@ class EnvironmentThread(
             clientSessionManager.subscribeToDomain(environment.key, dl.clientId, dl.domain)
         }
 
+        // Wire up trace logger to push entries to observatory-subscribed WebSocket clients.
+        val useSimpleTrace = EnvironmentHandler.simpleTrace
+        traceLogger?.addTraceListener { entry ->
+            val escapedMsg = entry.message.replace("\\", "\\\\").replace("\"", "\\\"")
+            val payload: String
+            if (useSimpleTrace) {
+                val short = buildSimpleMessage(entry)
+                val escapedShort = short.replace("\\", "\\\\").replace("\"", "\\\"")
+                payload = """{"timestamp":${entry.timestamp},"modelElementId":"${entry.modelElementId}","eventType":"${entry.eventType.name}","message":"$escapedShort"}"""
+            } else {
+                val detailsJson = entry.details.entries.joinToString(",") { (k, v) ->
+                    val ek = k.replace("\\", "\\\\").replace("\"", "\\\"")
+                    val ev = v.replace("\\", "\\\\").replace("\"", "\\\"")
+                    "\"$ek\":\"$ev\""
+                }
+                payload = """{"timestamp":${entry.timestamp},"modelElementId":"${entry.modelElementId}","eventType":"${entry.eventType.name}","message":"$escapedMsg","details":{$detailsJson}}"""
+            }
+            clientSessionManager.notifyObservatory(environment.key, entry.modelElementId, "trace", payload)
+        }
+
         println("[EnvironmentThread] Setup complete for environment ${environment.key}")
+    }
+
+    /**
+     * Builds a concise one-line message for simple trace mode.
+     */
+    private fun buildSimpleMessage(entry: EngineTraceLogger.TraceEntry): String {
+        val d = entry.details
+        return when (entry.eventType) {
+            EngineTraceLogger.TraceEventType.TICK_START -> "tick #${d["tick"] ?: "?"} [${d["stack"] ?: ""}]"
+            EngineTraceLogger.TraceEventType.TICK_END -> "tick end"
+            EngineTraceLogger.TraceEventType.INITIAL_STATE -> "initial -> ${d["stack"] ?: entry.message}"
+            EngineTraceLogger.TraceEventType.STATE_ENTRY_EXEC -> "entry: ${entry.message}"
+            EngineTraceLogger.TraceEventType.STATE_ENTRY_SKIP -> "entry skip: ${entry.message}"
+            EngineTraceLogger.TraceEventType.STATE_DO_EXEC -> "do: ${entry.message}"
+            EngineTraceLogger.TraceEventType.STATE_DO_SKIP -> "do skip: ${entry.message}"
+            EngineTraceLogger.TraceEventType.TRANSITION_FIRED -> "${d["from"] ?: "?"} -> ${d["to"] ?: "?"}"
+            EngineTraceLogger.TraceEventType.TRANSITION_SKIPPED_LOOP -> "skip loop: ${d["from"] ?: "?"} -> ${d["to"] ?: "?"}"
+            EngineTraceLogger.TraceEventType.TRANSITION_CHECK -> "check: ${entry.message}"
+            EngineTraceLogger.TraceEventType.EVENT_RECEIVED -> "event in: ${entry.message}"
+            EngineTraceLogger.TraceEventType.EVENT_CONSUMED -> "event ok: ${entry.message}"
+            EngineTraceLogger.TraceEventType.ACTION_ERROR -> "ERR: ${entry.message}"
+            EngineTraceLogger.TraceEventType.ENGINE_ERROR -> "ERR: ${entry.message}"
+            EngineTraceLogger.TraceEventType.ENGINE_START -> "engine start"
+            EngineTraceLogger.TraceEventType.ENGINE_STOP -> "engine stop"
+        }
     }
 
     /** Accepts an externally produced Event and queues it for publication on the bus. */

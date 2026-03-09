@@ -38,7 +38,8 @@ data class LoggingConfig(
 data class EngineTracingConfig(
     val enabled: Boolean = false,
     val logDirectory: String? = null,
-    val consoleOutput: Boolean = false
+    val consoleOutput: Boolean = false,
+    val simpleTrace: Boolean = true
 )
 
 data class EngineConfig(
@@ -84,6 +85,7 @@ data class ApplicationConfig(
             var tracingEnabled = false
             var tracingLogDirectory: String? = null
             var tracingConsoleOutput = false
+            var simpleTrace = true
             var defaultTickDelayMs = 1000
 
             // Simple parsing logic for the conf file
@@ -121,6 +123,9 @@ data class ApplicationConfig(
                     trimmed.contains("tracingConsoleOutput =") -> {
                         tracingConsoleOutput = extractValue(trimmed).toBoolean()
                     }
+                    trimmed.contains("simpleTrace =") -> {
+                        simpleTrace = extractValue(trimmed).toBoolean()
+                    }
                     trimmed.contains("defaultTickDelayMs =") -> {
                         defaultTickDelayMs = extractValue(trimmed).toIntOrNull() ?: 1000
                     }
@@ -134,7 +139,8 @@ data class ApplicationConfig(
                 engineTracing = EngineTracingConfig(
                     enabled = tracingEnabled,
                     logDirectory = tracingLogDirectory,
-                    consoleOutput = tracingConsoleOutput
+                    consoleOutput = tracingConsoleOutput,
+                    simpleTrace = simpleTrace
                 ),
                 engine = EngineConfig(defaultTickDelayMs = defaultTickDelayMs)
             )

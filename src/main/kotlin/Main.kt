@@ -33,6 +33,7 @@ fun main() {
         EnvironmentHandler.traceLogDirectory = config.engineTracing.logDirectory
         EnvironmentHandler.traceConsoleOutput = config.engineTracing.consoleOutput
     }
+    EnvironmentHandler.simpleTrace = config.engineTracing.simpleTrace
 
     // Apply engine configuration
     EnvironmentHandler.defaultTickDelayMs = config.engine.defaultTickDelayMs

@@ -34,6 +34,9 @@ object EnvironmentHandler {
     /** Whether engine trace entries should also be printed to console. */
     var traceConsoleOutput: Boolean = false
 
+    /** When true, observatory trace messages use a compact format. */
+    var simpleTrace: Boolean = true
+
     /** Default tick delay (ms) applied to newly created environments, loaded from application.conf. */
     var defaultTickDelayMs: Int = 1000
 
@@ -51,14 +54,14 @@ object EnvironmentHandler {
         val env = envs[key] ?: throw IllegalArgumentException("Environment with key '$key' does not exist.")
         activeEnvs[key] = env
 
-        val traceLogger = if (traceLogDirectory != null || traceConsoleOutput) {
-            val logFile = traceLogDirectory?.let { "$it/engine-trace-$key.log" }
-            EngineTraceLogger(
-                engineId = key,
-                logFilePath = logFile,
-                consoleOutput = traceConsoleOutput
-            )
-        } else null
+        // Always create the trace logger so that observatory WebSocket listeners work
+        // even when file/console tracing is disabled.
+        val logFile = traceLogDirectory?.let { "$it/engine-trace-$key.log" }
+        val traceLogger = EngineTraceLogger(
+            engineId = key,
+            logFilePath = logFile,
+            consoleOutput = traceConsoleOutput
+        )
 
         val envThread = EnvironmentThread(env, traceLogger)
         envThread.setup()

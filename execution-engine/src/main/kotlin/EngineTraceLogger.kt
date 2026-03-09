@@ -84,6 +84,9 @@ class EngineTraceLogger(
     private val _traces = CopyOnWriteArrayList<TraceEntry>()
     val traces: List<TraceEntry> get() = _traces.toList()
 
+    /** External listeners notified on each new trace entry. */
+    private val traceListeners = CopyOnWriteArrayList<(TraceEntry) -> Unit>()
+
     private var fileWriter: PrintWriter? = null
     private val fileLock = Any()
 
@@ -128,6 +131,19 @@ class EngineTraceLogger(
                 fileWriter?.flush()
             }
         }
+
+        for (listener in traceListeners) {
+            try {
+                listener(entry)
+            } catch (_: Exception) { }
+        }
+    }
+
+    /**
+     * Registers a listener that is called for every new trace entry.
+     */
+    fun addTraceListener(listener: (TraceEntry) -> Unit) {
+        traceListeners.add(listener)
     }
 
     /**

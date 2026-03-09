@@ -420,12 +420,13 @@ class Engine(
             }
         }
         // Close all persistent Python sessions
-        for (mp in macroProcessors) {
+        val processors = ArrayList(macroProcessors)
+        macroProcessors.clear()
+        for (mp in processors) {
             try {
                 mp.close()
             } catch (_: Exception) { }
         }
-        macroProcessors.clear()
         traceLogger?.close()
     }
 }

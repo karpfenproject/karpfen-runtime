@@ -65,7 +65,9 @@ object APIService {
     fun receiveStateMachine(envKey: String, modelElement: String, stateMachineData: String) {
         assertEnv(envKey)
         val stateMachine = KstatesDSLConverter.parseKstatesString(stateMachineData)
-        EnvironmentHandler.getEnv(envKey)!!.stateMachines[modelElement] = stateMachine
+        val env = EnvironmentHandler.getEnv(envKey)!!
+        env.stateMachines[modelElement] = stateMachine
+        env.stateMachineSources[modelElement] = stateMachineData
     }
 
     fun updateTickDelay(envKey: String, tickDelayMS: Int) {
@@ -112,6 +114,32 @@ object APIService {
         }
         val accessKey = EnvironmentHandler.registerClientSession(clientId, envKey)
         println("[APIService] Client $clientId registered for environment $envKey with accessKey $accessKey")
+        return accessKey
+    }
+
+    fun listActiveEnvironments(): List<Map<String, Any>> {
+        return EnvironmentHandler.activeEnvs.map { (key, env) ->
+            mapOf(
+                "envKey" to key,
+                "modelElements" to env.stateMachines.keys.toList()
+            )
+        }
+    }
+
+    fun getStateMachineSource(envKey: String, modelElement: String): String {
+        val env = EnvironmentHandler.getEnv(envKey)
+            ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        return env.stateMachineSources[modelElement]
+            ?: throw IllegalArgumentException("No state machine source found for model element '$modelElement' in environment $envKey")
+    }
+
+    fun registerObservatoryClient(clientId: String, envKey: String, modelElement: String): String {
+        if (EnvironmentHandler.getEnv(envKey) == null) {
+            throw IllegalArgumentException("Environment with key $envKey does not exist")
+        }
+        val accessKey = EnvironmentHandler.registerClientSession(clientId, envKey)
+        EnvironmentHandler.clientSessionManager.subscribeToObservatory(envKey, clientId, modelElement)
+        println("[APIService] Observatory client $clientId registered for environment $envKey, element $modelElement with accessKey $accessKey")
         return accessKey
     }
 
