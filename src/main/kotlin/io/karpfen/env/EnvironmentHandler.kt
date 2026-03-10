@@ -40,8 +40,14 @@ object EnvironmentHandler {
     /** Default tick delay (ms) applied to newly created environments, loaded from application.conf. */
     var defaultTickDelayMs: Int = 1000
 
+    /** Default event TTL (ms) applied to newly created environments, loaded from application.conf. 0 means live forever. */
+    var defaultEventTtlMs: Long = 1000
+
+    /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
+    var defaultEventConsumptionOnFire: Boolean = true
+
     fun createEnv(key: String): Environment {
-        val env = Environment(key, tickDelayMS = defaultTickDelayMs)
+        val env = Environment(key, tickDelayMS = defaultTickDelayMs, eventTtlMs = defaultEventTtlMs, eventConsumptionOnFire = defaultEventConsumptionOnFire)
         envs[key] = env
         return env
     }

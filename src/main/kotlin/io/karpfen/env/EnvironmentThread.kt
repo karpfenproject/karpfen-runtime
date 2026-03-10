@@ -45,7 +45,8 @@ class EnvironmentThread(
         environment.stateMachines,
         environment.tickDelayMS,
         sharedEventBus,
-        traceLogger = traceLogger
+        traceLogger = traceLogger,
+        eventConsumptionOnFire = environment.eventConsumptionOnFire
     )
 
     fun setup() {

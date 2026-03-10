@@ -27,6 +27,8 @@ fun main() {
     println("[Main]   Log level: ${config.logging.level}")
     println("[Main]   Engine tracing: ${config.engineTracing.enabled}")
     println("[Main]   Default tick delay: ${config.engine.defaultTickDelayMs}ms")
+    println("[Main]   Default event TTL: ${config.engine.defaultEventTtlMs}ms")
+    println("[Main]   Event consumption on fire: ${config.engine.eventConsumptionOnFire}")
 
     // Apply engine tracing configuration
     if (config.engineTracing.enabled) {
@@ -37,6 +39,8 @@ fun main() {
 
     // Apply engine configuration
     EnvironmentHandler.defaultTickDelayMs = config.engine.defaultTickDelayMs
+    EnvironmentHandler.defaultEventTtlMs = config.engine.defaultEventTtlMs
+    EnvironmentHandler.defaultEventConsumptionOnFire = config.engine.eventConsumptionOnFire
 
     val sessionManager = EnvironmentHandler.clientSessionManager
     val server = KtorServer(

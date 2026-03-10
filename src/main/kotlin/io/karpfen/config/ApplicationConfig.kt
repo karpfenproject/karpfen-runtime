@@ -44,7 +44,11 @@ data class EngineTracingConfig(
 
 data class EngineConfig(
     /** Default tick delay in milliseconds applied to every newly created environment. */
-    val defaultTickDelayMs: Int = 1000
+    val defaultTickDelayMs: Int = 1000,
+    /** Default event TTL in milliseconds applied to every newly created environment. 0 means live forever. */
+    val defaultEventTtlMs: Long = 1000,
+    /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
+    val eventConsumptionOnFire: Boolean = true
 )
 
 data class ApplicationConfig(
@@ -87,6 +91,8 @@ data class ApplicationConfig(
             var tracingConsoleOutput = false
             var simpleTrace = true
             var defaultTickDelayMs = 1000
+            var defaultEventTtlMs = 1000L
+            var eventConsumptionOnFire = true
 
             // Simple parsing logic for the conf file
             content.lines().forEach { line ->
@@ -95,39 +101,53 @@ data class ApplicationConfig(
                 // Skip comments and empty lines
                 if (trimmed.isEmpty() || trimmed.startsWith("#")) return@forEach
 
+                // Normalize whitespace around '=' so aligned values ("key  = value") parse correctly.
+                // Also strip inline comments after the value (e.g. "value   # comment").
+                val normalized = trimmed
+                    .replace(Regex("\\s*=\\s*"), " = ")
+                    .substringBefore("  #")  // strip "  # inline comment" suffix
+                    .substringBefore("\t#")  // strip tab-prefixed inline comment
+                    .trim()
+
                 when {
-                    trimmed.contains("host =") -> {
-                        host = extractValue(trimmed)
+                    normalized.contains("host =") -> {
+                        host = extractValue(normalized)
                     }
-                    trimmed.contains("port =") -> {
-                        port = extractValue(trimmed).toIntOrNull() ?: 8080
+                    normalized.contains("port =") -> {
+                        port = extractValue(normalized).toIntOrNull() ?: 8080
                     }
-                    trimmed.contains("queueTimeoutMs =") -> {
-                        queueTimeoutMs = extractValue(trimmed).toLongOrNull() ?: 1000L
+                    normalized.contains("queueTimeoutMs =") -> {
+                        queueTimeoutMs = extractValue(normalized).toLongOrNull() ?: 1000L
                     }
-                    trimmed.contains("enabled =") && !trimmed.startsWith("#") -> {
-                        wsEnabled = extractValue(trimmed).toBoolean()
+                    normalized.contains("enabled =") && !normalized.startsWith("#") -> {
+                        wsEnabled = extractValue(normalized).toBoolean()
                     }
-                    trimmed.contains("level =") -> {
-                        logLevel = extractValue(trimmed)
+                    normalized.contains("level =") -> {
+                        logLevel = extractValue(normalized)
                     }
-                    trimmed.contains("consoleOutput =") -> {
-                        consoleOutput = extractValue(trimmed).toBoolean()
+                    normalized.contains("consoleOutput =") -> {
+                        consoleOutput = extractValue(normalized).toBoolean()
                     }
-                    trimmed.contains("tracingEnabled =") -> {
-                        tracingEnabled = extractValue(trimmed).toBoolean()
+                    normalized.contains("tracingEnabled =") -> {
+                        tracingEnabled = extractValue(normalized).toBoolean()
                     }
-                    trimmed.contains("tracingLogDirectory =") -> {
-                        tracingLogDirectory = extractValue(trimmed).ifBlank { null }
+                    normalized.contains("tracingLogDirectory =") -> {
+                        tracingLogDirectory = extractValue(normalized).ifBlank { null }
                     }
-                    trimmed.contains("tracingConsoleOutput =") -> {
-                        tracingConsoleOutput = extractValue(trimmed).toBoolean()
+                    normalized.contains("tracingConsoleOutput =") -> {
+                        tracingConsoleOutput = extractValue(normalized).toBoolean()
                     }
-                    trimmed.contains("simpleTrace =") -> {
-                        simpleTrace = extractValue(trimmed).toBoolean()
+                    normalized.contains("simpleTrace =") -> {
+                        simpleTrace = extractValue(normalized).toBoolean()
                     }
-                    trimmed.contains("defaultTickDelayMs =") -> {
-                        defaultTickDelayMs = extractValue(trimmed).toIntOrNull() ?: 1000
+                    normalized.contains("defaultTickDelayMs =") -> {
+                        defaultTickDelayMs = extractValue(normalized).toIntOrNull() ?: 1000
+                    }
+                    normalized.contains("defaultEventTtlMs =") -> {
+                        defaultEventTtlMs = extractValue(normalized).toLongOrNull() ?: 1000L
+                    }
+                    normalized.contains("eventConsumptionOnFire =") -> {
+                        eventConsumptionOnFire = extractValue(normalized).toBoolean()
                     }
                 }
             }
@@ -142,7 +162,7 @@ data class ApplicationConfig(
                     consoleOutput = tracingConsoleOutput,
                     simpleTrace = simpleTrace
                 ),
-                engine = EngineConfig(defaultTickDelayMs = defaultTickDelayMs)
+                engine = EngineConfig(defaultTickDelayMs = defaultTickDelayMs, defaultEventTtlMs = defaultEventTtlMs, eventConsumptionOnFire = eventConsumptionOnFire)
             )
         }
 

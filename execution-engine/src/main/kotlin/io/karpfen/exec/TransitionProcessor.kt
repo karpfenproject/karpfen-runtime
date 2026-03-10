@@ -32,7 +32,9 @@ class TransitionProcessor(
     val macroProcessor: MacroProcessor,
     val stateMachineQueryHelper: StateMachineQueryHelper,
     val modelQueryProcessor: ModelQueryProcessor,
-    val eventProcessor: EventProcessor
+    val eventProcessor: EventProcessor,
+    /** When true (default), events are only consumed when a transition fires. When false, consumed on condition read. */
+    val eventConsumptionOnFire: Boolean = true
 ) {
 
     val transitions = stateMachine.transitions
@@ -78,8 +80,11 @@ class TransitionProcessor(
                 ConditionType.EVENT -> {
                     val ec = condition as EventCondition
                     if (eventProcessor.hasEvent(ec.eventDomain, ec.eventValue)) {
-                        // Consume the event so we don't react to it a second time
-                        eventProcessor.consumeEvent(ec.eventDomain, ec.eventValue)
+                        if (!eventConsumptionOnFire) {
+                            // Consume immediately on condition read (legacy behaviour)
+                            eventProcessor.consumeEvent(ec.eventDomain, ec.eventValue)
+                        }
+                        // When eventConsumptionOnFire = true, Engine.applyTransition handles consumption
                         true
                     } else {
                         false

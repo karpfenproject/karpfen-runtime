@@ -28,6 +28,8 @@ data class Environment(
     var tickDelayMS: Int = 1000,
     /** Time-to-live for events in milliseconds. 0 means events live forever. */
     var eventTtlMs: Long = 0L,
+    /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
+    var eventConsumptionOnFire: Boolean = true,
     val objectObservations: MutableList<Observation> = mutableListOf(),
     val domainListeners: MutableList<DomainListener> = mutableListOf()
 )

@@ -22,6 +22,8 @@ import io.karpfen.io.karpfen.messages.EventBus
 import meta.Metamodel
 import states.StateMachine
 import states.Transition
+import states.conditions.ConditionType
+import states.conditions.EventCondition
 import java.util.UUID
 import kotlin.concurrent.thread
 
@@ -31,11 +33,13 @@ class Engine(
     val statemachineMap: Map<String, StateMachine>,
     val tickDelayMS: Int,
     /** Shared bus for all engines within one environment. Created externally so engines can share it. */
-    val eventBus: EventBus = EventBus(),
+    val eventBus: EventBus = EventBus(), // TTL is configured via application.conf (defaultEventTtlMs); this default is only used in tests that don't supply an explicit bus
     /** Stable unique id for this engine instance; used to track event processing. */
     val engineId: String = UUID.randomUUID().toString(),
     /** Optional trace logger for structured engine execution tracing. */
-    val traceLogger: EngineTraceLogger? = null
+    val traceLogger: EngineTraceLogger? = null,
+    /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
+    val eventConsumptionOnFire: Boolean = true
 ) {
 
     private val dataObservationListeners: MutableMap<String, MutableList<DataObservationListener>> = mutableMapOf()
@@ -125,7 +129,8 @@ class Engine(
             val smEventProcessor = EventProcessor("$engineId-$modelElementId", eventBus)
             val transitionProcessor = TransitionProcessor(
                 stateMachine, metamodel, model, modelElementId,
-                macroProcessor, smQueryHelper, modelQueryProcessor, smEventProcessor
+                macroProcessor, smQueryHelper, modelQueryProcessor, smEventProcessor,
+                eventConsumptionOnFire
             )
             val actionProcessor = ActionProcessor(
                 macroProcessor, modelQueryProcessor, smEventProcessor, modelElementId
@@ -172,6 +177,7 @@ class Engine(
 
             // Purge expired events once per tick
             eventProcessor.purgeExpired()
+            //println(eventProcessor.eventBus.getUnprocessedEvents("public", engineId).size)
 
             for (ctx in contexts) {
                 traceLogger?.log(
@@ -356,6 +362,12 @@ class Engine(
             )
             System.err.println("[Engine] Cannot find state '${transition.toState}' — skipping transition")
             return
+        }
+
+        // Consume the triggering event now that the transition is confirmed to fire
+        if (eventConsumptionOnFire && transition.condition.conditionType == ConditionType.EVENT) {
+            val ec = transition.condition as EventCondition
+            ctx.transitionProcessor.eventProcessor.consumeEvent(ec.eventDomain, ec.eventValue)
         }
 
         // Determine which states need their ENTRY executed.
