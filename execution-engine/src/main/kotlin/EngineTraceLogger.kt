@@ -81,6 +81,7 @@ class EngineTraceLogger(
     }
 
     /** In-memory trace log — thread-safe for concurrent reads/writes. */
+    //FIXME only used for testing so logging into _traces can be disabled in production, otherwise memory leak
     private val _traces = CopyOnWriteArrayList<TraceEntry>()
 
     /** External listeners notified on each new trace entry. */

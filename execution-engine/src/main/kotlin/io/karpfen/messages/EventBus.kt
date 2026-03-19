@@ -40,6 +40,8 @@ class EventBus(
     val defaultTtlMs: Long = 0L
 ) {
     /** domain → list of live events */
+    // TODO: The CopyOnWriteArrayList is not ideal for collections with high write frequency such as this one
+    //  In the current demo cases, not much event action is going on so its okay for now.
     private val buckets: ConcurrentHashMap<String, CopyOnWriteArrayList<Event>> = ConcurrentHashMap()
 
     // ---- Publishing -------------------------------------------------------
