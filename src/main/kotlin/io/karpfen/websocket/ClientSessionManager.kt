@@ -45,30 +45,6 @@ class ClientSessionManager {
     private val pendingRegistrations = mutableMapOf<String, MutableMap<String, String>>()
 
     /**
-     * Registers a new client session for an environment.
-     *
-     * @return The accessKey for this client session
-     */
-    fun registerClientSession(
-        clientId: String,
-        environmentKey: String,
-        session: WebSocketSession
-    ): String {
-        val accessKey = generateAccessKey(clientId, environmentKey)
-
-        sessionsLock.writeLock().lock()
-        try {
-            val envSessions = clientSessions.getOrPut(environmentKey) { mutableMapOf() }
-            envSessions[accessKey] = ClientSession(clientId, environmentKey, accessKey, session)
-        } finally {
-            sessionsLock.writeLock().unlock()
-        }
-
-        println("[ClientSessionManager] Registered client $clientId for environment $environmentKey with accessKey $accessKey")
-        return accessKey
-    }
-
-    /**
      * Unregisters a client session.
      */
     fun unregisterClientSession(environmentKey: String, accessKey: String) {
@@ -242,18 +218,6 @@ class ClientSessionManager {
     }
 
     /**
-     * Returns all active client sessions for an environment.
-     */
-    fun getEnvironmentClients(environmentKey: String): List<ClientSession> {
-        sessionsLock.readLock().lock()
-        try {
-            return clientSessions[environmentKey]?.values?.toList() ?: emptyList()
-        } finally {
-            sessionsLock.readLock().unlock()
-        }
-    }
-
-    /**
      * Closes all sessions for an environment (e.g., when environment stops).
      */
     fun closeEnvironmentSessions(environmentKey: String) {
@@ -275,6 +239,8 @@ class ClientSessionManager {
 
     /**
      * Subscribes a client to observatory trace and state updates for an environment.
+     * @param the model element id is the id of an object most likely a statemachine is attached to.
+     *  Although other objects might be observed, they produce no productive traces.
      */
     fun subscribeToObservatory(environmentKey: String, clientId: String, modelElementId: String) {
         subscriptionsLock.writeLock().lock()

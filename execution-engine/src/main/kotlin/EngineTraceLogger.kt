@@ -82,7 +82,6 @@ class EngineTraceLogger(
 
     /** In-memory trace log — thread-safe for concurrent reads/writes. */
     private val _traces = CopyOnWriteArrayList<TraceEntry>()
-    val traces: List<TraceEntry> get() = _traces.toList()
 
     /** External listeners notified on each new trace entry. */
     private val traceListeners = CopyOnWriteArrayList<(TraceEntry) -> Unit>()
