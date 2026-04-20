@@ -93,7 +93,7 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
   - `envKey` (string): The environment key
 - **Request Body**: Empty
 - **Response**: Empty (200 OK on success)
-- **Description**: Activates the environment and prepares the execution thread. Must be called after metamodel, model, and at least one state machine are set. Must be called **before** `/startEnvironment`.
+- **Description**: Activates the environment and prepares the execution thread. Must be called after metamodel, model, and at least one state machine are set. Must be called before `/startEnvironment`.
 - **Example**:
   ```bash
   curl -X POST "http://localhost:8080/runEnvironment?envKey=env-123"

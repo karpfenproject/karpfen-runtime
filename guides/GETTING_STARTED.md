@@ -115,7 +115,7 @@ Press `Ctrl+C` to gracefully shutdown.
 
 ## Configuration
 
-Runtime configuration is loaded from `application.conf` in the `karpfen-runtime/` directory.  Edit this file **before** starting the server - neither run script overwrites it.
+Runtime configuration is loaded from `application.conf` in the `karpfen-runtime/` directory.  Edit this file before starting the server - neither run script overwrites it.
 
 ### Full configuration reference
 

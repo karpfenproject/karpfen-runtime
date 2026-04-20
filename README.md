@@ -24,3 +24,7 @@ You find a demo for a simulation of a cyber-physical setting using multiple conc
 ## License
 
 Licensed under the Apache License, Version 2.0. See `LICENSE` for details.
+
+---
+
+*Parts of this poject have been developed with the help of generative AI*.

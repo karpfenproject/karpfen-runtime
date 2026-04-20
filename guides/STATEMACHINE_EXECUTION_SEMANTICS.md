@@ -6,7 +6,7 @@ This document describes how the Karpfen execution engine interprets and runs sta
 
 ## Tick-Based Execution
 
-The engine operates in a **discrete tick loop**. Each tick proceeds through two sequential phases for every attached state machine:
+The engine operates in a discrete tick loop. Each tick proceeds through two sequential phases for every attached state machine:
 
 1. **ENTRY phase** – execute `onEntry` blocks for newly entered states (top-down)
 2. **DO phase** – execute the `onDo` block of the innermost (current) state
@@ -15,7 +15,7 @@ After each phase, the engine checks for fireable transitions. A configurable `ti
 
 ## State Stack and Hierarchical States
 
-States can be nested. The engine maintains a **state stack** - an ordered list from the outermost to the innermost active state.
+States can be nested. The engine maintains a state stack - an ordered list from the outermost to the innermost active state.
 
 ```
 Example: stack = [drive, drive fast]
@@ -23,8 +23,8 @@ Example: stack = [drive, drive fast]
 ```
 
 - **ENTRY** is executed top-down for every state in the stack that was newly entered.
-- **DO** is executed **only** for the innermost state.
-- Transitions are checked from **innermost to outermost** - the innermost state has priority.
+- **DO** is executed only for the innermost state.
+- Transitions are checked from innermost to outermost - the innermost state has priority.
 
 ### Initial State
 
@@ -36,7 +36,7 @@ At startup, the engine resolves the initial stack by recursively following state
 
 ### Evaluation Order
 
-Transitions are evaluated **in definition order** within the `TRANSITIONS` block. The first transition whose condition evaluates to `true` (and is not blocked by NOT LOOPING) fires. **Definition order is therefore a priority mechanism.**
+Transitions are evaluated in definition order within the `TRANSITIONS` block. The first transition whose condition evaluates to `true` (and is not blocked by NOT LOOPING) fires. Definition order is therefore a priority mechanism.
 
 ```
 TRANSITIONS {
@@ -48,12 +48,12 @@ TRANSITIONS {
 
 ### When Transitions Are Checked
 
-Transitions are checked at **two points** during a tick:
+Transitions are checked at two points during a tick:
 
 1. **After each ENTRY block** - but only if the ENTRY block contained actions. If `onEntry` is empty, the engine skips the transition check and proceeds to DO. This prevents unconditional transitions from firing before DO gets a chance to execute.
 2. **After the DO block** of the innermost state.
 
-If a transition fires, the tick ends immediately. The new state's ENTRY will run on the **next** tick.
+If a transition fires, the tick ends immediately. The new state's ENTRY will run on the next tick.
 
 ### Unconditional Transitions
 
@@ -65,7 +65,7 @@ A transition without a `CONDITION` block is parsed as `VALUE("true")` - it fires
 |------|--------|----------|
 | **VALUE** | `CONDITION { VALUE("path") }` | Resolves a boolean model property. Literals `"true"` / `"false"` are constants. |
 | **EVAL** | `CONDITION { EVAL { ... } }` | Executes Python code; expects a boolean return value. |
-| **EVENT** | `CONDITION { EVENT("domain", "name") }` | Checks the event bus for a matching event. If found, the event is **consumed** (marked as processed by this engine). |
+| **EVENT** | `CONDITION { EVENT("domain", "name") }` | Checks the event bus for a matching event. If found, the event is consumed (marked as processed by this engine). |
 
 > **Side effect**: EVENT conditions consume the event as soon as the condition is evaluated as `true`, even if the transition is later blocked by NOT LOOPING. This is a known trade-off for lazy evaluation.
 
@@ -73,15 +73,15 @@ A transition without a `CONDITION` block is parsed as `VALUE("true")` - it fires
 
 ## NOT LOOPING
 
-A transition marked `NOT LOOPING` will **not fire consecutively**. If the exact same transition was the last one fired by this state machine context, it is skipped.
+A transition marked `NOT LOOPING` will not fire consecutively. If the exact same transition was the last one fired by this state machine context, it is skipped.
 
 ```
 TRANSITION "drive" -> "drive fast" NOT LOOPING { ... }
 ```
 
 **Key semantics:**
-- NOT LOOPING compares the transition **object identity**, not just from/to names.
-- When a NOT LOOPING transition is skipped, the engine continues evaluating the **next** transition in definition order. This is how fallback transitions (e.g., `drive → observe`) get a chance to fire.
+- NOT LOOPING compares the transition object identity, not just from/to names.
+- When a NOT LOOPING transition is skipped, the engine continues evaluating the next transition in definition order. This is how fallback transitions (e.g., `drive → observe`) get a chance to fire.
 - Once a *different* transition fires, the NOT LOOPING block is reset - the previously blocked transition can fire again on the next evaluation.
 
 **Example cycle:**
@@ -115,13 +115,13 @@ Tick 12: drive → drive fast   (fires again - last was observe→drive)
 
 ### Model References in EVAL / MACRO
 
-`$(path)` references inside EVAL blocks are resolved **at code-generation time** (before Python execution). The current model values are substituted as Python literals:
+`$(path)` references inside EVAL blocks are resolved at code-generation time (before Python execution). The current model values are substituted as Python literals:
 
 ```
 SET("y", EVAL { return $(boundingBox->position->y) + 0.3 * $(direction->y) })
 ```
 
-This means `$(boundingBox->position->y)` is replaced by the **current** value of `y` each time the EVAL is executed. Changes from previous ticks are visible.
+This means `$(boundingBox->position->y)` is replaced by the current value of `y` each time the EVAL is executed. Changes from previous ticks are visible.
 
 ---
 
@@ -129,7 +129,7 @@ This means `$(boundingBox->position->y)` is replaced by the **current** value of
 
 ### Domains
 
-Events are organized into **domain buckets** (e.g., `"public"`, `"local"`). Domains are created lazily when the first event with a new domain name is published.
+Events are organized into domain buckets (e.g., `"public"`, `"local"`). Domains are created lazily when the first event with a new domain name is published.
 
 ### Event Sources
 
@@ -145,10 +145,10 @@ Every event has a TTL. Once `currentTime - event.timestamp > ttlMs`, the event i
 
 ### Event Consumption Model
 
-Events are **not deleted** when consumed. Instead, the consuming engine's ID is recorded on the event. This means:
+Events are not deleted when consumed. Instead, the consuming engine's ID is recorded on the event. This means:
 
 - Multiple engines can independently react to the same event.
-- The same engine will **not** react to the same event twice.
+- The same engine will not react to the same event twice.
 - The event dies naturally when its TTL expires.
 
 ### Shared Event Bus
@@ -159,17 +159,17 @@ All engines within the same environment share a single `EventBus`. Events publis
 
 ## Threading Model
 
-- Each environment runs its engine on a **dedicated thread**.
-- Multiple state machines attached to objects within the same environment are executed **sequentially** within one tick (not in parallel).
-- The model is written **only** by the engine thread. Observer callbacks (e.g., WebSocket notifications) are dispatched asynchronously.
+- Each environment runs its engine on a dedicated thread.
+- Multiple state machines attached to objects within the same environment are executed sequentially within one tick (not in parallel).
+- The model is written only by the engine thread. Observer callbacks (e.g., WebSocket notifications) are dispatched asynchronously.
 - The `EventBus` is the only shared mutable data structure between engine threads and is fully thread-safe.
 
 ---
 
 ## Error Handling
 
-- If an `onEntry` or `onDo` action block throws an exception, the error is **logged** (via the trace logger and stderr) but the engine **continues**. The tick proceeds normally.
-- If a transition target state cannot be found, the transition is **skipped** and an error is logged.
+- If an `onEntry` or `onDo` action block throws an exception, the error is logged (via the trace logger and stderr) but the engine continues. The tick proceeds normally.
+- If a transition target state cannot be found, the transition is skipped and an error is logged.
 - If an EVAL or MACRO Python subprocess fails (non-zero exit code), a `RuntimeException` is thrown, caught by the action block error handler, and logged.
 - If a VALUE condition path cannot be resolved, the condition evaluates to `false`.
 
