@@ -63,7 +63,7 @@ karpfen-runtime/
 
 ## Build and Run
 
-The recommended way to start the server is via the provided shell scripts.  They handle the Gradle build step for you and require no manual `application.conf` editing — configure the file once, then just run the script.
+The recommended way to start the server is via the provided shell scripts.  They handle the Gradle build step for you and require no manual `application.conf` editing - configure the file once, then just run the script.
 
 ### Option A – Local (native Java + Python)
 
@@ -97,13 +97,13 @@ Multi-stage build: a `eclipse-temurin:21-jdk` builder stage compiles the project
 
 ### Manually (Gradle)
 
-```powershell
+```bash
 ./gradlew build
 ./gradlew run
 ```
 
 Direct JAR execution:
-```powershell
+```bash
 java -jar build/libs/karpfen-runtime-1.0-SNAPSHOT.jar
 ```
 
@@ -115,7 +115,7 @@ Press `Ctrl+C` to gracefully shutdown.
 
 ## Configuration
 
-Runtime configuration is loaded from `application.conf` in the `karpfen-runtime/` directory.  Edit this file **before** starting the server — neither run script overwrites it.
+Runtime configuration is loaded from `application.conf` in the `karpfen-runtime/` directory.  Edit this file **before** starting the server - neither run script overwrites it.
 
 ### Full configuration reference
 
@@ -135,12 +135,12 @@ websocket {
 # ── Logging -----------------------------------------------------------------
 logging {
   level         = "INFO"   # DEBUG | INFO | WARN | ERROR
-  consoleOutput = false
+  consoleOutput = true
 }
 
 # ── Engine ------------------------------------------------------------------
 engine {
-  defaultTickDelayMs = 50
+  defaultTickDelayMs = 1000
 }
 
 # ── Engine Tracing ----------------------------------------------------------
@@ -170,7 +170,7 @@ engineTracing {
 
 When `tracingEnabled = true` the runtime writes one log file per environment to the directory given by `tracingLogDirectory`.
 
-**Local run** — use a relative path (resolved from `karpfen-runtime/`):
+**Local run** - use a relative path (resolved from `karpfen-runtime/`):
 ```conf
 engineTracing {
   tracingEnabled      = true
@@ -178,7 +178,7 @@ engineTracing {
 }
 ```
 
-**Docker run** — set the path to the container-side mount point `/app/logs`.  `run_docker.sh` maps this to a host directory so that trace files survive after the container is removed:
+**Docker run** - set the path to the container-side mount point `/app/logs`.  `run_docker.sh` maps this to a host directory so that trace files survive after the container is removed:
 ```conf
 engineTracing {
   tracingEnabled      = true
@@ -193,35 +193,12 @@ Then start with a custom log location:
 
 ## Main Components
 
-### KtorServer
-- Manages HTTP and WebSocket endpoints
-- Handles client authentication via first WebSocket message
-- Routes incoming WebSocket events to environment event queues
-
-### APIService
-- Implements business logic for all HTTP endpoints
-- Validates environment state and parameters
-- Manages environment lifecycle
-
-### EnvironmentHandler
-- Global singleton managing all environments
-- Tracks active environments and their execution threads
-- Manages client session lifecycle
-
-### ClientSessionManager
-- Maintains WebSocket client session registry
-- Tracks object subscriptions per client
-- Queues outgoing data change notifications
-
-### EnvironmentThread
-- Executes the Karpfen execution engine
-- Processes incoming events from WebSocket message queue
-- Triggers data change notifications to subscribed clients
-
-### WebSocketBroadcaster
-- Runs asynchronously in separate thread
-- Processes outgoing message queue
-- Ensures non-blocking message delivery to clients
+- **KtorServer** - HTTP + WebSocket server. Authenticates WebSocket clients on their first message and forwards incoming events to the right environment's event queue.
+- **APIService** - Business logic behind the HTTP endpoints (parameter validation, environment lifecycle).
+- **EnvironmentHandler** - Global singleton that owns all environments, their execution threads, and client sessions.
+- **ClientSessionManager** - Keeps track of which WebSocket clients are subscribed to which objects/domains and queues outgoing notifications for them.
+- **EnvironmentThread** - Runs the execution engine loop for one environment: polls the event queue, ticks the engine, and fires data-change callbacks.
+- **WebSocketBroadcaster** - Separate thread that drains the outgoing message queue and pushes messages to connected WebSocket sessions without blocking the engine.
 
 ## API Overview
 
@@ -290,54 +267,52 @@ Subscribed clients receive data change notifications:
 
 ## Example Workflow
 
-This section demonstrates a complete workflow from environment creation to execution.
-
 ### 1. Create environment
-```powershell
-$envKey = $(curl -X POST http://localhost:8080/createEnvironment).Content
-Write-Host "Created environment: $envKey"
+```bash
+ENV_KEY=$(curl -s -X POST http://localhost:8080/createEnvironment)
+echo "Created environment: $ENV_KEY"
 ```
 
 ### 2. Configure environment (metamodel, model, state machine)
-```powershell
+```bash
 # Upload metamodel
-curl -X PUT "http://localhost:8080/setMetamodel?envKey=$envKey" `
-  -ContentType "text/plain" `
-  -InFile metamodel.kmeta
+curl -X PUT "http://localhost:8080/setMetamodel?envKey=$ENV_KEY" \
+ -H "Content-Type: text/plain" \
+ -d @metamodel.kmeta
 
 # Upload model
-curl -X PUT "http://localhost:8080/setModel?envKey=$envKey" `
-  -ContentType "text/plain" `
-  -InFile model.kmodel
+curl -X PUT "http://localhost:8080/setModel?envKey=$ENV_KEY" \
+ -H "Content-Type: text/plain" \
+ -d @model.kmodel
 
 # Upload state machine
-curl -X PUT "http://localhost:8080/setStateMachine?envKey=$envKey&attachedTo=robot1" `
-  -ContentType "text/plain" `
-  -InFile statemachine.kstates
+curl -X PUT "http://localhost:8080/setStateMachine?envKey=$ENV_KEY&attachedTo=robot1" \
+ -H "Content-Type: text/plain" \
+ -d @statemachine.kstates
 
 # Set execution tick delay
-curl -X POST "http://localhost:8080/setTickDelay?envKey=$envKey&milliseconds=100"
+curl -X POST "http://localhost:8080/setTickDelay?envKey=$ENV_KEY&milliseconds=100"
 ```
 
 ### 3. Register client for WebSocket
-```powershell
-$accessKey = $(curl -X POST "http://localhost:8080/registerClientForWebSocket?clientId=client1&envKey=$envKey").Content
-Write-Host "Access key: $accessKey"
+```bash
+ACCESS_KEY=$(curl -s -X POST "http://localhost:8080/registerClientForWebSocket?clientId=client1&envKey=$ENV_KEY")
+echo "Access key: $ACCESS_KEY"
 ```
 
 ### 4. Register for notifications (optional)
-```powershell
+```bash
 # Subscribe to object changes
-curl -X POST "http://localhost:8080/registerObjectObserver?envKey=$envKey&clientId=client1&objectId=robot1"
+curl -X POST "http://localhost:8080/registerObjectObserver?envKey=$ENV_KEY&clientId=client1&objectId=robot1"
 
 # Subscribe to domain events
-curl -X POST "http://localhost:8080/registerDomainListener?envKey=$envKey&clientId=client1&domain=robot_domain"
+curl -X POST "http://localhost:8080/registerDomainListener?envKey=$ENV_KEY&clientId=client1&domain=robot_domain"
 ```
 
 ### 5. Start environment
-```powershell
-curl -X POST "http://localhost:8080/startEnvironment?envKey=$envKey"
-Write-Host "Environment started"
+```bash
+curl -X POST "http://localhost:8080/startEnvironment?envKey=$ENV_KEY"
+echo "Environment started"
 ```
 
 ### 6. Connect via WebSocket and send messages
@@ -366,20 +341,20 @@ ws.onmessage = (event) => {
 ```
 
 ### 7. Stop environment when done
-```powershell
-curl -X POST "http://localhost:8080/stopEnvironment?envKey=$envKey"
-Write-Host "Environment stopped"
+```bash
+curl -X POST "http://localhost:8080/stopEnvironment?envKey=$ENV_KEY"
+echo "Environment stopped"
 ```
 
 ## Testing
 
 ### Run all tests
-```powershell
+```bash
 ./gradlew test
 ```
 
 ### Run specific test class
-```powershell
+```bash
 ./gradlew test --tests KtorServerIntegrationTest
 ```
 
@@ -442,7 +417,7 @@ Then restart the server.
 ### Build fails
 
 Try clean rebuild:
-```powershell
+```bash
 ./gradlew clean build
 ```
 
@@ -456,7 +431,7 @@ Try clean rebuild:
 ### Environment creation fails
 
 Ensure the HTTP request is properly formatted:
-```powershell
+```bash
 # Verify endpoint is accessible
 curl http://localhost:8080/health
 

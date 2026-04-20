@@ -15,7 +15,7 @@ After each phase, the engine checks for fireable transitions. A configurable `ti
 
 ## State Stack and Hierarchical States
 
-States can be nested. The engine maintains a **state stack** — an ordered list from the outermost to the innermost active state.
+States can be nested. The engine maintains a **state stack** - an ordered list from the outermost to the innermost active state.
 
 ```
 Example: stack = [drive, drive fast]
@@ -24,7 +24,7 @@ Example: stack = [drive, drive fast]
 
 - **ENTRY** is executed top-down for every state in the stack that was newly entered.
 - **DO** is executed **only** for the innermost state.
-- Transitions are checked from **innermost to outermost** — the innermost state has priority.
+- Transitions are checked from **innermost to outermost** - the innermost state has priority.
 
 ### Initial State
 
@@ -50,14 +50,14 @@ TRANSITIONS {
 
 Transitions are checked at **two points** during a tick:
 
-1. **After each ENTRY block** — but only if the ENTRY block contained actions. If `onEntry` is empty, the engine skips the transition check and proceeds to DO. This prevents unconditional transitions from firing before DO gets a chance to execute.
+1. **After each ENTRY block** - but only if the ENTRY block contained actions. If `onEntry` is empty, the engine skips the transition check and proceeds to DO. This prevents unconditional transitions from firing before DO gets a chance to execute.
 2. **After the DO block** of the innermost state.
 
 If a transition fires, the tick ends immediately. The new state's ENTRY will run on the **next** tick.
 
 ### Unconditional Transitions
 
-A transition without a `CONDITION` block is parsed as `VALUE("true")` — it fires unconditionally whenever it is evaluated. These are typically used as fallback transitions at the end of the transition list.
+A transition without a `CONDITION` block is parsed as `VALUE("true")` - it fires unconditionally whenever it is evaluated. These are typically used as fallback transitions at the end of the transition list.
 
 ### Condition Types
 
@@ -82,15 +82,15 @@ TRANSITION "drive" -> "drive fast" NOT LOOPING { ... }
 **Key semantics:**
 - NOT LOOPING compares the transition **object identity**, not just from/to names.
 - When a NOT LOOPING transition is skipped, the engine continues evaluating the **next** transition in definition order. This is how fallback transitions (e.g., `drive → observe`) get a chance to fire.
-- Once a *different* transition fires, the NOT LOOPING block is reset — the previously blocked transition can fire again on the next evaluation.
+- Once a *different* transition fires, the NOT LOOPING block is reset - the previously blocked transition can fire again on the next evaluation.
 
 **Example cycle:**
 ```
 Tick  9: drive → drive fast   (fires, EVAL=true, NOT LOOPING)
-Tick 10: drive → drive fast   (SKIPPED — same as last)
-         drive → observe      (fires — unconditional fallback)
-Tick 11: observe → drive      (fires — unconditional)
-Tick 12: drive → drive fast   (fires again — last was observe→drive)
+Tick 10: drive → drive fast   (SKIPPED - same as last)
+         drive → observe      (fires - unconditional fallback)
+Tick 11: observe → drive      (fires - unconditional)
+Tick 12: drive → drive fast   (fires again - last was observe→drive)
 ```
 
 ---

@@ -1,18 +1,6 @@
 # Karpfen Runtime - Quick Reference Guide
 
-## Project Completion Status: ✅ COMPLETE
-
-The Karpfen Runtime server has been successfully implemented with full HTTP API and WebSocket support.
-
-## 📦 Build Output
-
-```
-Build JAR: build/libs/karpfen-runtime-1.0-SNAPSHOT.jar
-Build Status: SUCCESSFUL
-All tests: PASSING
-```
-
-## 🚀 How to Run
+## How to Run
 
 ### Local (native Java 21+ + Python 3.12+)
 
@@ -29,13 +17,13 @@ All tests: PASSING
 ./run_docker.sh /path/to/host/logs  # custom host log directory
 ```
 
-Edit `karpfen-runtime/application.conf` before running either script — neither script overwrites it.
+Edit `karpfen-runtime/application.conf` before running either script - neither script overwrites it.
 
 Default URLs:
 - HTTP: `http://127.0.0.1:8080`
 - WebSocket: `ws://127.0.0.1:8080/ws`
 
-## 📋 Available HTTP Endpoints
+## Available HTTP Endpoints
 
 | Method | Endpoint |
 |--------|----------|
@@ -51,7 +39,7 @@ Default URLs:
 | POST | `/stopEnvironment?envKey=...` |
 | GET | `/health` |
 
-## 🔗 WebSocket Connection
+## WebSocket Connection
 
 ### Authentication Format (first message)
 ```
@@ -67,7 +55,7 @@ clientId:envKey:accessKey
 }
 ```
 
-## 🎯 Typical Workflow
+## Typical Workflow
 
 ### 1. Create Environment
 ```bash
@@ -79,18 +67,18 @@ curl -X POST http://localhost:8080/createEnvironment
 ```bash
 # Metamodel
 curl -X PUT "http://localhost:8080/setMetamodel?envKey=env-123" \
-  -H "Content-Type: text/plain" \
-  -d @metamodel.kmeta
+ -H "Content-Type: text/plain" \
+ -d @metamodel.kmeta
 
 # Model
 curl -X PUT "http://localhost:8080/setModel?envKey=env-123" \
-  -H "Content-Type: text/plain" \
-  -d @model.kmodel
+ -H "Content-Type: text/plain" \
+ -d @model.kmodel
 
 # State Machine
 curl -X PUT "http://localhost:8080/setStateMachine?envKey=env-123&attachedTo=robot1" \
-  -H "Content-Type: text/plain" \
-  -d @statemachine.kstates
+ -H "Content-Type: text/plain" \
+ -d @statemachine.kstates
 ```
 
 ### 3. Register for WebSocket
@@ -132,7 +120,7 @@ ws.onmessage = (event) => {
 curl -X POST "http://localhost:8080/stopEnvironment?envKey=env-123"
 ```
 
-## 📊 Technical Stack
+## Technical Stack
 
 - **Language**: Kotlin
 - **Framework**: Ktor 2.x
@@ -141,7 +129,7 @@ curl -X POST "http://localhost:8080/stopEnvironment?envKey=env-123"
 - **Java Target**: 21+
 - **Testing**: JUnit 5
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Port Already in Use
 Change port in `application.conf`:
@@ -169,10 +157,4 @@ Set `server.host = "0.0.0.0"` in `application.conf` so the server binds to all i
 2. Check URL format: `ws://localhost:8080/ws`
 3. First message must be: `clientId:envKey:accessKey`
 
----
-
-**Last Updated**: 2026-03-05
-**Build Status**: SUCCESSFUL
-**Test Status**: PASSING
-**Documentation**: COMPLETE
 
