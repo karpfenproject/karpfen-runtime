@@ -115,6 +115,8 @@ class EnvironmentThread(
             EngineTraceLogger.TraceEventType.STATE_DO_SKIP -> "do skip: ${entry.message}"
             EngineTraceLogger.TraceEventType.TRANSITION_FIRED -> "${d["from"] ?: "?"} -> ${d["to"] ?: "?"}"
             EngineTraceLogger.TraceEventType.TRANSITION_SKIPPED_LOOP -> "skip loop: ${d["from"] ?: "?"} -> ${d["to"] ?: "?"}"
+            EngineTraceLogger.TraceEventType.SPLIT_FIRED -> "split: ${d["from"] ?: "?"} -> ${d["to"] ?: "?"}"
+            EngineTraceLogger.TraceEventType.JOIN_FIRED -> "join: ${d["from"] ?: "?"} -> ${d["to"] ?: "?"}"
             EngineTraceLogger.TraceEventType.TRANSITION_CHECK -> "check: ${entry.message}"
             EngineTraceLogger.TraceEventType.EVENT_RECEIVED -> "event in: ${entry.message}"
             EngineTraceLogger.TraceEventType.EVENT_CONSUMED -> "event ok: ${entry.message}"

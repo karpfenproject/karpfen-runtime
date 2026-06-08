@@ -116,6 +116,9 @@ class Event(
     /** Returns true if the given engine has already processed (reacted to) this event. */
     fun wasProcessedBy(engineId: String): Boolean = processedByEngines.contains(engineId)
 
+    /** Returns true if any of the given engine ids has already processed this event. */
+    fun wasProcessedByAny(engineIds: Set<String>): Boolean = engineIds.any { processedByEngines.contains(it) }
+
     override fun toString(): String =
         "Event(domain=$domain, name=$name, source=$source, timestamp=$timestamp, ttlMs=$ttlMs, processedBy=$processedByEngines)"
 }

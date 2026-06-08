@@ -94,6 +94,17 @@ class EventBus(
     }
 
     /**
+     * Returns all non-expired events with [eventName] in [domain], oldest-first, regardless of which
+     * engines have processed them. The caller applies its own "processed by my lineage" filter — this
+     * is what lets several parallel branches each get their own chance to react to the same event.
+     */
+    fun eventsOf(domain: String, eventName: String): List<Event> {
+        return getBucket(domain)
+            .filter { !it.isExpired() && it.name == eventName }
+            .sortedBy { it.timestamp }
+    }
+
+    /**
      * Returns true if at least one non-expired, unprocessed event with the given [eventName]
      * exists in [domain] for [engineId].
      */

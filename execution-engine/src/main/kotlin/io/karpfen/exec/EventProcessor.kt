@@ -20,21 +20,33 @@ import io.karpfen.io.karpfen.messages.EventBus
 import io.karpfen.io.karpfen.messages.EventSource
 
 /**
- * Per-engine facade for the shared [EventBus].
+ * Per-identity facade for the shared [EventBus].
  *
- * Each [Engine] owns one [EventProcessor] that knows its own [engineId]. The processor
- * delegates all persistence and routing to the shared bus, but adds the engine-specific
- * perspective:
- * - Publishing events always tags them with [EventSource.INTERNAL] by default.
- * - Querying events filters out events already processed by this engine.
+ * An [EventProcessor] reacts to events on behalf of one identity ([engineId]) plus an optional
+ * [inheritedIds] lineage. An event is considered "already handled" by this processor when any id in
+ * its lineage has processed it. Consuming an event marks only [engineId].
  *
- * @property engineId  Unique identifier for the owning engine instance.
- * @property eventBus  The shared [EventBus] instance for the environment.
+ * This is what makes parallel branches independent: each branch has its own processor, so a branch
+ * can react to an event another branch already consumed. A branch created by a split inherits its
+ * parent's lineage (so it does not re-handle what the parent already did), and a branch created by a
+ * join inherits the union of the joined branches' lineages.
+ *
+ * @property engineId     Unique identifier used when consuming (marking) events.
+ * @property eventBus     The shared [EventBus] instance for the environment.
+ * @property inheritedIds Lineage ids inherited from ancestor branches; events handled by any of them
+ *                        are treated as already handled by this processor.
  */
 class EventProcessor(
     val engineId: String,
-    val eventBus: EventBus
+    val eventBus: EventBus,
+    val inheritedIds: Set<String> = emptySet()
 ) {
+
+    /** The full set of ids whose processing counts as "handled" for this processor. */
+    private val effectiveIds: Set<String> = inheritedIds + engineId
+
+    /** Returns this processor's full lineage, used to seed descendant branches on split/join. */
+    fun lineage(): Set<String> = effectiveIds
 
     // ---- Publishing -------------------------------------------------------
 
@@ -65,26 +77,26 @@ class EventProcessor(
     // ---- Querying ---------------------------------------------------------
 
     /**
-     * Returns true if the given [domain] contains at least one non-expired, unprocessed event
-     * with [eventName] for this engine.
+     * Returns true if the given [domain] contains at least one event with [eventName] that this
+     * processor's lineage has not yet handled.
      */
     fun hasEvent(domain: String, eventName: String): Boolean {
-        return eventBus.hasUnprocessedEvent(domain, eventName, engineId)
+        return eventBus.eventsOf(domain, eventName).any { !it.wasProcessedByAny(effectiveIds) }
     }
 
     /**
-     * Returns the first matching unprocessed event, or null.
+     * Returns the first matching event not yet handled by this processor's lineage, or null.
      */
     fun peekEvent(domain: String, eventName: String): Event? {
-        return eventBus.peekEvent(domain, eventName, engineId)
+        return eventBus.eventsOf(domain, eventName).firstOrNull { !it.wasProcessedByAny(effectiveIds) }
     }
 
     /**
-     * Returns all unprocessed events of [eventName] in [domain] for this engine, oldest-first.
-     * Used to scan candidate events when a transition guards on the payload.
+     * Returns all events of [eventName] in [domain] not yet handled by this processor's lineage,
+     * oldest-first. Used to scan candidate events when a transition guards on the payload.
      */
     fun getEvents(domain: String, eventName: String): List<Event> {
-        return eventBus.getUnprocessedEvents(domain, eventName, engineId)
+        return eventBus.eventsOf(domain, eventName).filter { !it.wasProcessedByAny(effectiveIds) }
     }
 
     /**

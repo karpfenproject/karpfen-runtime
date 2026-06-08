@@ -109,6 +109,41 @@ Tick 12: drive → drive fast   (fires again - last was observe→drive)
 
 ---
 
+## Parallel States (SPLIT and JOIN)
+
+A single state machine can run several regions at once. This is *simulated* parallelism — everything still happens on the one engine thread, in a fixed order, so it stays deterministic — and it is independent of the genuine multithreading used to run *different* state machines.
+
+### Simple vs. parallel context
+
+At any moment a machine's execution context is either **simple** (one current state stack, the normal case) or **parallel** (several current state stacks, called *branches*). The mode is just the number of branches, so the engine always knows which it is in. You enter parallel mode with a SPLIT and leave it with a JOIN; there is no nesting (you can only split while simple).
+
+### SPLIT and JOIN transitions
+
+```
+SPLIT "observe" -> "scanLeft", "scanRight"        { CONDITION { EVENT("public", "go") } }
+JOIN  "scanLeft", "scanRight" -> "report"         { }
+```
+
+- A **SPLIT** (1-to-N) leaves one state and creates one branch per target. It is only considered while the context is simple.
+- A **JOIN** (N-to-1) collapses all branches back into a single state. It is only checked while the context is parallel, and it is checked **before** the branches' own transitions each tick — joins have priority.
+
+### How a parallel tick runs
+
+Each tick, for a parallel context:
+
+1. **Join first.** If a join's source states match the branches (see below) and its condition holds, it fires: every branch is discarded and the context becomes simple again, entering the join target.
+2. **Otherwise, tick each branch in order.** Each branch runs its own ENTRY/DO and may independently fire its own 1-to-1 transitions — so more than one branch can advance in the same tick. Branches are completely independent; the machine may even be in the same state in several branches at once. The engine does not enforce any well-formedness here — meaningful use is up to the chart designer.
+
+### When does a join match?
+
+A join fires only when its source states correspond **exactly** to the set of branches: there must be as many branches as source states, and each source state must be active (anywhere in that branch's stack, not only the innermost state) in a *distinct* branch. So every branch has to be accounted for — a join is "all regions have reached their join points", not "some of them have".
+
+### Events and scoped events across branches
+
+Each branch reacts to events independently: an event consumed by one branch can still be consumed by another (broadcast). A branch created by a split inherits its parent's event history, and a branch created by a join inherits the union of the joined branches' histories, so a fresh branch never re-handles events its ancestors already handled. Scoped events ([see above](#reading-event-payloads)) and the NOT LOOPING memory are tracked per branch.
+
+---
+
 ## Action Execution
 
 ### Action Types

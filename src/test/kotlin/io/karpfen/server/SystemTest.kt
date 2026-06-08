@@ -195,14 +195,22 @@ class SystemTest {
         val allStateNames = collectStateNames(sm.states)
 
         for (transition in sm.transitions) {
-            assertTrue(
-                transition.fromState in allStateNames,
-                "Transition source '${transition.fromState}' is not a valid state. Valid: $allStateNames"
-            )
-            assertTrue(
-                transition.toState in allStateNames,
-                "Transition target '${transition.toState}' is not a valid state. Valid: $allStateNames"
-            )
+            val sources = when (transition) {
+                is states.Transition -> listOf(transition.fromState)
+                is states.SplitTransition -> listOf(transition.fromState)
+                is states.JoinTransition -> transition.fromStates
+            }
+            val targets = when (transition) {
+                is states.Transition -> listOf(transition.toState)
+                is states.SplitTransition -> transition.toStates
+                is states.JoinTransition -> listOf(transition.toState)
+            }
+            for (source in sources) {
+                assertTrue(source in allStateNames, "Transition source '$source' is not a valid state. Valid: $allStateNames")
+            }
+            for (target in targets) {
+                assertTrue(target in allStateNames, "Transition target '$target' is not a valid state. Valid: $allStateNames")
+            }
         }
     }
 

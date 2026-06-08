@@ -20,10 +20,8 @@ import io.karpfen.io.karpfen.exec.*
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
 import meta.Metamodel
+import states.JoinTransition
 import states.StateMachine
-import states.Transition
-import states.conditions.ConditionType
-import states.conditions.EventCondition
 import java.util.UUID
 import kotlin.concurrent.thread
 
@@ -63,6 +61,9 @@ class Engine(
     /** Model query processor – access and update model data; also hosts change publishers. */
     val modelQueryProcessor = ModelQueryProcessor(metamodel, model)
 
+    /** Runs the per-branch mechanics (ENTRY/DO + a branch's own transitions). Shared across branches. */
+    private val branchRunner = BranchRunner(traceLogger, eventConsumptionOnFire)
+
     /**
      * Accepts an event from an external source (e.g., WebSocket), parses its payload into the runtime
      * object model, and publishes it to the bus.
@@ -85,38 +86,6 @@ class Engine(
                 listener.onChange(objectId, changedId)
             }
         })
-    }
-
-    /**
-     * Holds per-state-machine execution context.
-     */
-    private data class SMContext(
-        val modelElementId: String,
-        val stateMachine: StateMachine,
-        val smQueryHelper: StateMachineQueryHelper,
-        val transitionProcessor: TransitionProcessor,
-        val actionProcessor: ActionProcessor,
-        var stateStack: List<String>,
-        var notEnteredSubstack: MutableList<String>,
-        var lastFiredTransition: Transition? = null,
-        /**
-         * The event that brought the machine into each currently active state, keyed by state name.
-         * A state's scoped event lives as long as the state stays active; it is dropped when the state
-         * is left and overwritten when a substate is entered through its own event transition.
-         */
-        val scopedEventByState: MutableMap<String, Event> = mutableMapOf()
-    )
-
-    /**
-     * The event currently in scope: the scoped event of the innermost active state that has one.
-     * Auto-entered substates without their own event transparently inherit the enclosing event.
-     */
-    private fun currentScopedEvent(ctx: SMContext): Event? {
-        for (i in ctx.stateStack.indices.reversed()) {
-            val event = ctx.scopedEventByState[ctx.stateStack[i]]
-            if (event != null) return event
-        }
-        return null
     }
 
     fun start() {
@@ -147,18 +116,16 @@ class Engine(
                 metamodel, model, stateMachine.macros, modelElementId, modelQueryProcessor
             )
             macroProcessors.add(macroProcessor)
-            // Each state machine gets its own EventProcessor so that event consumption
-            // (marking an event as "processed") is tracked independently per SM.
-            // Without this, the first SM to consume EVENT("public","start") would mark
-            // it processed for all other SMs sharing the same engineId.
-            val smEventProcessor = EventProcessor("$engineId-$modelElementId", eventBus)
             val transitionProcessor = TransitionProcessor(
                 stateMachine, metamodel, model, modelElementId,
-                macroProcessor, smQueryHelper, modelQueryProcessor, smEventProcessor,
-                eventConsumptionOnFire
+                macroProcessor, smQueryHelper, modelQueryProcessor
             )
+            // The action processor only publishes internal events, so its identity is not used for
+            // consumption; consumption is tracked per branch via each branch's own event processor.
+            val branchIdBase = "$engineId-$modelElementId"
+            val actionsEventProcessor = EventProcessor("$branchIdBase-actions", eventBus)
             val actionProcessor = ActionProcessor(
-                macroProcessor, modelQueryProcessor, smEventProcessor, modelElementId
+                macroProcessor, modelQueryProcessor, actionsEventProcessor, modelElementId
             )
 
             val initialStack = smQueryHelper.getInitialStateStack()
@@ -175,17 +142,21 @@ class Engine(
                 mapOf("stack" to initialStack.joinToString(","))
             )
 
-            SMContext(
+            val ctx = SMContext(
                 modelElementId = modelElementId,
                 stateMachine = stateMachine,
                 smQueryHelper = smQueryHelper,
                 transitionProcessor = transitionProcessor,
                 actionProcessor = actionProcessor,
-                stateStack = initialStack,
-                // All states in the initial stack need their ENTRY blocks executed
-                // (note: each context was given its own EventProcessor above)
-                notEnteredSubstack = initialStack.toMutableList()
+                eventBus = eventBus,
+                branchIdBase = branchIdBase,
+                branches = mutableListOf()
             )
+            // The context starts simple: a single branch whose whole initial stack needs entering.
+            ctx.branches = mutableListOf(
+                ctx.newBranch(initialStack, initialStack.toMutableList(), null, emptySet())
+            )
+            ctx
         }
 
         traceLogger?.log(
@@ -209,14 +180,14 @@ class Engine(
                     ctx.modelElementId,
                     EngineTraceLogger.TraceEventType.TICK_START,
                     "Tick #$tickCount",
-                    mapOf("currentState" to ctx.stateStack.last(), "stack" to ctx.stateStack.joinToString(","))
+                    tickDetails(ctx)
                 )
                 tickStateMachine(ctx)
                 traceLogger?.log(
                     ctx.modelElementId,
                     EngineTraceLogger.TraceEventType.TICK_END,
                     "Tick #$tickCount completed",
-                    mapOf("currentState" to ctx.stateStack.last(), "stack" to ctx.stateStack.joinToString(","))
+                    tickDetails(ctx)
                 )
             }
 
@@ -233,248 +204,136 @@ class Engine(
     }
 
     /**
+     * Trace details for a tick. "stack" lists the active states across all branches (equal to the
+     * single stack in simple mode); "currentStates" lists each branch's innermost state.
+     */
+    private fun tickDetails(ctx: SMContext): Map<String, String> = mapOf(
+        "stack" to ctx.branches.flatMap { it.stateStack }.joinToString(","),
+        "currentStates" to ctx.branches.joinToString(",") { it.currentState() },
+        "parallel" to ctx.isParallel().toString()
+    )
+
+    /**
      * Executes a single tick for one state machine context.
      *
-     * The tick proceeds in phases:
-     * 1. ENTRY phase: Execute onEntry blocks for states in the notEnteredSubstack (top-down).
-     *    After each entry block, check for transitions. If one fires, compute the new stack
-     *    and restart the ENTRY phase on the next tick.
-     * 2. DO phase: If no transition fired during ENTRY, execute the onDo block of the
-     *    innermost (current) state, then check for transitions.
+     * The top-level loop stays small: in a parallel context a JOIN is checked first (it has priority
+     * and can collapse the context back to simple); then every branch is ticked in order by the
+     * [BranchRunner]. Only a simple context may take a SPLIT, which the branch reports back so this
+     * method can carry out the structural change. A simple context is just the same loop with one
+     * branch.
      */
     private fun tickStateMachine(ctx: SMContext) {
-        val smQueryHelper = ctx.smQueryHelper
-
-        // --- ENTRY phase ---
-        while (ctx.notEnteredSubstack.isNotEmpty()) {
-            val stateName = ctx.notEnteredSubstack.removeFirst()
-            val stateObj = smQueryHelper.findStateByName(stateName) ?: continue
-
-            // Execute the onEntry block
-            if (stateObj.onEntry.isNotEmpty()) {
-                traceLogger?.log(
-                    ctx.modelElementId,
-                    EngineTraceLogger.TraceEventType.STATE_ENTRY_EXEC,
-                    "Executing onEntry for state '$stateName' (${stateObj.onEntry.items.size} items)",
-                    mapOf("state" to stateName)
-                )
-                try {
-                    ctx.actionProcessor.executeBlock(stateObj.onEntry, currentScopedEvent(ctx)?.payloadObject)
-                } catch (e: Exception) {
-                    traceLogger?.log(
-                        ctx.modelElementId,
-                        EngineTraceLogger.TraceEventType.ACTION_ERROR,
-                        "Error in onEntry for state '$stateName': ${e.message}",
-                        mapOf("state" to stateName, "error" to (e.message ?: "unknown"))
-                    )
-                    System.err.println("[Engine] Error executing onEntry for state '$stateName': ${e.message}")
-                }
-            } else {
-                traceLogger?.log(
-                    ctx.modelElementId,
-                    EngineTraceLogger.TraceEventType.STATE_ENTRY_SKIP,
-                    "onEntry for state '$stateName' is empty — skipped",
-                    mapOf("state" to stateName)
-                )
-            }
-
-            // Check for a transition after entry — but only if entry actually executed actions.
-            // If ENTRY was empty, we should proceed to DO before checking transitions.
-            if (stateObj.onEntry.isNotEmpty()) {
-                val fireable = findFireableTransition(ctx)
-                if (fireable != null) {
-                    applyTransition(fireable, ctx, smQueryHelper)
-                    return // Exit the tick; the new ENTRY phase will run on the next tick
-                }
+        if (ctx.isParallel()) {
+            val join = selectFireableJoin(ctx)
+            if (join != null) {
+                applyJoin(ctx, join)
+                return
             }
         }
 
-        // --- DO phase (only the innermost state) ---
-        val currentStateName = ctx.stateStack.last()
-        val currentState = smQueryHelper.findStateByName(currentStateName)
-        if (currentState != null && currentState.onDo.isNotEmpty()) {
-            traceLogger?.log(
-                ctx.modelElementId,
-                EngineTraceLogger.TraceEventType.STATE_DO_EXEC,
-                "Executing onDo for state '$currentStateName' (${currentState.onDo.items.size} items)",
-                mapOf("state" to currentStateName)
-            )
-            try {
-                ctx.actionProcessor.executeBlock(currentState.onDo, currentScopedEvent(ctx)?.payloadObject)
-            } catch (e: Exception) {
-                traceLogger?.log(
-                    ctx.modelElementId,
-                    EngineTraceLogger.TraceEventType.ACTION_ERROR,
-                    "Error in onDo for state '$currentStateName': ${e.message}",
-                    mapOf("state" to currentStateName, "error" to (e.message ?: "unknown"))
-                )
-                System.err.println("[Engine] Error executing onDo for state '$currentStateName': ${e.message}")
+        val allowSplit = !ctx.isParallel()
+        for (branch in ctx.branches.toList()) {
+            val result = branchRunner.tick(ctx, branch, allowSplit)
+            if (result is BranchTickResult.SplitRequested) {
+                applySplit(ctx, branch, result.split, result.matchedEvent)
             }
-        } else {
-            traceLogger?.log(
-                ctx.modelElementId,
-                EngineTraceLogger.TraceEventType.STATE_DO_SKIP,
-                "onDo for state '$currentStateName' is empty — skipped",
-                mapOf("state" to currentStateName)
-            )
-        }
-
-        // Check for a transition after DO. If none fired this tick, every candidate event was offered
-        // to every transition of the current configuration without being consumed, so burn them
-        // (run-to-completion: an event that nothing reacts to is discarded).
-        val fireable = findFireableTransition(ctx)
-        if (fireable != null) {
-            applyTransition(fireable, ctx, smQueryHelper)
-        } else {
-            burnDispatchedEvents(ctx)
         }
     }
 
     /**
-     * Finds the first transition from the current state stack that is both executable
-     * (condition evaluates to true) AND allowed to fire (not blocked by NOT LOOPING).
+     * Finds a join whose source states are matched by the current branches and whose condition holds.
      *
-     * Checks states from innermost to outermost. For each state, iterates through ALL
-     * executable transitions and skips any that are blocked by the NOT LOOPING rule.
+     * A join fires only when the set of branches exactly matches its source states: there must be as
+     * many branches as source states, and each source state must be active (anywhere in the stack) in
+     * a distinct branch.
      */
-    private fun findFireableTransition(ctx: SMContext): FireableTransition? {
-        val ambientEvent = currentScopedEvent(ctx)?.payloadObject
-        for (i in ctx.stateStack.indices.reversed()) {
-            val stateName = ctx.stateStack[i]
-            val candidates = ctx.transitionProcessor.findAllExecutableTransitions(stateName, ambientEvent)
-            for (fireable in candidates) {
-                if (shouldFireTransition(fireable.transition, ctx)) {
-                    return fireable
-                }
-            }
+    private fun selectFireableJoin(ctx: SMContext): Fireable? {
+        for (join in ctx.stateMachine.joinTransitions()) {
+            if (!branchesMatchJoin(join.fromStates, ctx.branches)) continue
+            val fireable = ctx.transitionProcessor.evaluateJoin(join, ctx.joinEventProcessor)
+            if (fireable != null) return fireable
         }
         return null
     }
 
     /**
-     * Marks as processed every still-pending event that matched an EVENT trigger of some transition in
-     * the current configuration. Called when no transition fired this tick, so these events were
-     * dispatched but consumed by nothing and should not be retried (run-to-completion semantics).
+     * True if there is a perfect matching of [fromStates] to distinct [branches] such that each source
+     * state is active somewhere in its assigned branch's stack (and every branch is used).
      */
-    private fun burnDispatchedEvents(ctx: SMContext) {
-        val ep = ctx.transitionProcessor.eventProcessor
-        val burned = HashSet<Event>()
-        for (stateName in ctx.stateStack) {
-            for (transition in ctx.transitionProcessor.transitions) {
-                if (transition.fromState != stateName) continue
-                for (clause in transition.condition.leafClauses()) {
-                    if (clause is EventCondition) {
-                        for (event in ep.getEvents(clause.eventDomain, clause.eventValue)) {
-                            if (burned.add(event)) ep.consume(event)
-                        }
-                    }
+    private fun branchesMatchJoin(fromStates: List<String>, branches: List<Branch>): Boolean {
+        if (fromStates.size != branches.size) return false
+        val used = BooleanArray(branches.size)
+        fun match(i: Int): Boolean {
+            if (i == fromStates.size) return true
+            for (b in branches.indices) {
+                if (!used[b] && branches[b].stateStack.contains(fromStates[i])) {
+                    used[b] = true
+                    if (match(i + 1)) return true
+                    used[b] = false
                 }
             }
-        }
-    }
-
-    /**
-     * Determines whether a transition should fire, respecting the NOT-LOOPING rule:
-     * If the transition is marked NOT LOOPING and it is the exact same transition that
-     * was last fired, skip it. This prevents the engine from repeatedly firing the same
-     * transition on consecutive ticks (e.g. drive → drive fast every tick instead of
-     * eventually falling through to drive → observe).
-     */
-    private fun shouldFireTransition(transition: Transition, ctx: SMContext): Boolean {
-        if (!transition.allowLoops && ctx.lastFiredTransition == transition) {
-            traceLogger?.log(
-                ctx.modelElementId,
-                EngineTraceLogger.TraceEventType.TRANSITION_SKIPPED_LOOP,
-                "Skipped NOT LOOPING transition: ${transition.fromState} -> ${transition.toState}",
-                mapOf("from" to transition.fromState, "to" to transition.toState)
-            )
             return false
         }
-        return true
+        return match(0)
     }
 
     /**
-     * Applies a transition: computes the new state stack, determines which states need entry,
-     * and updates the context.
+     * Fans [parent] out into one new branch per split target, turning the context parallel. Each child
+     * inherits the parent's event lineage, and the matched event (if any) is scoped to each target so
+     * every region can read it.
      */
-    private fun applyTransition(
-        fireable: FireableTransition,
-        ctx: SMContext,
-        smQueryHelper: StateMachineQueryHelper
-    ) {
-        val transition = fireable.transition
-        val oldStack = ctx.stateStack
-        val newStackBase = smQueryHelper.getStateStackForState(transition.toState)
+    private fun applySplit(ctx: SMContext, parent: Branch, split: states.SplitTransition, matchedEvent: Event?) {
+        if (eventConsumptionOnFire) matchedEvent?.let { parent.eventProcessor.consume(it) }
 
-        if (newStackBase.isEmpty()) {
-            traceLogger?.log(
-                ctx.modelElementId,
-                EngineTraceLogger.TraceEventType.ENGINE_ERROR,
-                "Cannot find target state '${transition.toState}' — skipping transition",
-                mapOf("from" to transition.fromState, "to" to transition.toState)
-            )
-            System.err.println("[Engine] Cannot find state '${transition.toState}' — skipping transition")
-            return
-        }
+        val inherited = parent.eventProcessor.lineage()
+        val newBranches = split.toStates.mapNotNull { target ->
+            val targetStack = ctx.smQueryHelper.getStateStackForState(target)
+            if (targetStack.isEmpty()) {
+                System.err.println("[Engine] Split target '$target' not found — skipping it")
+                return@mapNotNull null
+            }
+            val entry = StateStackHelper.computeEntrySequence(parent.stateStack, targetStack, target)
+            ctx.newBranch(targetStack, entry.toMutableList(), split, inherited).also { branch ->
+                matchedEvent?.let { branch.scopedEventByState[target] = it }
+            }
+        }.toMutableList()
 
-        // Consume the exact event that enabled this transition (matched by the guard scan), now that
-        // the transition is confirmed to fire.
-        if (eventConsumptionOnFire) {
-            fireable.matchedEvent?.let { ctx.transitionProcessor.eventProcessor.consume(it) }
-        }
-
-        // Determine which states need their ENTRY executed.
-        //
-        // getChangedStackSequence strips the longest common prefix of old and new stack and
-        // returns only the new suffix — correct for ordinary cross-transitions.
-        //
-        // It returns empty when:
-        //   (a) self-transition:          oldStack == newStack  (e.g. "drive fast" → "drive fast")
-        //   (b) transition to ancestor:   newStack is a prefix of oldStack (e.g. "drive fast" → "drive")
-        //
-        // In both cases toState is NOT in rawChanged, so we must force re-entry.
-        // The re-entry must start one level ABOVE toState in newStack (i.e. toState's parent),
-        // because exiting a nested state also exits its containing state:
-        //   "drive fast" → "drive fast" : exits drive fast AND drive  →  re-enter [drive, drive fast]
-        //   "drive fast" → "drive"      : exits drive fast AND drive  →  re-enter [drive]
-        //
-        // For a cross-transition (rawChanged is non-empty) toState is always the last element of
-        // rawChanged, so no special handling is needed.
-        val rawChanged = StateStackHelper.getChangedStackSequence(oldStack, newStackBase)
-        val changedSequence = if (rawChanged.isEmpty()) {
-            val targetIdx = newStackBase.indexOf(transition.toState)
-            if (targetIdx >= 0) {
-                val startIdx = maxOf(0, targetIdx - 1)  // include toState's parent
-                newStackBase.subList(startIdx, newStackBase.size)
-            } else newStackBase
-        } else {
-            rawChanged
-        }
-
-        ctx.stateStack = newStackBase
-        ctx.notEnteredSubstack = changedSequence.toMutableList()
-        ctx.lastFiredTransition = transition
-
-        // Maintain scoped events: drop the scope of any state we just left, and (for an event-driven
-        // transition) scope the matched event to the target state so its ENTRY/DO can read $(event->...).
-        ctx.scopedEventByState.keys.retainAll(newStackBase.toSet())
-        fireable.matchedEvent?.let { ctx.scopedEventByState[transition.toState] = it }
+        if (newBranches.isEmpty()) return // nothing valid to split into; leave the context unchanged
+        ctx.branches = newBranches
 
         traceLogger?.log(
             ctx.modelElementId,
-            EngineTraceLogger.TraceEventType.TRANSITION_FIRED,
-            "${transition.fromState} -> ${transition.toState}",
-            mapOf(
-                "from" to transition.fromState,
-                "to" to transition.toState,
-                "conditionType" to transition.condition.conditionType.name,
-                "allowLoops" to transition.allowLoops.toString(),
-                "oldStack" to oldStack.joinToString(","),
-                "newStack" to newStackBase.joinToString(","),
-                "statesToEnter" to changedSequence.joinToString(",")
-            )
+            EngineTraceLogger.TraceEventType.SPLIT_FIRED,
+            "${split.fromState} -> ${split.toStates.joinToString(",")}",
+            mapOf("from" to split.fromState, "to" to split.toStates.joinToString(","))
         )
-        //println("[Engine $engineId] Transition: ${transition.fromState} -> ${transition.toState}")
+    }
+
+    /**
+     * Collapses all parallel branches into a single new branch entering the join target, turning the
+     * context simple again. The new branch inherits the union of the joined branches' lineages so it
+     * does not re-handle events the parallel phase already handled.
+     */
+    private fun applyJoin(ctx: SMContext, fireable: Fireable) {
+        val join = fireable.transition as JoinTransition
+        val targetStack = ctx.smQueryHelper.getStateStackForState(join.toState)
+        if (targetStack.isEmpty()) {
+            System.err.println("[Engine] Join target '${join.toState}' not found — skipping join")
+            return
+        }
+
+        val inherited = ctx.branches.flatMap { it.eventProcessor.lineage() }.toSet()
+        val entry = StateStackHelper.computeEntrySequence(emptyList(), targetStack, join.toState)
+        val newBranch = ctx.newBranch(targetStack, entry.toMutableList(), join, inherited)
+        if (eventConsumptionOnFire) fireable.matchedEvent?.let { newBranch.eventProcessor.consume(it) }
+        ctx.branches = mutableListOf(newBranch)
+
+        traceLogger?.log(
+            ctx.modelElementId,
+            EngineTraceLogger.TraceEventType.JOIN_FIRED,
+            "${join.fromStates.joinToString(",")} -> ${join.toState}",
+            mapOf("from" to join.fromStates.joinToString(","), "to" to join.toState)
+        )
     }
 
     fun stop() {

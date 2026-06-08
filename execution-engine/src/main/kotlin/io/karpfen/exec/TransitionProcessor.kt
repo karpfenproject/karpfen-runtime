@@ -20,7 +20,8 @@ import instance.Model
 import io.karpfen.io.karpfen.messages.Event
 import meta.Metamodel
 import states.StateMachine
-import states.Transition
+import states.SplitTransition
+import states.TransitionLike
 import states.conditions.CompositeCondition
 import states.conditions.Condition
 import states.conditions.EvalCondition
@@ -28,18 +29,22 @@ import states.conditions.EventCondition
 import states.conditions.ValueCondition
 
 /**
- * A transition that is ready to fire, together with the event (if any) that enabled it.
- *
- * For an EVENT-gated transition, [matchedEvent] is the specific event whose guards all passed; the
- * engine consumes exactly that event when the transition fires and keeps it as the state's scoped
- * event. For a plain transition, [matchedEvent] is null.
+ * A transition (of any kind) that is ready to fire, together with the event that enabled it (if any).
  */
-data class FireableTransition(val transition: Transition, val matchedEvent: Event?)
+data class Fireable(val transition: TransitionLike, val matchedEvent: Event?)
+
+/** Result of evaluating a condition: it holds, carrying the matched event (null when no EVENT clause). */
+private data class MatchResult(val event: Event?)
 
 /** Flattens a condition into its leaf clauses; a [CompositeCondition] exposes its parts in order. */
 fun Condition.leafClauses(): List<Condition> =
     if (this is CompositeCondition) clauses else listOf(this)
 
+/**
+ * Evaluates transition conditions. It is intentionally stateless with respect to *which* branch is
+ * being evaluated: the relevant [EventProcessor] and ambient (scoped) event are passed in per call, so
+ * one processor instance serves every branch of a parallel context.
+ */
 class TransitionProcessor(
     val stateMachine: StateMachine,
     val metamodel: Metamodel,
@@ -47,79 +52,68 @@ class TransitionProcessor(
     val stateMachineAttachedToModelElement: String,
     val macroProcessor: MacroProcessor,
     val stateMachineQueryHelper: StateMachineQueryHelper,
-    val modelQueryProcessor: ModelQueryProcessor,
-    val eventProcessor: EventProcessor,
-    /** Retained for configuration compatibility; consumption now always happens when a transition fires. */
-    val eventConsumptionOnFire: Boolean = true
+    val modelQueryProcessor: ModelQueryProcessor
 ) {
 
-    val transitions = stateMachine.transitions
-
     /**
-     * Finds the first transition that can fire from [currentState].
+     * Yields the normal (and, when [includeSplits] is true, split) transitions that can fire from
+     * [currentState], in definition order. No event is consumed here — consumption happens when the
+     * engine actually fires the transition.
      *
-     * @param currentState The name of the active state.
-     * @param ambientEvent The payload of the event currently in scope for this state, used to resolve
-     *                     `$(event->...)` in guard clauses of transitions that do not have their own
-     *                     EVENT clause. Null when no event is in scope.
+     * @param ambientEvent   The scoped event payload, for guard clauses on transitions without an EVENT clause.
+     * @param eventProcessor The branch's event processor, used to find candidate events.
+     * @param includeSplits  Whether split transitions are eligible (false while already parallel).
      */
-    fun findFirstExecutableTransition(currentState: String, ambientEvent: DataObject? = null): FireableTransition? {
-        return findAllExecutableTransitions(currentState, ambientEvent).firstOrNull()
-    }
-
-    /**
-     * Finds all transitions whose conditions hold for [currentState], in definition order.
-     *
-     * A condition is an ordered list of clauses that must all hold. When a transition has an EVENT
-     * clause, the bus is scanned for candidate events of that name (oldest-first); the first event
-     * whose guard clauses all pass enables the transition and is reported as the matched event. No
-     * event is consumed here — consumption happens when the engine actually fires the transition.
-     *
-     * @param currentState The name of the active state.
-     * @param ambientEvent The event payload in scope, for guard clauses on non-EVENT transitions.
-     * @return A sequence of fireable transitions in definition order.
-     */
-    fun findAllExecutableTransitions(currentState: String, ambientEvent: DataObject? = null): Sequence<FireableTransition> = sequence {
-        val candidates = transitions.filter { it.fromState == currentState }
-        for (transition in candidates) {
-            val fireable = evaluateTransition(transition, ambientEvent)
-            if (fireable != null) yield(fireable)
+    fun findFireable(
+        currentState: String,
+        ambientEvent: DataObject?,
+        eventProcessor: EventProcessor,
+        includeSplits: Boolean
+    ): Sequence<Fireable> = sequence {
+        for (transition in stateMachine.outgoingFrom(currentState)) {
+            if (transition is SplitTransition && !includeSplits) continue
+            val match = evaluateCondition(transition.condition, ambientEvent, eventProcessor)
+            if (match != null) yield(Fireable(transition, match.event))
         }
     }
 
     /**
-     * Evaluates one transition's condition. Returns a [FireableTransition] (with the matched event, if
-     * any) when it can fire, or null otherwise.
+     * Evaluates a join's condition (the source-state matching is done by the engine). Returns a
+     * [Fireable] when the condition holds, or null otherwise.
      */
-    private fun evaluateTransition(transition: Transition, ambientEvent: DataObject?): FireableTransition? {
-        val clauses = transition.condition.leafClauses()
+    fun evaluateJoin(join: states.JoinTransition, eventProcessor: EventProcessor): Fireable? {
+        val match = evaluateCondition(join.condition, null, eventProcessor) ?: return null
+        return Fireable(join, match.event)
+    }
+
+    /**
+     * Evaluates a condition (a list of clauses, all of which must hold). When an EVENT clause is
+     * present it must be first; the bus is scanned for candidate events (oldest-first) and the first
+     * one whose guard clauses all pass is returned as the match.
+     */
+    private fun evaluateCondition(
+        condition: Condition,
+        ambientEvent: DataObject?,
+        eventProcessor: EventProcessor
+    ): MatchResult? {
+        val clauses = condition.leafClauses()
         val eventClause = clauses.firstOrNull { it is EventCondition } as? EventCondition
         val guardClauses = clauses.filter { it !is EventCondition }
 
         if (eventClause == null) {
-            // No EVENT clause: evaluate the guards against the ambient (scoped) event, if any.
-            return if (guardClauses.all { evaluateGuard(it, ambientEvent) }) {
-                FireableTransition(transition, null)
-            } else {
-                null
-            }
+            return if (guardClauses.all { evaluateGuard(it, ambientEvent) }) MatchResult(null) else null
         }
 
-        // EVENT-gated: scan candidate events oldest-first and take the first whose guards all pass.
-        // Each candidate is bound as the event in scope so guards can read $(event->...).
         for (event in eventProcessor.getEvents(eventClause.eventDomain, eventClause.eventValue)) {
             val eventObj = event.payloadObject
             if (guardClauses.all { evaluateGuard(it, eventObj) }) {
-                return FireableTransition(transition, event)
+                return MatchResult(event)
             }
         }
         return null
     }
 
-    /**
-     * Evaluates a single guard clause (EVAL or VALUE) with [eventObj] bound as the event in scope.
-     * Any failure is treated as "does not hold".
-     */
+    /** Evaluates a single guard clause (EVAL or VALUE) with [eventObj] bound as the event in scope. */
     private fun evaluateGuard(clause: Condition, eventObj: DataObject?): Boolean {
         return when (clause) {
             is EvalCondition -> try {
@@ -134,17 +128,13 @@ class TransitionProcessor(
                 System.err.println("[TransitionProcessor] VALUE condition failed: ${e.message}")
                 false
             }
-            // A second EVENT clause is not allowed in a condition; ignore it defensively.
             else -> false
         }
     }
 
     /**
      * Evaluates a [ValueCondition] by resolving the boolean variable path against the context object
-     * (or the event in scope, for `event->...` paths). The path must resolve to a Boolean value.
-     *
-     * Special case: the literals "true" / "false" are treated as constants — this is how unconditional
-     * transitions (no CONDITION block) are represented after parsing.
+     * (or the event in scope, for `event->...` paths). The literals "true"/"false" are constants.
      */
     private fun evaluateValueCondition(vc: ValueCondition, eventObj: DataObject?): Boolean {
         val literal = vc.boolVariable.trim().lowercase()

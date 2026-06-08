@@ -74,6 +74,8 @@ class EngineTraceLogger(
         TRANSITION_FIRED,
         TRANSITION_SKIPPED_LOOP,
         TRANSITION_CHECK,
+        SPLIT_FIRED,
+        JOIN_FIRED,
         EVENT_RECEIVED,
         EVENT_CONSUMED,
         ACTION_ERROR,
