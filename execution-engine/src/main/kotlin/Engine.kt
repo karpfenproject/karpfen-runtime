@@ -39,8 +39,13 @@ class Engine(
     /** Optional trace logger for structured engine execution tracing. */
     val traceLogger: EngineTraceLogger? = null,
     /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
-    val eventConsumptionOnFire: Boolean = true
+    val eventConsumptionOnFire: Boolean = true,
+    /** Metamodel for event payloads; used to parse incoming payloads into objects. Null when unused. */
+    val eventMetamodel: Metamodel? = null
 ) {
+
+    /** Parses incoming event payloads into the runtime object model against [eventMetamodel]. */
+    private val eventPayloadParser = EventPayloadParser(eventMetamodel)
 
     private val dataObservationListeners: MutableMap<String, MutableList<DataObservationListener>> = mutableMapOf()
     private var messageOutChannel: Channel? = null
@@ -59,9 +64,11 @@ class Engine(
     val modelQueryProcessor = ModelQueryProcessor(metamodel, model)
 
     /**
-     * Accepts an event from an external source (e.g., WebSocket) and publishes it to the bus.
+     * Accepts an event from an external source (e.g., WebSocket), parses its payload into the runtime
+     * object model, and publishes it to the bus.
      */
     fun receiveExternalEvent(event: Event) {
+        eventPayloadParser.parseInto(event)
         eventProcessor.publishExternalEvent(event)
     }
 
@@ -91,8 +98,26 @@ class Engine(
         val actionProcessor: ActionProcessor,
         var stateStack: List<String>,
         var notEnteredSubstack: MutableList<String>,
-        var lastFiredTransition: Transition? = null
+        var lastFiredTransition: Transition? = null,
+        /**
+         * The event that brought the machine into each currently active state, keyed by state name.
+         * A state's scoped event lives as long as the state stays active; it is dropped when the state
+         * is left and overwritten when a substate is entered through its own event transition.
+         */
+        val scopedEventByState: MutableMap<String, Event> = mutableMapOf()
     )
+
+    /**
+     * The event currently in scope: the scoped event of the innermost active state that has one.
+     * Auto-entered substates without their own event transparently inherit the enclosing event.
+     */
+    private fun currentScopedEvent(ctx: SMContext): Event? {
+        for (i in ctx.stateStack.indices.reversed()) {
+            val event = ctx.scopedEventByState[ctx.stateStack[i]]
+            if (event != null) return event
+        }
+        return null
+    }
 
     fun start() {
         if (isRunning) return
@@ -226,15 +251,15 @@ class Engine(
             val stateObj = smQueryHelper.findStateByName(stateName) ?: continue
 
             // Execute the onEntry block
-            if (stateObj.onEntry.actions.isNotEmpty()) {
+            if (stateObj.onEntry.isNotEmpty()) {
                 traceLogger?.log(
                     ctx.modelElementId,
                     EngineTraceLogger.TraceEventType.STATE_ENTRY_EXEC,
-                    "Executing onEntry for state '$stateName' (${stateObj.onEntry.actions.size} actions)",
+                    "Executing onEntry for state '$stateName' (${stateObj.onEntry.items.size} items)",
                     mapOf("state" to stateName)
                 )
                 try {
-                    ctx.actionProcessor.executeBlock(stateObj.onEntry)
+                    ctx.actionProcessor.executeBlock(stateObj.onEntry, currentScopedEvent(ctx)?.payloadObject)
                 } catch (e: Exception) {
                     traceLogger?.log(
                         ctx.modelElementId,
@@ -255,10 +280,10 @@ class Engine(
 
             // Check for a transition after entry — but only if entry actually executed actions.
             // If ENTRY was empty, we should proceed to DO before checking transitions.
-            if (stateObj.onEntry.actions.isNotEmpty()) {
-                val transition = findFireableTransition(ctx)
-                if (transition != null) {
-                    applyTransition(transition, ctx, smQueryHelper)
+            if (stateObj.onEntry.isNotEmpty()) {
+                val fireable = findFireableTransition(ctx)
+                if (fireable != null) {
+                    applyTransition(fireable, ctx, smQueryHelper)
                     return // Exit the tick; the new ENTRY phase will run on the next tick
                 }
             }
@@ -267,15 +292,15 @@ class Engine(
         // --- DO phase (only the innermost state) ---
         val currentStateName = ctx.stateStack.last()
         val currentState = smQueryHelper.findStateByName(currentStateName)
-        if (currentState != null && currentState.onDo.actions.isNotEmpty()) {
+        if (currentState != null && currentState.onDo.isNotEmpty()) {
             traceLogger?.log(
                 ctx.modelElementId,
                 EngineTraceLogger.TraceEventType.STATE_DO_EXEC,
-                "Executing onDo for state '$currentStateName' (${currentState.onDo.actions.size} actions)",
+                "Executing onDo for state '$currentStateName' (${currentState.onDo.items.size} items)",
                 mapOf("state" to currentStateName)
             )
             try {
-                ctx.actionProcessor.executeBlock(currentState.onDo)
+                ctx.actionProcessor.executeBlock(currentState.onDo, currentScopedEvent(ctx)?.payloadObject)
             } catch (e: Exception) {
                 traceLogger?.log(
                     ctx.modelElementId,
@@ -294,10 +319,14 @@ class Engine(
             )
         }
 
-        // Check for a transition after DO
-        val transition = findFireableTransition(ctx)
-        if (transition != null) {
-            applyTransition(transition, ctx, smQueryHelper)
+        // Check for a transition after DO. If none fired this tick, every candidate event was offered
+        // to every transition of the current configuration without being consumed, so burn them
+        // (run-to-completion: an event that nothing reacts to is discarded).
+        val fireable = findFireableTransition(ctx)
+        if (fireable != null) {
+            applyTransition(fireable, ctx, smQueryHelper)
+        } else {
+            burnDispatchedEvents(ctx)
         }
     }
 
@@ -308,17 +337,40 @@ class Engine(
      * Checks states from innermost to outermost. For each state, iterates through ALL
      * executable transitions and skips any that are blocked by the NOT LOOPING rule.
      */
-    private fun findFireableTransition(ctx: SMContext): Transition? {
+    private fun findFireableTransition(ctx: SMContext): FireableTransition? {
+        val ambientEvent = currentScopedEvent(ctx)?.payloadObject
         for (i in ctx.stateStack.indices.reversed()) {
             val stateName = ctx.stateStack[i]
-            val candidates = ctx.transitionProcessor.findAllExecutableTransitions(stateName)
-            for (transition in candidates) {
-                if (shouldFireTransition(transition, ctx)) {
-                    return transition
+            val candidates = ctx.transitionProcessor.findAllExecutableTransitions(stateName, ambientEvent)
+            for (fireable in candidates) {
+                if (shouldFireTransition(fireable.transition, ctx)) {
+                    return fireable
                 }
             }
         }
         return null
+    }
+
+    /**
+     * Marks as processed every still-pending event that matched an EVENT trigger of some transition in
+     * the current configuration. Called when no transition fired this tick, so these events were
+     * dispatched but consumed by nothing and should not be retried (run-to-completion semantics).
+     */
+    private fun burnDispatchedEvents(ctx: SMContext) {
+        val ep = ctx.transitionProcessor.eventProcessor
+        val burned = HashSet<Event>()
+        for (stateName in ctx.stateStack) {
+            for (transition in ctx.transitionProcessor.transitions) {
+                if (transition.fromState != stateName) continue
+                for (clause in transition.condition.leafClauses()) {
+                    if (clause is EventCondition) {
+                        for (event in ep.getEvents(clause.eventDomain, clause.eventValue)) {
+                            if (burned.add(event)) ep.consume(event)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -346,10 +398,11 @@ class Engine(
      * and updates the context.
      */
     private fun applyTransition(
-        transition: Transition,
+        fireable: FireableTransition,
         ctx: SMContext,
         smQueryHelper: StateMachineQueryHelper
     ) {
+        val transition = fireable.transition
         val oldStack = ctx.stateStack
         val newStackBase = smQueryHelper.getStateStackForState(transition.toState)
 
@@ -364,10 +417,10 @@ class Engine(
             return
         }
 
-        // Consume the triggering event now that the transition is confirmed to fire
-        if (eventConsumptionOnFire && transition.condition.conditionType == ConditionType.EVENT) {
-            val ec = transition.condition as EventCondition
-            ctx.transitionProcessor.eventProcessor.consumeEvent(ec.eventDomain, ec.eventValue)
+        // Consume the exact event that enabled this transition (matched by the guard scan), now that
+        // the transition is confirmed to fire.
+        if (eventConsumptionOnFire) {
+            fireable.matchedEvent?.let { ctx.transitionProcessor.eventProcessor.consume(it) }
         }
 
         // Determine which states need their ENTRY executed.
@@ -401,6 +454,11 @@ class Engine(
         ctx.stateStack = newStackBase
         ctx.notEnteredSubstack = changedSequence.toMutableList()
         ctx.lastFiredTransition = transition
+
+        // Maintain scoped events: drop the scope of any state we just left, and (for an event-driven
+        // transition) scope the matched event to the target state so its ENTRY/DO can read $(event->...).
+        ctx.scopedEventByState.keys.retainAll(newStackBase.toSet())
+        fireable.matchedEvent?.let { ctx.scopedEventByState[transition.toState] = it }
 
         traceLogger?.log(
             ctx.modelElementId,

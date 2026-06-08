@@ -80,6 +80,14 @@ class EventProcessor(
     }
 
     /**
+     * Returns all unprocessed events of [eventName] in [domain] for this engine, oldest-first.
+     * Used to scan candidate events when a transition guards on the payload.
+     */
+    fun getEvents(domain: String, eventName: String): List<Event> {
+        return eventBus.getUnprocessedEvents(domain, eventName, engineId)
+    }
+
+    /**
      * Marks the given event as processed by this engine.
      * Call this after the engine has reacted to the event (e.g. a transition fired).
      */

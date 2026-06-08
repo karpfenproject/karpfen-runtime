@@ -23,6 +23,11 @@ import meta.SimplePropertyType
 
 class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
 
+    companion object {
+        /** Reserved leading path segment that refers to the event currently in scope. */
+        const val EVENT_ROOT = "event"
+    }
+
     private val allObjects: Set<DataObject> by lazy {
         KmodelDSLConverter.collectAllObjects(model.objects)
     }
@@ -334,6 +339,39 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
 
         return currentObj
     }
+
+    /**
+     * Resolves a path string, honouring the reserved [EVENT_ROOT] prefix.
+     *
+     * A path that starts with `event` is resolved against [eventObj] (the payload of the event in
+     * scope) rather than [contextObj]; `event` on its own returns the payload object itself. Any other
+     * path resolves against [contextObj] exactly like [resolvePathFromObject].
+     *
+     * @throws IllegalArgumentException if the path is rooted at `event` but no event is in scope, or if
+     *         a segment cannot be resolved.
+     */
+    fun resolvePathWithEvent(contextObj: DataObject, eventObj: DataObject?, path: String): Any? {
+        val segments = path.split("->").map { it.trim() }
+        if (segments.isNotEmpty() && segments[0] == EVENT_ROOT) {
+            if (eventObj == null) {
+                throw IllegalArgumentException("No event is in scope for path '$path'")
+            }
+            val rest = segments.drop(1)
+            return if (rest.isEmpty()) eventObj else resolvePathFromObject(eventObj, rest.joinToString("->"))
+        }
+        return resolvePathFromObject(contextObj, path)
+    }
+
+    /**
+     * Like [resolvePathWithEvent] but returns null instead of throwing when the path cannot be
+     * resolved. Used to test whether an access path is currently available (e.g. for IF IN SCOPE).
+     */
+    fun tryResolvePathWithEvent(contextObj: DataObject, eventObj: DataObject?, path: String): Any? =
+        try {
+            resolvePathWithEvent(contextObj, eventObj, path)
+        } catch (_: Exception) {
+            null
+        }
 
     /**
      * Resolves a path string (e.g. "boundingBox->position->x") relative to a given context DataObject.

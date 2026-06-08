@@ -65,9 +65,23 @@ A transition without a `CONDITION` block is parsed as `VALUE("true")` - it fires
 |------|--------|----------|
 | **VALUE** | `CONDITION { VALUE("path") }` | Resolves a boolean model property. Literals `"true"` / `"false"` are constants. |
 | **EVAL** | `CONDITION { EVAL { ... } }` | Executes Python code; expects a boolean return value. |
-| **EVENT** | `CONDITION { EVENT("domain", "name") }` | Checks the event bus for a matching event. If found, the event is consumed (marked as processed by this engine). |
+| **EVENT** | `CONDITION { EVENT("domain", "name") }` | Checks the event bus for a matching event. The event that fires the transition is consumed (marked as processed by this engine). |
 
-> **Side effect**: EVENT conditions consume the event as soon as the condition is evaluated as `true`, even if the transition is later blocked by NOT LOOPING. This is a known trade-off for lazy evaluation.
+### Conditions with several clauses
+
+A `CONDITION` block may list more than one clause. They are evaluated top to bottom and **all** of them must hold for the transition to fire (a short-circuit AND). This keeps each individual clause small instead of cramming everything into one big EVAL:
+
+```
+TRANSITION "observe" -> "evade" {
+    CONDITION {
+        EVENT("public", "obstacleDetected")     // an EVENT clause, if present, comes first
+        EVAL { return $(event->distance) < 100 } // a guard on the event payload
+        EVAL { return $(d_closest_wall) > 100 }  // a guard on the model
+    }
+}
+```
+
+At most one clause may be an `EVENT` clause, and it has to come first, because it is what brings the event into scope for the guards that follow it (see [Reading event payloads](#reading-event-payloads)). A single-clause `CONDITION` behaves exactly as before, so existing state machines are unaffected.
 
 ---
 
@@ -123,6 +137,23 @@ SET("y", EVAL { return $(boundingBox->position->y) + 0.3 * $(direction->y) })
 
 This means `$(boundingBox->position->y)` is replaced by the current value of `y` each time the EVAL is executed. Changes from previous ticks are visible.
 
+A path may also start with `event`, in which case it reads from the payload of the event currently in scope rather than from the context object — see [Reading event payloads](#reading-event-payloads).
+
+### IF IN SCOPE blocks
+
+A state can be reached in different ways: through an event transition (which leaves a scoped event behind) or through a plain transition (which does not). An `IF IN SCOPE(...)` block lets one ENTRY or DO block adapt to that, running its body only when every path it names currently resolves to a value:
+
+```
+DO {
+    IF IN SCOPE("event->factor") {
+        SET("speed", EVAL { return 0.3 * $(event->factor) })
+    }
+    APPEND("log", "still driving")
+}
+```
+
+The check is about availability, not truth. A path rooted at `event` is available only when an event is in scope and actually carries that field; any other path is available when it resolves against the context object. You can list several paths separated by commas, and all of them must be available for the body to run. Blocks can be nested.
+
 ---
 
 ## Event System
@@ -150,6 +181,33 @@ Events are not deleted when consumed. Instead, the consuming engine's ID is reco
 - Multiple engines can independently react to the same event.
 - The same engine will not react to the same event twice.
 - The event dies naturally when its TTL expires.
+
+Consumption follows run-to-completion semantics. On each tick an event is offered to every transition of the current state configuration. If one of them fires on it, that event is consumed. If the whole configuration is tried and nothing reacts, the event is consumed anyway (it was dispatched and ignored, so it is not retried on the next tick). The only events that survive a tick are those whose name no transition in the current configuration listens for — they wait, until either the machine moves into a state that does listen, or their TTL runs out.
+
+### Event payloads
+
+An event can carry a structured payload, not just a name. The shape of each payload is described in a separate kmeta file (conventionally `EVENTS.kmeta`) and registered with `PUT /setEventDefinitions`. Every type in that file is also an event name: an event named `setSpeed` is parsed against the `setSpeed` type. Payloads can be sent as JSON or in the kmodel syntax — both are turned into the same kind of runtime object, so from the state machine's point of view it makes no difference which was used. A payload may also embed domain types (for example an event carrying a `Vector`), because the domain metamodel is made available when the event definitions are parsed.
+
+#### Reading event payloads
+
+You never address an arbitrary event from the queue. Instead, the event that causes a reaction is the one you can read. When a transition with an `EVENT` clause fires, that event becomes the **scoped event** of the state being entered, and you read its payload with paths rooted at `event`:
+
+```
+SET("speed", EVAL { return 0.3 * $(event->factor) })
+```
+
+The same `$(event->...)` paths work inside the guard clauses of the transition itself (the `EVENT` clause binds the candidate before the guards run), which is how you filter on payload content — for instance, only react to a `setSpeed` whose `factor` is above some threshold. When several events of the same name are waiting, they are tried oldest-first, and the first one whose guards all pass is the one that fires.
+
+### Scoped event lifetime
+
+A scoped event stays alive for as long as its state stays active. Concretely:
+
+- Entering a state through an event transition scopes that event to the state.
+- The scope is dropped when the state is left.
+- Entering a *substate* through its own event transition overwrites the scope; leaving that substate reverts to the enclosing event.
+- A substate entered through a plain (non-event) transition inherits the enclosing event — it does not clear it.
+
+Because the engine holds onto the event object for the lifetime of the state, the payload remains readable even after the event has been consumed and even after its TTL would have removed it from the bus. In other words, scoping captures the payload into the state. If you need a value to outlive the state, write it into the model from an ENTRY/DO action.
 
 ### Shared Event Bus
 

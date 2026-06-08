@@ -1,0 +1,19 @@
+// Event payload definitions for the cleaning-robot environment.
+//
+// This is an ordinary kmeta file, but it is registered separately (PUT /setEventDefinitions) and
+// describes the *payloads* of events rather than the domain model. Each type name here is also an
+// event name: an event called "setSpeed" is parsed against the "setSpeed" type below.
+//
+// Event payloads may embed domain types. "teleport" below carries a "Vector", which is defined in
+// cleaning_robot.kmeta and is available because the domain metamodel is registered first.
+
+type "start" "Signal to start operating. No payload." {
+}
+
+type "setSpeed" "Asks the robot to change how fast it drives." {
+    prop("factor", "number")
+}
+
+type "teleport" "Moves the robot to a new position." {
+    has("position", "Vector")
+}

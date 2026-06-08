@@ -49,27 +49,56 @@ class ActionProcessor(
 ) {
 
     /**
-     * Executes every [ActionRule] in [block] in order.
+     * Executes every item in [block] in order.
+     *
+     * [eventContext] is the payload of the event in scope, if any. It is what makes `$(event->...)`
+     * resolvable inside this block and what an `IF IN SCOPE` block checks for availability.
      *
      * @throws IllegalArgumentException if an unknown operation type or value type is encountered.
      * @throws RuntimeException if a Python macro execution fails.
      */
-    fun executeBlock(block: ActionBlock) {
+    fun executeBlock(block: ActionBlock, eventContext: DataObject? = null) {
         modelQueryProcessor.beginBatch()
-        for (rule in block.actions) {
-            executeRule(rule)
-        }
+        executeItems(block.items, eventContext)
         modelQueryProcessor.commitBatch()
+    }
+
+    /**
+     * Executes a list of action items, recursing into [InScopeBlock]s whose paths are available.
+     */
+    private fun executeItems(items: List<ActionItem>, eventContext: DataObject?) {
+        for (item in items) {
+            when (item) {
+                is ActionRule -> executeRule(item, eventContext)
+                is InScopeBlock -> {
+                    if (isInScope(item.paths, eventContext)) {
+                        executeItems(item.body.items, eventContext)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns true when every path in [paths] currently resolves to a value. A path rooted at `event`
+     * is checked against [eventContext]; any other path against the context object. This is what lets
+     * an `IF IN SCOPE` block run only when the data it needs is actually present.
+     */
+    private fun isInScope(paths: List<String>, eventContext: DataObject?): Boolean {
+        val contextObj = modelQueryProcessor.getDataObjectById(contextObjectId)
+        return paths.all { path ->
+            modelQueryProcessor.tryResolvePathWithEvent(contextObj, eventContext, path) != null
+        }
     }
 
     /**
      * Executes a single [ActionRule].
      */
-    fun executeRule(rule: ActionRule) {
+    fun executeRule(rule: ActionRule, eventContext: DataObject? = null) {
         when (rule.operationType) {
-            ActionOperationType.SET    -> executeSet(rule)
-            ActionOperationType.APPEND -> executeAppend(rule)
-            ActionOperationType.EVENT  -> executeEvent(rule)
+            ActionOperationType.SET    -> executeSet(rule, eventContext)
+            ActionOperationType.APPEND -> executeAppend(rule, eventContext)
+            ActionOperationType.EVENT  -> executeEvent(rule, eventContext)
         }
     }
 
@@ -83,7 +112,7 @@ class ActionProcessor(
      * For object properties (relations) the result DataObject is written via
      * [ModelQueryProcessor.updateRelation].
      */
-    private fun executeSet(rule: ActionRule) {
+    private fun executeSet(rule: ActionRule, eventContext: DataObject?) {
         val contextObj = modelQueryProcessor.getDataObjectById(contextObjectId)
         val path = rule.leftSide
 
@@ -95,7 +124,7 @@ class ActionProcessor(
             "string"
         }
 
-        val resolvedValue = resolveRightSide(rule.rightSide, expectedType, contextObj)
+        val resolvedValue = resolveRightSide(rule.rightSide, expectedType, contextObj, eventContext)
             ?: return // null result → skip (no-op)
 
         applyValueToPath(contextObj, path, resolvedValue)
@@ -106,7 +135,7 @@ class ActionProcessor(
     /**
      * Resolves the right-hand side and appends it to the list property at [ActionRule.leftSide].
      */
-    private fun executeAppend(rule: ActionRule) {
+    private fun executeAppend(rule: ActionRule, eventContext: DataObject?) {
         val contextObj = modelQueryProcessor.getDataObjectById(contextObjectId)
         val path = rule.leftSide
 
@@ -119,7 +148,7 @@ class ActionProcessor(
         // Strip "list(" wrapper to get element type
         val elementType = extractElementType(listType)
 
-        val resolvedValue = resolveRightSide(rule.rightSide, elementType, contextObj)
+        val resolvedValue = resolveRightSide(rule.rightSide, elementType, contextObj, eventContext)
             ?: return
 
         // Navigate to the object that owns the list property
@@ -146,18 +175,18 @@ class ActionProcessor(
      * Raises an internal event. [ActionRule.leftSide] is the domain; the right-hand side
      * provides the event name (expected as [ActionValueType.VALUE] or a literal string from EVAL).
      */
-    private fun executeEvent(rule: ActionRule) {
+    private fun executeEvent(rule: ActionRule, eventContext: DataObject?) {
         val domain = rule.leftSide
         val eventName = when (rule.rightSide.actionValueType) {
             ActionValueType.VALUE -> (rule.rightSide as ValueActionRightSide).value
             ActionValueType.EVAL  -> {
                 val contextObj = modelQueryProcessor.getDataObjectById(contextObjectId)
-                val result = resolveRightSide(rule.rightSide, "string", contextObj)
+                val result = resolveRightSide(rule.rightSide, "string", contextObj, eventContext)
                 result?.toString() ?: return
             }
             ActionValueType.MACRO -> {
                 val contextObj = modelQueryProcessor.getDataObjectById(contextObjectId)
-                val result = resolveRightSide(rule.rightSide, "string", contextObj)
+                val result = resolveRightSide(rule.rightSide, "string", contextObj, eventContext)
                 result?.toString() ?: return
             }
         }
@@ -173,12 +202,14 @@ class ActionProcessor(
      * @param expectedType  The expected result type string (e.g., "number", "Vector",
      *                      `reference("Obstacle")`, `list("string")`).
      * @param contextObj    The context [DataObject] for path resolution.
+     * @param eventContext  The payload of the event in scope, for `$(event->...)` resolution.
      * @return The resolved value or null if no result.
      */
     fun resolveRightSide(
         rightSide: ActionRightSide,
         expectedType: String,
-        contextObj: DataObject
+        contextObj: DataObject,
+        eventContext: DataObject? = null
     ): Any? {
         return when (rightSide.actionValueType) {
             ActionValueType.VALUE -> {
@@ -187,11 +218,11 @@ class ActionProcessor(
             }
             ActionValueType.EVAL -> {
                 val code = (rightSide as EvalActionRightSide).code
-                macroProcessor.executeInlineMacro(code, expectedType)
+                macroProcessor.executeInlineMacro(code, expectedType, eventContext)
             }
             ActionValueType.MACRO -> {
                 val macroRS = rightSide as MacroActionRightSide
-                macroProcessor.executeFullMacro(macroRS.macroName, macroRS.args)
+                macroProcessor.executeFullMacro(macroRS.macroName, macroRS.args, eventContext)
             }
         }
     }

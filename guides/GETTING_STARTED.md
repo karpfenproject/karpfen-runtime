@@ -208,6 +208,7 @@ The API is organized into three categories:
 - `POST /createEnvironment` - Create new environment
 - `PUT /setMetamodel` - Upload metamodel
 - `PUT /setModel` - Upload model instance
+- `PUT /setEventDefinitions` - Upload event payload definitions (optional)
 - `PUT /setStateMachine` - Upload state machine
 - `POST /setTickDelay` - Configure execution tick delay
 
@@ -251,9 +252,12 @@ ws.onopen = () => {
 {
   "environmentKey": "env-123",
   "messageType": "event_name",
-  "payload": "message_content_or_json"
+  "payload": "message_content_or_json",
+  "payloadFormat": "json"
 }
 ```
+
+Here `environmentKey` is the event domain, `messageType` is both the event name and its payload type, and `payload` may be empty, a JSON object, or a kmodel `make object` block. The optional `payloadFormat` (`none`/`json`/`kmodel`) is guessed from the payload when omitted. Payload types are declared via `/setEventDefinitions`.
 
 ### Incoming notifications
 Subscribed clients receive data change notifications:
@@ -284,6 +288,11 @@ curl -X PUT "http://localhost:8080/setMetamodel?envKey=$ENV_KEY" \
 curl -X PUT "http://localhost:8080/setModel?envKey=$ENV_KEY" \
  -H "Content-Type: text/plain" \
  -d @model.kmodel
+
+# Upload event payload definitions (optional; only for events that carry a payload)
+curl -X PUT "http://localhost:8080/setEventDefinitions?envKey=$ENV_KEY" \
+ -H "Content-Type: text/plain" \
+ -d @EVENTS.kmeta
 
 # Upload state machine
 curl -X PUT "http://localhost:8080/setStateMachine?envKey=$ENV_KEY&attachedTo=robot1" \

@@ -320,7 +320,7 @@ class ActionProcessorTest {
     @Test
     fun `executeBlock runs all rules in order`() {
         val ap = makeActionProcessor()
-        val block = ActionBlock(mutableListOf(
+        val block = ActionBlock(mutableListOf<ActionItem>(
             ActionRule(ActionOperationType.SET, "d_closest_obstacle", ValueActionRightSide("10.0")),
             ActionRule(ActionOperationType.SET, "d_closest_wall", ValueActionRightSide("20.0")),
             ActionRule(ActionOperationType.APPEND, "log", ValueActionRightSide("updated")),

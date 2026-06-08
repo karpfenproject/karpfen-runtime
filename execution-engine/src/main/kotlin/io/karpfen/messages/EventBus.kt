@@ -61,8 +61,9 @@ class EventBus(
                 payload = event.payload,
                 timestamp = event.timestamp,
                 source = event.source,
-                ttlMs = defaultTtlMs
-            )
+                ttlMs = defaultTtlMs,
+                payloadFormat = event.payloadFormat
+            ).also { it.payloadObject = event.payloadObject }
         } else {
             event
         }
@@ -80,6 +81,16 @@ class EventBus(
     fun getUnprocessedEvents(domain: String, engineId: String): List<Event> {
         return getBucket(domain)
             .filter { !it.isExpired() && !it.wasProcessedBy(engineId) }
+    }
+
+    /**
+     * Returns all non-expired, unprocessed events with [eventName] in [domain] for [engineId],
+     * ordered oldest-first. Used to scan candidate events when a transition has payload guards.
+     */
+    fun getUnprocessedEvents(domain: String, eventName: String, engineId: String): List<Event> {
+        return getBucket(domain)
+            .filter { !it.isExpired() && !it.wasProcessedBy(engineId) && it.name == eventName }
+            .sortedBy { it.timestamp }
     }
 
     /**
