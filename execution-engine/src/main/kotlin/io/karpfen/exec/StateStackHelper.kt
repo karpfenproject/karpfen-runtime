@@ -43,4 +43,20 @@ object StateStackHelper {
         return newStack.subList(commonLength, newStack.size)
     }
 
+    /**
+     * Computes which states need their ENTRY block to run when moving from [oldStack] to [newStack]
+     * with target state [target].
+     *
+     * Normally this is just the new suffix from [getChangedStackSequence]. That suffix is empty for a
+     * self-transition or a transition to an ancestor, in which case [target] (and its parent) must be
+     * re-entered, so we restart re-entry one level above [target]. Passing an empty [oldStack] (e.g.
+     * for a fresh entry after a join) makes the whole [newStack] the entry sequence.
+     */
+    fun computeEntrySequence(oldStack: List<String>, newStack: List<String>, target: String): List<String> {
+        val rawChanged = getChangedStackSequence(oldStack, newStack)
+        if (rawChanged.isNotEmpty()) return rawChanged
+        val targetIdx = newStack.indexOf(target)
+        return if (targetIdx >= 0) newStack.subList(maxOf(0, targetIdx - 1), newStack.size) else newStack
+    }
+
 }

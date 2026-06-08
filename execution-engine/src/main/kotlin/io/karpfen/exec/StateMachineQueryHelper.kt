@@ -15,8 +15,11 @@
  */
 package io.karpfen.io.karpfen.exec
 
+import states.JoinTransition
+import states.SplitTransition
 import states.State
 import states.StateMachine
+import states.Transition
 
 class StateMachineQueryHelper(val stateMachine: StateMachine) {
 
@@ -81,8 +84,10 @@ class StateMachineQueryHelper(val stateMachine: StateMachine) {
         val currentStack = getStateStackForState(stateName)
         val reachable = mutableSetOf<String>()
         for (transition in stateMachine.transitions) {
-            if (currentStack.contains(transition.fromState)) {
-                reachable.add(transition.toState)
+            when (transition) {
+                is Transition -> if (currentStack.contains(transition.fromState)) reachable.add(transition.toState)
+                is SplitTransition -> if (currentStack.contains(transition.fromState)) reachable.addAll(transition.toStates)
+                is JoinTransition -> if (transition.fromStates.any { currentStack.contains(it) }) reachable.add(transition.toState)
             }
         }
         return reachable.toList()
