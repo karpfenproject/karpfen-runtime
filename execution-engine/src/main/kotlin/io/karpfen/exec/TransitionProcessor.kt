@@ -15,14 +15,30 @@
  */
 package io.karpfen.io.karpfen.exec
 
+import instance.DataObject
 import instance.Model
+import io.karpfen.io.karpfen.messages.Event
 import meta.Metamodel
 import states.StateMachine
 import states.Transition
-import states.conditions.ConditionType
+import states.conditions.CompositeCondition
+import states.conditions.Condition
 import states.conditions.EvalCondition
 import states.conditions.EventCondition
 import states.conditions.ValueCondition
+
+/**
+ * A transition that is ready to fire, together with the event (if any) that enabled it.
+ *
+ * For an EVENT-gated transition, [matchedEvent] is the specific event whose guards all passed; the
+ * engine consumes exactly that event when the transition fires and keeps it as the state's scoped
+ * event. For a plain transition, [matchedEvent] is null.
+ */
+data class FireableTransition(val transition: Transition, val matchedEvent: Event?)
+
+/** Flattens a condition into its leaf clauses; a [CompositeCondition] exposes its parts in order. */
+fun Condition.leafClauses(): List<Condition> =
+    if (this is CompositeCondition) clauses else listOf(this)
 
 class TransitionProcessor(
     val stateMachine: StateMachine,
@@ -33,106 +49,110 @@ class TransitionProcessor(
     val stateMachineQueryHelper: StateMachineQueryHelper,
     val modelQueryProcessor: ModelQueryProcessor,
     val eventProcessor: EventProcessor,
-    /** When true (default), events are only consumed when a transition fires. When false, consumed on condition read. */
+    /** Retained for configuration compatibility; consumption now always happens when a transition fires. */
     val eventConsumptionOnFire: Boolean = true
 ) {
 
     val transitions = stateMachine.transitions
 
     /**
-     * Finds the first transition that can be executed from [currentState].
-     *
-     * Evaluation order per transition:
-     * 1. [ConditionType.EVENT]  – checks the [EventProcessor] (shared EventBus) for the event.
-     * 2. [ConditionType.EVAL]   – executes the inline macro code and expects a boolean result.
-     * 3. [ConditionType.VALUE]  – compares a model property value against a literal.
-     *
-     * When a matching transition is found for an EVENT condition the event is consumed
-     * (marked as processed by this engine) so that the same engine won't react to it twice.
+     * Finds the first transition that can fire from [currentState].
      *
      * @param currentState The name of the active state.
-     * @return The first executable [Transition], or null if none applies.
+     * @param ambientEvent The payload of the event currently in scope for this state, used to resolve
+     *                     `$(event->...)` in guard clauses of transitions that do not have their own
+     *                     EVENT clause. Null when no event is in scope.
      */
-    fun findFirstExecutableTransition(currentState: String): Transition? {
-        return findAllExecutableTransitions(currentState).firstOrNull()
+    fun findFirstExecutableTransition(currentState: String, ambientEvent: DataObject? = null): FireableTransition? {
+        return findAllExecutableTransitions(currentState, ambientEvent).firstOrNull()
     }
 
     /**
-     * Finds all transitions whose conditions evaluate to true for [currentState],
-     * returned in definition order. Each transition's condition is evaluated lazily.
+     * Finds all transitions whose conditions hold for [currentState], in definition order.
      *
-     * **Important**: For EVENT conditions, the event is consumed (marked as processed)
-     * as soon as the transition is yielded. Callers that iterate but don't fire a
-     * transition should be aware of this side-effect.
+     * A condition is an ordered list of clauses that must all hold. When a transition has an EVENT
+     * clause, the bus is scanned for candidate events of that name (oldest-first); the first event
+     * whose guard clauses all pass enables the transition and is reported as the matched event. No
+     * event is consumed here — consumption happens when the engine actually fires the transition.
      *
      * @param currentState The name of the active state.
-     * @return A sequence of executable transitions in definition order.
+     * @param ambientEvent The event payload in scope, for guard clauses on non-EVENT transitions.
+     * @return A sequence of fireable transitions in definition order.
      */
-    fun findAllExecutableTransitions(currentState: String): Sequence<Transition> = sequence {
-        val candidates = transitions.filter { t ->
-            t.fromState == currentState
-        }
-
+    fun findAllExecutableTransitions(currentState: String, ambientEvent: DataObject? = null): Sequence<FireableTransition> = sequence {
+        val candidates = transitions.filter { it.fromState == currentState }
         for (transition in candidates) {
-            val condition = transition.condition
-            val fires = when (condition.conditionType) {
-
-                ConditionType.EVENT -> {
-                    val ec = condition as EventCondition
-                    if (eventProcessor.hasEvent(ec.eventDomain, ec.eventValue)) {
-                        if (!eventConsumptionOnFire) {
-                            // Consume immediately on condition read (legacy behaviour)
-                            eventProcessor.consumeEvent(ec.eventDomain, ec.eventValue)
-                        }
-                        // When eventConsumptionOnFire = true, Engine.applyTransition handles consumption
-                        true
-                    } else {
-                        false
-                    }
-                }
-
-                ConditionType.EVAL -> {
-                    val ec = condition as EvalCondition
-                    try {
-                        val result = macroProcessor.executeInlineMacro(ec.code, "boolean")
-                        result == true
-                    } catch (e: Exception) {
-                        System.err.println("[TransitionProcessor] EVAL condition failed: ${e.message}")
-                        false
-                    }
-                }
-
-                ConditionType.VALUE -> {
-                    val vc = condition as ValueCondition
-                    try {
-                        evaluateValueCondition(vc)
-                    } catch (e: Exception) {
-                        System.err.println("[TransitionProcessor] VALUE condition failed: ${e.message}")
-                        false
-                    }
-                }
-            }
-
-            if (fires) yield(transition)
+            val fireable = evaluateTransition(transition, ambientEvent)
+            if (fireable != null) yield(fireable)
         }
     }
 
     /**
-     * Evaluates a [ValueCondition] by resolving the boolean variable path against the context
-     * model element. The path must resolve to a Boolean value.
-     *
-     * Special case: if the variable is the literal "true" or "false", it is treated as a
-     * constant — this is how unconditional transitions (no CONDITION block in the DSL) are
-     * represented after parsing.
+     * Evaluates one transition's condition. Returns a [FireableTransition] (with the matched event, if
+     * any) when it can fire, or null otherwise.
      */
-    private fun evaluateValueCondition(vc: ValueCondition): Boolean {
-        // Handle literal true/false for unconditional transitions
+    private fun evaluateTransition(transition: Transition, ambientEvent: DataObject?): FireableTransition? {
+        val clauses = transition.condition.leafClauses()
+        val eventClause = clauses.firstOrNull { it is EventCondition } as? EventCondition
+        val guardClauses = clauses.filter { it !is EventCondition }
+
+        if (eventClause == null) {
+            // No EVENT clause: evaluate the guards against the ambient (scoped) event, if any.
+            return if (guardClauses.all { evaluateGuard(it, ambientEvent) }) {
+                FireableTransition(transition, null)
+            } else {
+                null
+            }
+        }
+
+        // EVENT-gated: scan candidate events oldest-first and take the first whose guards all pass.
+        // Each candidate is bound as the event in scope so guards can read $(event->...).
+        for (event in eventProcessor.getEvents(eventClause.eventDomain, eventClause.eventValue)) {
+            val eventObj = event.payloadObject
+            if (guardClauses.all { evaluateGuard(it, eventObj) }) {
+                return FireableTransition(transition, event)
+            }
+        }
+        return null
+    }
+
+    /**
+     * Evaluates a single guard clause (EVAL or VALUE) with [eventObj] bound as the event in scope.
+     * Any failure is treated as "does not hold".
+     */
+    private fun evaluateGuard(clause: Condition, eventObj: DataObject?): Boolean {
+        return when (clause) {
+            is EvalCondition -> try {
+                macroProcessor.executeInlineMacro(clause.code, "boolean", eventObj) == true
+            } catch (e: Exception) {
+                System.err.println("[TransitionProcessor] EVAL condition failed: ${e.message}")
+                false
+            }
+            is ValueCondition -> try {
+                evaluateValueCondition(clause, eventObj)
+            } catch (e: Exception) {
+                System.err.println("[TransitionProcessor] VALUE condition failed: ${e.message}")
+                false
+            }
+            // A second EVENT clause is not allowed in a condition; ignore it defensively.
+            else -> false
+        }
+    }
+
+    /**
+     * Evaluates a [ValueCondition] by resolving the boolean variable path against the context object
+     * (or the event in scope, for `event->...` paths). The path must resolve to a Boolean value.
+     *
+     * Special case: the literals "true" / "false" are treated as constants — this is how unconditional
+     * transitions (no CONDITION block) are represented after parsing.
+     */
+    private fun evaluateValueCondition(vc: ValueCondition, eventObj: DataObject?): Boolean {
         val literal = vc.boolVariable.trim().lowercase()
         if (literal == "true") return true
         if (literal == "false") return false
 
         val context = modelQueryProcessor.getDataObjectById(stateMachineAttachedToModelElement)
-        val resolved = modelQueryProcessor.resolvePathFromObject(context, vc.boolVariable)
+        val resolved = modelQueryProcessor.resolvePathWithEvent(context, eventObj, vc.boolVariable)
         return when (resolved) {
             is Boolean -> resolved
             is String  -> resolved.lowercase() == "true"

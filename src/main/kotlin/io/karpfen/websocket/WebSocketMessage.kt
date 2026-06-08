@@ -20,26 +20,31 @@ import org.json.JSONObject
 /**
  * Represents a message received from a WebSocket client.
  *
- * @property environmentKey Identifier for routing and processing
- * @property messageType Type of the message (string)
+ * @property environmentKey Identifier for routing and processing (used as the event domain)
+ * @property messageType Type of the message; doubles as the event name and payload type
  * @property payload The actual message content (string)
+ * @property payloadFormat Optional hint for how to read the payload ("none", "json", "kmodel"). When
+ *                         absent, the runtime guesses the format from the payload text.
  */
 data class WebSocketMessage(
     val environmentKey: String,
     val messageType: String,
-    val payload: String
+    val payload: String,
+    val payloadFormat: String? = null
 ) {
     companion object {
         /**
          * Parses a JSON string into a WebSocketMessage.
-         * Expected format: {"environmentKey": "...", "messageType": "...", "payload": "..."}
+         * Expected format: {"environmentKey": "...", "messageType": "...", "payload": "...", "payloadFormat": "..."}
+         * The "payloadFormat" field is optional.
          */
         fun fromJson(json: String): WebSocketMessage? = try {
             val obj = JSONObject(json)
             WebSocketMessage(
                 environmentKey = obj.getString("environmentKey"),
                 messageType = obj.getString("messageType"),
-                payload = obj.optString("payload", "")
+                payload = obj.optString("payload", ""),
+                payloadFormat = if (obj.has("payloadFormat")) obj.optString("payloadFormat", null) else null
             )
         } catch (e: Exception) {
             null

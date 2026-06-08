@@ -23,6 +23,10 @@ data class Environment(
     val key: String,
     var metamodel: Metamodel? = null,
     var model: Model? = null,
+    /** Metamodel describing the allowed event payloads (parsed from an EVENTS.kmeta). Null when no payloads are used. */
+    var eventMetamodel: Metamodel? = null,
+    /** Raw EVENTS.kmeta source text, kept for observability. */
+    var eventDefinitionsSource: String? = null,
     val stateMachines: MutableMap<String, StateMachine> = mutableMapOf(), // modelElement -> attached state machine
     val stateMachineSources: MutableMap<String, String> = mutableMapOf(), // modelElement -> raw kStates DSL text
     var tickDelayMS: Int = 1000,

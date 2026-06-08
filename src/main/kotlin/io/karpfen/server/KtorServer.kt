@@ -17,6 +17,7 @@ package io.karpfen.server
 
 import io.karpfen.env.EnvironmentHandler
 import io.karpfen.io.karpfen.messages.Event
+import io.karpfen.io.karpfen.messages.PayloadFormat
 import io.karpfen.websocket.ClientSessionManager
 import io.karpfen.websocket.WebSocketMessage
 import io.ktor.server.application.*
@@ -101,17 +102,21 @@ class KtorServer(
                                 // Get the event queue for this environment
                                 val envThread = EnvironmentHandler.executionThreads[envKey]
                                 if (envThread != null) {
-                                    // Convert WebSocketMessage to Event
-                                    // messageType is used as the event domain (routing bucket)
-                                    // payload is the event name/content
+                                    // Convert WebSocketMessage to Event.
+                                    // environmentKey is used as the event domain (routing bucket),
+                                    // messageType is the event name and the payload's metamodel type,
+                                    // payload carries the (optional) structured content.
+                                    val format = PayloadFormat.fromString(message.payloadFormat)
+                                        ?: PayloadFormat.detect(message.payload)
                                     val event = Event(
                                         domain = message.environmentKey,
                                         name = message.messageType,
                                         payload = message.payload,
-                                        timestamp = System.currentTimeMillis()
+                                        timestamp = System.currentTimeMillis(),
+                                        payloadFormat = format
                                     )
                                     envThread.acceptExternalEvent(event)
-                                    println("[WebSocket] Queued event for environment $envKey: domain=${message.environmentKey}, name=${message.messageType}")
+                                    println("[WebSocket] Queued event for environment $envKey: domain=${message.environmentKey}, name=${message.messageType}, format=$format")
                                 } else {
                                     println("[WebSocket] No active environment thread for $envKey")
                                 }

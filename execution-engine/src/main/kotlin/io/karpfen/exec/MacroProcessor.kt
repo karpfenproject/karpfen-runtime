@@ -49,13 +49,14 @@ class MacroProcessor(
      * @param code The raw code from the EVAL block containing $(path) references and @macro calls.
      * @param expectedTarget The expected return type name (e.g., "number", "Vector", "boolean", "string",
      *                       or 'reference("TypeName")').
+     * @param eventContext The payload of the event in scope, used to resolve `$(event->...)` paths.
      * @return The result of the Python execution, converted to the appropriate Kotlin/model type.
      *         For primitive types ("number", "boolean", "string"): returns Double, Boolean, or String.
      *         For reference types (reference("X")): returns the existing DataObject looked up by __id__.
      *         For complex metamodel types ("Vector", etc.): returns a DataObject constructed from the JSON dict.
      */
-    fun executeInlineMacro(code: String, expectedTarget: String): Any? {
-        val pythonCode = codeTransformer.transformInlineCode(code, context)
+    fun executeInlineMacro(code: String, expectedTarget: String, eventContext: DataObject? = null): Any? {
+        val pythonCode = codeTransformer.transformInlineCode(code, context, eventContext)
         return executeWithTieredStrategy(pythonCode, expectedTarget)
     }
 
@@ -115,19 +116,21 @@ class MacroProcessor(
      *
      * @param macroName The name of the macro to execute.
      * @param argPaths The paths (relative to the context object) for each TAKES parameter.
+     * @param eventContext The payload of the event in scope, so that an argument path may read
+     *                     `event->...` from the event that is currently in scope.
      * @return The result of the macro execution, converted according to the macro's RETURNS directive.
      */
-    fun executeFullMacro(macroName: String, argPaths: List<String> = emptyList()): Any? {
+    fun executeFullMacro(macroName: String, argPaths: List<String> = emptyList(), eventContext: DataObject? = null): Any? {
         val macro = macros.firstOrNull { it.name == macroName }
             ?: throw IllegalArgumentException("Macro '$macroName' not found")
 
-        // Resolve each TAKES parameter from the context object using the provided paths
+        // Resolve each TAKES parameter from the context object (or the event in scope) using the provided paths
         val resolvedArgs = mutableMapOf<String, String>()
         for (i in macro.takes.indices) {
             val takesDirective = macro.takes[i]
             val argPath = if (i < argPaths.size) argPaths[i] else takesDirective.paramName
 
-            val resolved = modelQueryProcessor.resolvePathFromObject(context, argPath)
+            val resolved = modelQueryProcessor.resolvePathWithEvent(context, eventContext, argPath)
             resolvedArgs[takesDirective.paramName] = modelQueryProcessor.anyToPythonLiteral(resolved)
         }
 

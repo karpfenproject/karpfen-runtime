@@ -62,6 +62,17 @@ object APIService {
         EnvironmentHandler.getEnv(envKey)!!.model = model
     }
 
+    fun receiveEventDefinitions(envKey: String, eventDefinitionData: String) {
+        assertEnv(envKey)
+        val env = EnvironmentHandler.getEnv(envKey)!!
+        // Event payloads may embed or link domain types, so the domain metamodel's types (when present)
+        // are made available to the event metamodel as resolvable base types.
+        val domainTypes = env.metamodel?.types ?: emptyList()
+        val eventMetamodel: Metamodel = KmetaDSLConverter.parseKmetaString(eventDefinitionData, domainTypes)
+        env.eventMetamodel = eventMetamodel
+        env.eventDefinitionsSource = eventDefinitionData
+    }
+
     fun receiveStateMachine(envKey: String, modelElement: String, stateMachineData: String) {
         assertEnv(envKey)
         val stateMachine = KstatesDSLConverter.parseKstatesString(stateMachineData)

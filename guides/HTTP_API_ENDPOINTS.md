@@ -44,6 +44,20 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
     -d @model.kmodel
   ```
 
+### Set Event Definitions
+- **Endpoint**: `PUT /setEventDefinitions`
+- **Parameters**:
+  - `envKey` (string): The environment key
+- **Request Body**: A kmeta document (conventionally `EVENTS.kmeta`) describing the event payloads
+- **Response**: Empty (200 OK on success)
+- **Description**: Registers the event payload types for an environment. Each type in the document is an event name; an event named `setSpeed` is parsed against the `setSpeed` type. This is optional — events without payloads work without it. Set the metamodel first if your event payloads embed or link domain types (such as an event carrying a `Vector`); those types are then resolvable from the event definitions.
+- **Example**:
+  ```bash
+  curl -X PUT "http://localhost:8080/setEventDefinitions?envKey=env-123" \
+    -H "Content-Type: text/plain" \
+    -d @EVENTS.kmeta
+  ```
+
 ### Set State Machine
 - **Endpoint**: `PUT /setStateMachine`
 - **Parameters**: 
@@ -204,9 +218,15 @@ After authentication, clients can send and receive messages as JSON:
 {
   "environmentKey": "env-123",
   "messageType": "eventType",
-  "payload": "message content or data"
+  "payload": "message content or data",
+  "payloadFormat": "json"
 }
 ```
+
+- `environmentKey` is used as the event **domain** (the routing bucket a `EVENT("domain", ...)` condition listens on).
+- `messageType` is the event **name**, and also the **payload type** it is parsed against (see Set Event Definitions).
+- `payload` is the (optional) content. It may be empty, a JSON object, or a kmodel `make object` block.
+- `payloadFormat` is optional and may be `"none"`, `"json"`, or `"kmodel"`. When omitted, the runtime guesses: empty → none, starts with `{` → json, starts with `make object` → kmodel.
 
 ## Error Handling
 

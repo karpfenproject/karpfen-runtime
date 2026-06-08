@@ -76,6 +76,18 @@ object HTTPRoutes {
                 }
             }
 
+            put("/setEventDefinitions") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val eventDefinitions = call.receiveText()
+                    APIService.receiveEventDefinitions(envKey, eventDefinitions)
+                    call.respond(HttpStatusCode.OK, "")
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
             put("/setStateMachine") {
                 try {
                     val envKey = call.request.queryParameters["envKey"]

@@ -30,6 +30,7 @@ Default URLs:
 | POST | `/createEnvironment` |
 | PUT | `/setMetamodel?envKey=...` |
 | PUT | `/setModel?envKey=...` |
+| PUT | `/setEventDefinitions?envKey=...` |
 | PUT | `/setStateMachine?envKey=...&attachedTo=...` |
 | POST | `/setTickDelay?envKey=...&milliseconds=...` |
 | POST | `/registerObjectObserver?envKey=...&clientId=...&objectId=...` |
@@ -51,9 +52,12 @@ clientId:envKey:accessKey
 {
   "environmentKey": "env-123",
   "messageType": "event_type",
-  "payload": "message_content"
+  "payload": "message_content",
+  "payloadFormat": "json"
 }
 ```
+
+`environmentKey` is the event domain, `messageType` is the event name and its payload type, and `payload` may be empty, JSON, or a kmodel `make object` block. `payloadFormat` (`none`/`json`/`kmodel`) is optional — when omitted it is guessed from the payload.
 
 ## Typical Workflow
 
@@ -74,6 +78,11 @@ curl -X PUT "http://localhost:8080/setMetamodel?envKey=env-123" \
 curl -X PUT "http://localhost:8080/setModel?envKey=env-123" \
  -H "Content-Type: text/plain" \
  -d @model.kmodel
+
+# Event definitions (optional; only needed for events that carry a payload)
+curl -X PUT "http://localhost:8080/setEventDefinitions?envKey=env-123" \
+ -H "Content-Type: text/plain" \
+ -d @EVENTS.kmeta
 
 # State Machine
 curl -X PUT "http://localhost:8080/setStateMachine?envKey=env-123&attachedTo=robot1" \

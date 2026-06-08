@@ -46,7 +46,8 @@ class EnvironmentThread(
         environment.tickDelayMS,
         sharedEventBus,
         traceLogger = traceLogger,
-        eventConsumptionOnFire = environment.eventConsumptionOnFire
+        eventConsumptionOnFire = environment.eventConsumptionOnFire,
+        eventMetamodel = environment.eventMetamodel
     )
 
     fun setup() {
