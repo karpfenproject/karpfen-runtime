@@ -26,11 +26,25 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     companion object {
         /** Reserved leading path segment that refers to the event currently in scope. */
         const val EVENT_ROOT = "event"
+
+        /** Builds a resolution scope containing only the event in scope (or empty when none). */
+        fun eventScope(eventObj: DataObject?): Map<String, Any?> =
+            if (eventObj != null) mapOf(EVENT_ROOT to eventObj) else emptyMap()
     }
 
-    private val allObjects: Set<DataObject> by lazy {
+    /**
+     * Index of every object currently in the model, keyed by id. Maintained as objects are created
+     * ([registerObjectTree]) and removed ([dropObject]) so that lookups, the `has`-containment
+     * invariant, and inbound-reference scrubbing stay correct while the engine mutates the model.
+     */
+    private val objectIndex: MutableMap<String, DataObject> =
         KmodelDSLConverter.collectAllObjects(model.objects)
-    }
+            .filter { it.id.isNotEmpty() }
+            .associateBy { it.id }
+            .toMutableMap()
+
+    /** Monotonic counter backing [generateUniqueId]. */
+    private var idCounter = 0
 
     /** Registered listeners that are notified whenever a DataObject changes. */
     private val changePublishers: MutableList<ModelChangePublisher> = mutableListOf()
@@ -40,6 +54,9 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
 
     /** Objects changed during a batch; deduplicated so each fires exactly once. */
     private val pendingNotifications = LinkedHashSet<DataObject>()
+
+    /** Object ids deleted during a batch; fired after change notifications on commit. */
+    private val pendingDeletions = LinkedHashSet<String>()
 
     fun addChangePublisher(publisher: ModelChangePublisher) {
         changePublishers.add(publisher)
@@ -57,11 +74,15 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     /** Commit the batch: fire one notification per changed object, then exit batch mode. */
     fun commitBatch() {
         batchMode = false
-        val snapshot = pendingNotifications.toList()
+        val changed = pendingNotifications.toList()
+        val deleted = pendingDeletions.toSet()
         pendingNotifications.clear()
-        for (obj in snapshot) {
-            fireNotification(obj)
+        pendingDeletions.clear()
+        // Fire change notifications for survivors only, then deletions.
+        for (obj in changed) {
+            if (obj.id !in deleted) fireNotification(obj)
         }
+        for (id in deleted) fireDeletion(id)
     }
 
     private fun notifyChange(obj: DataObject) {
@@ -72,12 +93,25 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
         fireNotification(obj)
     }
 
+    private fun notifyDeletion(objectId: String) {
+        if (batchMode) {
+            pendingDeletions.add(objectId)
+            return
+        }
+        fireDeletion(objectId)
+    }
+
     private fun fireNotification(obj: DataObject) {
-        //println("object change notification --> " + obj.toString())
         if (changePublishers.isEmpty()) return
         val json = dataObjectToJson(obj)
         for (publisher in changePublishers) {
             publisher.onObjectChanged(obj.id, json)
+        }
+    }
+
+    private fun fireDeletion(objectId: String) {
+        for (publisher in changePublishers) {
+            publisher.onObjectDeleted(objectId)
         }
     }
 
@@ -212,6 +246,212 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
         updateRelations(objectId, mapOf(relationKey to value))
     }
 
+    // ---- Object lifecycle & relation mutation (metamodel + containment validated) -----------
+
+    /** Generates an id that is not currently used by any object in the model. */
+    fun generateUniqueId(typeName: String): String {
+        var id: String
+        do {
+            id = "gen_${typeName}_${idCounter++}"
+        } while (objectIndex.containsKey(id))
+        return id
+    }
+
+    /** True when an object with [id] is currently part of the model. */
+    fun containsObject(id: String): Boolean = objectIndex.containsKey(id)
+
+    /**
+     * Registers a newly-created object and its embedded (`has`) subtree in the object index. Every
+     * object must already carry a non-empty, model-unique id (macro-built objects get one at
+     * construction time). Throws if any id already exists in the model.
+     */
+    fun registerObjectTree(root: DataObject) {
+        val subtree = KmodelDSLConverter.collectAllObjects(mutableListOf(root))
+        for (obj in subtree) {
+            require(obj.id.isNotEmpty()) {
+                "Cannot register an object of type '${obj.ofType.name}' with an empty id"
+            }
+            val existing = objectIndex[obj.id]
+            require(existing == null || existing === obj) {
+                "Object id '${obj.id}' already exists in the model; cannot introduce a new object with the same id"
+            }
+        }
+        for (obj in subtree) objectIndex[obj.id] = obj
+    }
+
+    private fun validateNewObject(target: DataObject, relationKey: String) {
+        require(!objectIndex.containsKey(target.id)) {
+            "Relation '$relationKey' is a 'has' relation and requires a NEW object, but '${target.id}' " +
+                "already exists in the model. Reference existing objects through a 'knows' relation instead."
+        }
+    }
+
+    private fun validateExistingObject(target: DataObject, relationKey: String) {
+        require(objectIndex[target.id] === target) {
+            "Relation '$relationKey' is a 'knows' relation and requires an EXISTING model object, but " +
+                "'${target.id}' is not part of the model. Introduce new objects through a 'has' relation instead."
+        }
+    }
+
+    /**
+     * Overwrites a single scalar property. Validates that [key] is a non-list simple property of the
+     * owner's type (relations must use SETOBJ; list properties must use SETLIST/APPEND).
+     */
+    fun setScalar(ownerId: String, key: String, value: Any) {
+        val owner = getDataObjectById(ownerId)
+        val propDef = owner.ofType.simplePropsAsMap()[key]
+            ?: throw IllegalArgumentException(
+                "No scalar property '$key' on type '${owner.ofType.name}' (use SETOBJ for relations)"
+            )
+        require(!propDef.isList) { "Property '$key' is a list; use SETLIST or APPEND instead of SET" }
+        updateProperty(ownerId, key, value)
+    }
+
+    /** Overwrites a whole simple list property, lazily creating it if absent. */
+    fun setSimpleList(ownerId: String, key: String, values: List<Any>) {
+        val owner = getDataObjectById(ownerId)
+        val propDef = owner.ofType.simplePropsAsMap()[key]
+            ?: throw IllegalArgumentException("No simple property '$key' on type '${owner.ofType.name}'")
+        require(propDef.isList) { "Property '$key' is not a list; use SET instead of SETLIST" }
+        val prop = (owner.properties.firstOrNull { it.key == key } as? SimpleListPropertyObject)
+            ?: SimpleListPropertyObject(propDef, key, mutableListOf()).also { owner.properties.add(it) }
+        prop.setValues(values)
+        notifyChange(owner)
+    }
+
+    /** Clears a simple list property (sets it to empty). */
+    fun clearSimpleList(ownerId: String, key: String) {
+        val owner = getDataObjectById(ownerId)
+        val propDef = owner.ofType.simplePropsAsMap()[key]
+            ?: throw IllegalArgumentException("No simple property '$key' on type '${owner.ofType.name}'")
+        require(propDef.isList) { "Property '$key' is not a list; DROPLIST only applies to list properties" }
+        (owner.properties.firstOrNull { it.key == key } as? SimpleListPropertyObject)?.clear()
+        notifyChange(owner)
+    }
+
+    /**
+     * Replaces the target of an atomic relation. For a `has` (EMBEDDED) relation the [target] must be a
+     * new object: the previous occupant is dropped and the new object is embedded. For a `knows` (LINK)
+     * relation the [target] must already exist in the model: only the reference is repointed.
+     */
+    fun setObjectRelation(ownerId: String, relationKey: String, target: DataObject) {
+        val owner = getDataObjectById(ownerId)
+        val relDef = owner.ofType.objectPropsAsMap()[relationKey]
+            ?: throw IllegalArgumentException("No object relation '$relationKey' on type '${owner.ofType.name}'")
+        require(!relDef.isList) { "Relation '$relationKey' is a list; use APPENDOBJ/DROPOBJ instead of SETOBJ" }
+        require(target.ofType.name == relDef.reference.classTypeName) {
+            "Relation '$relationKey' expects type '${relDef.reference.classTypeName}' but got '${target.ofType.name}'"
+        }
+        val rel = owner.relations.firstOrNull { it.key == relationKey } as? ClassTypeAtomicPropertyObject
+            ?: throw IllegalArgumentException("Relation '$relationKey' is not present on object '$ownerId'")
+
+        if (relDef.associationType == AssociationType.EMBEDDED) {
+            validateNewObject(target, relationKey)
+            val old = rel.getValue()
+            if (old != null) dropObject(old.id)
+            registerObjectTree(target)
+            rel.setValue(target)
+        } else {
+            validateExistingObject(target, relationKey)
+            rel.setValue(target)
+        }
+        notifyChange(owner)
+    }
+
+    /**
+     * Adds an object to a list relation. `has` (EMBEDDED) lists take new objects (embedded + registered);
+     * `knows` (LINK) lists take existing objects (referenced).
+     */
+    fun appendObjectRelation(ownerId: String, relationKey: String, target: DataObject) {
+        val owner = getDataObjectById(ownerId)
+        val relDef = owner.ofType.objectPropsAsMap()[relationKey]
+            ?: throw IllegalArgumentException("No object relation '$relationKey' on type '${owner.ofType.name}'")
+        require(relDef.isList) { "Relation '$relationKey' is not a list; use SETOBJ instead of APPENDOBJ" }
+        require(target.ofType.name == relDef.reference.classTypeName) {
+            "Relation '$relationKey' expects type '${relDef.reference.classTypeName}' but got '${target.ofType.name}'"
+        }
+        val rel = (owner.relations.firstOrNull { it.key == relationKey } as? ClassTypeListPropertyObject)
+            ?: ClassTypeListPropertyObject(relDef, relationKey, mutableListOf()).also { owner.relations.add(it) }
+
+        if (relDef.associationType == AssociationType.EMBEDDED) {
+            validateNewObject(target, relationKey)
+            registerObjectTree(target)
+        } else {
+            validateExistingObject(target, relationKey)
+        }
+        rel.appendValue(target)
+        notifyChange(owner)
+    }
+
+    /**
+     * Removes an object and its embedded (`has`) subtree from the model, scrubbing every inbound `knows`
+     * reference. Affected owner objects receive change notifications; every removed object id is reported
+     * via [ModelChangePublisher.onObjectDeleted].
+     */
+    fun dropObject(objId: String) {
+        val target = getDataObjectById(objId)
+        val removedIds = KmodelDSLConverter.collectAllObjects(mutableListOf(target)).map { it.id }.toSet()
+        val affectedOwners = LinkedHashSet<DataObject>()
+
+        // 1. Detach from its `has` container (or the model roots if it is a root object).
+        val container = findEmbeddedContainer(target)
+        if (container != null) {
+            val (ownerObj, rel) = container
+            when (rel) {
+                is ClassTypeAtomicPropertyObject -> rel.clear()
+                is ClassTypeListPropertyObject -> rel.removeById(target.id)
+            }
+            affectedOwners.add(ownerObj)
+        } else {
+            model.objects.removeIf { it === target }
+        }
+
+        // 2. Scrub every inbound `knows` reference into the removed subtree.
+        for (obj in objectIndex.values) {
+            if (obj.id in removedIds) continue
+            for (rel in obj.relations) {
+                if (rel.getPropertyType().associationType != AssociationType.LINK) continue
+                when (rel) {
+                    is ClassTypeAtomicPropertyObject -> {
+                        val v = rel.getValue()
+                        if (v != null && v.id in removedIds) {
+                            rel.clear()
+                            affectedOwners.add(obj)
+                        }
+                    }
+                    is ClassTypeListPropertyObject -> {
+                        val sizeBefore = rel.getValueRefs().size
+                        removedIds.forEach { rel.removeById(it) }
+                        if (rel.getValueRefs().size != sizeBefore) affectedOwners.add(obj)
+                    }
+                }
+            }
+        }
+
+        // 3. Unregister the removed subtree.
+        for (id in removedIds) objectIndex.remove(id)
+
+        // 4. Notify: surviving owners changed, removed ids deleted.
+        affectedOwners.forEach { if (it.id !in removedIds) notifyChange(it) }
+        removedIds.forEach { notifyDeletion(it) }
+    }
+
+    /** Finds the single object whose `has` (EMBEDDED) relation currently contains [target], if any. */
+    fun findEmbeddedContainer(target: DataObject): Pair<DataObject, ClassTypePropertyObject>? {
+        for (obj in objectIndex.values) {
+            for (rel in obj.relations) {
+                if (rel.getPropertyType().associationType != AssociationType.EMBEDDED) continue
+                val contains = when (rel) {
+                    is ClassTypeAtomicPropertyObject -> rel.getValue() === target
+                    is ClassTypeListPropertyObject -> rel.getValues().any { it === target }
+                    else -> false
+                }
+                if (contains) return obj to rel
+            }
+        }
+        return null
+    }
+
     // ---- JSON serialisation -----------------------------------------------
 
     /**
@@ -275,7 +515,7 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * Finds a DataObject by its unique id across all objects (including nested/embedded).
      */
     fun getDataObjectById(id: String): DataObject {
-        return allObjects.firstOrNull { it.id == id }
+        return objectIndex[id]
             ?: throw IllegalArgumentException("No DataObject found with id '$id'")
     }
 
@@ -350,28 +590,40 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * @throws IllegalArgumentException if the path is rooted at `event` but no event is in scope, or if
      *         a segment cannot be resolved.
      */
-    fun resolvePathWithEvent(contextObj: DataObject, eventObj: DataObject?, path: String): Any? {
+    fun resolvePathInScope(contextObj: DataObject, scope: Map<String, Any?>, path: String): Any? {
         val segments = path.split("->").map { it.trim() }
-        if (segments.isNotEmpty() && segments[0] == EVENT_ROOT) {
-            if (eventObj == null) {
-                throw IllegalArgumentException("No event is in scope for path '$path'")
-            }
+        val root = segments.firstOrNull()
+        if (root != null && scope.containsKey(root)) {
+            val bound = scope[root]
             val rest = segments.drop(1)
-            return if (rest.isEmpty()) eventObj else resolvePathFromObject(eventObj, rest.joinToString("->"))
+            if (rest.isEmpty()) return bound
+            return when (bound) {
+                is DataObject -> resolvePathFromObject(bound, rest.joinToString("->"))
+                null -> throw IllegalArgumentException("Binding '$root' is null; cannot resolve path '$path'")
+                else -> throw IllegalArgumentException("Binding '$root' is not an object; cannot navigate path '$path'")
+            }
         }
         return resolvePathFromObject(contextObj, path)
     }
+
+    /** Like [resolvePathInScope] but returns null instead of throwing when the path cannot be resolved. */
+    fun tryResolvePathInScope(contextObj: DataObject, scope: Map<String, Any?>, path: String): Any? =
+        try {
+            resolvePathInScope(contextObj, scope, path)
+        } catch (_: Exception) {
+            null
+        }
+
+    /** Event-only convenience over [resolvePathInScope]; honours the reserved `event` root. */
+    fun resolvePathWithEvent(contextObj: DataObject, eventObj: DataObject?, path: String): Any? =
+        resolvePathInScope(contextObj, eventScope(eventObj), path)
 
     /**
      * Like [resolvePathWithEvent] but returns null instead of throwing when the path cannot be
      * resolved. Used to test whether an access path is currently available (e.g. for IF IN SCOPE).
      */
     fun tryResolvePathWithEvent(contextObj: DataObject, eventObj: DataObject?, path: String): Any? =
-        try {
-            resolvePathWithEvent(contextObj, eventObj, path)
-        } catch (_: Exception) {
-            null
-        }
+        tryResolvePathInScope(contextObj, eventScope(eventObj), path)
 
     /**
      * Resolves a path string (e.g. "boundingBox->position->x") relative to a given context DataObject.

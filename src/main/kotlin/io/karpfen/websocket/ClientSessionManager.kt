@@ -189,6 +189,28 @@ class ClientSessionManager {
     }
 
     /**
+     * Notifies all clients subscribed to a specific object that it has been removed from the model.
+     */
+    fun notifyObjectDeleted(environmentKey: String, objectId: String) {
+        subscriptionsLock.readLock().lock()
+        try {
+            objectSubscriptions[environmentKey]?.forEach { (clientId, objectIds) ->
+                if (objectIds.contains(objectId)) {
+                    val message = OutgoingMessage(
+                        environmentKey,
+                        clientId,
+                        "objectDeleted",
+                        """{"objectId":"$objectId"}"""
+                    )
+                    outgoingMessageQueue.offer(message)
+                }
+            }
+        } finally {
+            subscriptionsLock.readLock().unlock()
+        }
+    }
+
+    /**
      * Notifies all clients subscribed to a specific domain of an event.
      */
     fun notifyDomainEvent(environmentKey: String, domain: String, payload: String) {

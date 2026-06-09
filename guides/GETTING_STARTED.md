@@ -269,6 +269,16 @@ Subscribed clients receive data change notifications:
 }
 ```
 
+When an object is removed from the model (e.g. by a `DROPOBJ` action, which also cascades to the
+object's embedded subtree), subscribers receive a deletion notification instead:
+```json
+{
+  "clientId": "client1",
+  "messageType": "objectDeleted",
+  "payload": "{\"objectId\":\"obj1\"}"
+}
+```
+
 ## Example Workflow
 
 ### 1. Create environment

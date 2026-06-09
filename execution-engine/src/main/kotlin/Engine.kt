@@ -81,9 +81,11 @@ class Engine(
         val listeners = dataObservationListeners.getOrPut(objectId) { mutableListOf() }
         listeners.add(listener)
 
-        modelQueryProcessor.addChangePublisher(ModelChangePublisher { changedId, _ ->
-            if (changedId == objectId) {
-                listener.onChange(objectId, changedId)
+        modelQueryProcessor.addChangePublisher(object : ModelChangePublisher {
+            override fun onObjectChanged(changedId: String, jsonValue: String) {
+                if (changedId == objectId) {
+                    listener.onChange(objectId, changedId)
+                }
             }
         })
     }

@@ -47,9 +47,9 @@ class MacroCodeTransformer(
      *                     Null when no event is in scope.
      * @return A complete Python script string ready for execution
      */
-    fun transformInlineCode(code: String, contextObj: DataObject, eventContext: DataObject? = null): String {
+    fun transformInlineCode(code: String, contextObj: DataObject, scope: Map<String, Any?> = emptyMap()): String {
         val functionDefs = mutableListOf<String>()
-        val resolvedCode = resolveCode(code, contextObj, functionDefs, mutableSetOf(), eventContext)
+        val resolvedCode = resolveCode(code, contextObj, functionDefs, mutableSetOf(), scope)
         val rewrittenCode = PythonIndentationRewriter.rewrite(resolvedCode, baseDepth = 1)
         val sb = StringBuilder()
         sb.appendLine("import json")
@@ -128,15 +128,15 @@ class MacroCodeTransformer(
         contextObj: DataObject,
         functionDefs: MutableList<String>,
         alreadyResolved: MutableSet<String>,
-        eventContext: DataObject?
+        scope: Map<String, Any?>
     ): String {
         var result = code
 
         // First, resolve @macroName(args) calls — these need to be turned into function definitions + calls
-        result = resolveMacroCalls(result, contextObj, functionDefs, alreadyResolved, eventContext)
+        result = resolveMacroCalls(result, contextObj, functionDefs, alreadyResolved, scope)
 
         // Then, resolve $(path) model references
-        result = resolveModelReferences(result, contextObj, eventContext)
+        result = resolveModelReferences(result, contextObj, scope)
 
         return result
     }
@@ -207,10 +207,10 @@ class MacroCodeTransformer(
      * Resolves $(path) model references by looking up values in the context object (or the event in
      * scope, for paths rooted at `event`).
      */
-    private fun resolveModelReferences(code: String, contextObj: DataObject, eventContext: DataObject?): String {
+    private fun resolveModelReferences(code: String, contextObj: DataObject, scope: Map<String, Any?>): String {
         return MODEL_REF_PATTERN.replace(code) { matchResult ->
             val path = matchResult.groupValues[1].trim()
-            val resolved = modelQueryProcessor.resolvePathWithEvent(contextObj, eventContext, path)
+            val resolved = modelQueryProcessor.resolvePathInScope(contextObj, scope, path)
             modelQueryProcessor.anyToPythonLiteral(resolved)
         }
     }
@@ -223,7 +223,7 @@ class MacroCodeTransformer(
         contextObj: DataObject,
         functionDefs: MutableList<String>,
         alreadyResolved: MutableSet<String>,
-        eventContext: DataObject?
+        scope: Map<String, Any?>
     ): String {
         return MACRO_CALL_PATTERN.replace(code) { matchResult ->
             val macroName = matchResult.groupValues[1]
@@ -251,7 +251,7 @@ class MacroCodeTransformer(
                 val refMatch = MODEL_REF_PATTERN.find(trimmed)
                 if (refMatch != null && refMatch.value == trimmed) {
                     val path = refMatch.groupValues[1].trim()
-                    val resolved = modelQueryProcessor.resolvePathWithEvent(contextObj, eventContext, path)
+                    val resolved = modelQueryProcessor.resolvePathInScope(contextObj, scope, path)
                     modelQueryProcessor.anyToPythonLiteral(resolved)
                 } else {
                     trimmed

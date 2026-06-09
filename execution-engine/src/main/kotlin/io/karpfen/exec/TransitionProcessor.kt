@@ -117,7 +117,7 @@ class TransitionProcessor(
     private fun evaluateGuard(clause: Condition, eventObj: DataObject?): Boolean {
         return when (clause) {
             is EvalCondition -> try {
-                macroProcessor.executeInlineMacro(clause.code, "boolean", eventObj) == true
+                macroProcessor.executeInlineMacro(clause.code, "boolean", ModelQueryProcessor.eventScope(eventObj)) == true
             } catch (e: Exception) {
                 System.err.println("[TransitionProcessor] EVAL condition failed: ${e.message}")
                 false

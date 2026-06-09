@@ -20,7 +20,8 @@ package io.karpfen.io.karpfen.exec
  *
  * Whenever a [DataObject]'s property or relation is updated, the [ModelQueryProcessor]
  * calls all registered [ModelChangePublisher] instances so that observers (e.g., WebSocket
- * clients) can be notified.
+ * clients) can be notified. When an object is removed from the model (e.g. via a DROPOBJ
+ * action), [onObjectDeleted] is called for every removed object id.
  *
  * @see ModelQueryProcessor.addChangePublisher
  */
@@ -32,5 +33,14 @@ fun interface ModelChangePublisher {
      * @param jsonValue  A JSON string representation of the updated DataObject.
      */
     fun onObjectChanged(objectId: String, jsonValue: String)
+
+    /**
+     * Called after the object with the given [objectId] has been removed from the model.
+     * The default implementation does nothing, so existing publishers that only care about
+     * changes need not implement it.
+     *
+     * @param objectId The id of the DataObject that was deleted.
+     */
+    fun onObjectDeleted(objectId: String) {}
 }
 
