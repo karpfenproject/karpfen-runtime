@@ -629,7 +629,8 @@ print(json.dumps(result))
         val result = processor.parseResult("""{"x": 42.0, "y": 13.0}""", "Vector")
         assertTrue(result is DataObject)
         val obj = result as DataObject
-        assertEquals("", obj.id)
+        // A macro-built object without an __id__ now gets a fresh model-unique id assigned.
+        assertTrue(obj.id.isNotEmpty())
         assertEquals(42.0, obj.getProp("x").first())
     }
 

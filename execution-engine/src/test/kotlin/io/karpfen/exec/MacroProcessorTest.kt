@@ -407,7 +407,9 @@ class MacroProcessorTest {
         assertTrue(result is DataObject)
         val dataObj = result as DataObject
         assertEquals("Vector", dataObj.ofType.name)
-        assertEquals("", dataObj.id) // no id given
+        // A macro-built object without an __id__ is assigned a fresh model-unique id so it can be
+        // registered into the model (e.g. when embedded via SETOBJ/APPENDOBJ).
+        assertTrue(dataObj.id.isNotEmpty())
         assertEquals(99.0, dataObj.getProp("x").first())
         assertEquals(42.0, dataObj.getProp("y").first())
     }

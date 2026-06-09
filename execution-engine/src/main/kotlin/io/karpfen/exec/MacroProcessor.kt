@@ -55,8 +55,8 @@ class MacroProcessor(
      *         For reference types (reference("X")): returns the existing DataObject looked up by __id__.
      *         For complex metamodel types ("Vector", etc.): returns a DataObject constructed from the JSON dict.
      */
-    fun executeInlineMacro(code: String, expectedTarget: String, eventContext: DataObject? = null): Any? {
-        val pythonCode = codeTransformer.transformInlineCode(code, context, eventContext)
+    fun executeInlineMacro(code: String, expectedTarget: String, scope: Map<String, Any?> = emptyMap()): Any? {
+        val pythonCode = codeTransformer.transformInlineCode(code, context, scope)
         return executeWithTieredStrategy(pythonCode, expectedTarget)
     }
 
@@ -120,17 +120,17 @@ class MacroProcessor(
      *                     `event->...` from the event that is currently in scope.
      * @return The result of the macro execution, converted according to the macro's RETURNS directive.
      */
-    fun executeFullMacro(macroName: String, argPaths: List<String> = emptyList(), eventContext: DataObject? = null): Any? {
+    fun executeFullMacro(macroName: String, argPaths: List<String> = emptyList(), scope: Map<String, Any?> = emptyMap()): Any? {
         val macro = macros.firstOrNull { it.name == macroName }
             ?: throw IllegalArgumentException("Macro '$macroName' not found")
 
-        // Resolve each TAKES parameter from the context object (or the event in scope) using the provided paths
+        // Resolve each TAKES parameter from the context object (or a scope binding) using the provided paths
         val resolvedArgs = mutableMapOf<String, String>()
         for (i in macro.takes.indices) {
             val takesDirective = macro.takes[i]
             val argPath = if (i < argPaths.size) argPaths[i] else takesDirective.paramName
 
-            val resolved = modelQueryProcessor.resolvePathWithEvent(context, eventContext, argPath)
+            val resolved = modelQueryProcessor.resolvePathInScope(context, scope, argPath)
             resolvedArgs[takesDirective.paramName] = modelQueryProcessor.anyToPythonLiteral(resolved)
         }
 
@@ -398,7 +398,9 @@ class MacroProcessor(
         val classType = metamodel.getTypeByName(typeName)
             ?: throw IllegalArgumentException("Unknown metamodel type '$typeName' for JSON result parsing")
 
-        val id = if (json.has("__id__")) json.getString("__id__") else ""
+        // A macro that builds a brand-new object (no __id__) gets a fresh model-unique id assigned here,
+        // so that its child object references carry real ids and it can be registered into the model.
+        val id = if (json.has("__id__")) json.getString("__id__") else modelQueryProcessor.generateUniqueId(typeName)
         val simpleProps = buildSimplePropertyObjects(json, classType)
         val relations = buildClassTypePropertyObjects(json, classType)
 

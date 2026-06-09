@@ -54,9 +54,15 @@ class EnvironmentThread(
         val clientSessionManager = EnvironmentHandler.clientSessionManager
 
         // Register a ModelChangePublisher that pushes JSON updates to subscribed WebSocket clients.
-        engine.modelQueryProcessor.addChangePublisher { objectId, jsonValue ->
-            clientSessionManager.notifyObjectChange(environment.key, objectId, jsonValue)
-        }
+        engine.modelQueryProcessor.addChangePublisher(object : io.karpfen.io.karpfen.exec.ModelChangePublisher {
+            override fun onObjectChanged(objectId: String, jsonValue: String) {
+                clientSessionManager.notifyObjectChange(environment.key, objectId, jsonValue)
+            }
+
+            override fun onObjectDeleted(objectId: String) {
+                clientSessionManager.notifyObjectDeleted(environment.key, objectId)
+            }
+        })
 
         // Register DataObservation listeners (from the Environment configuration).
         for (observation in environment.objectObservations) {

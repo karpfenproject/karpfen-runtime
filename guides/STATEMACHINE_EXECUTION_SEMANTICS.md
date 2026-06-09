@@ -148,11 +148,72 @@ Each branch reacts to events independently: an event consumed by one branch can 
 
 ### Action Types
 
-| Operation | Behavior |
-|-----------|----------|
-| `SET(path, value)` | Writes a value to a model property or relation. |
-| `APPEND(path, value)` | Appends a value to a list property. |
-| `EVENT(domain, name)` | Publishes an internal event to the shared event bus. |
+Operations come in three arities. Every operation has a lowercase alias (`set` == `SET`, etc.).
+
+**Simple-property operations** — operate on primitive scalars / lists only:
+
+| Operation | Arity | Behavior |
+|-----------|-------|----------|
+| `SET(path, value)` | binary | Overwrites a single **scalar** property. Rejects lists and relations. |
+| `APPEND(path, value)` | binary | Appends one element to a **simple list** property. |
+| `SETLIST(path, value)` | binary | Overwrites a whole **simple list** property (EVAL/MACRO should return a list). |
+| `DROPLIST(path)` | unary | Clears a **simple list** property (sets it empty). |
+
+**Object/relation operations** — operate on `has`/`knows` relations:
+
+| Operation | Arity | Behavior |
+|-----------|-------|----------|
+| `SETOBJ(source, relation, target)` | ternary | Replaces the target of an **atomic** relation. |
+| `APPENDOBJ(source, relation, target)` | ternary | Adds an object to a **list** relation. |
+| `DROPOBJ(path)` | unary | Removes an object and every relation pointing to it from the model. |
+
+For the object operations, `source` is a data-access path to the owning object (`"self"` or `""` denotes the
+context object) and `relation` is the relation key. The `target` is the right-hand side.
+
+| Operation | Arity | Behavior |
+|-----------|-------|----------|
+| `EVENT(domain, name)` | binary | Publishes an internal event to the shared event bus. |
+
+### Object-manipulation validation rules (`has` vs `knows`)
+
+Object operations are validated strictly against the metamodel so that the model's containment structure
+stays well-formed. The single invariant enforced is:
+
+> Every object is the target of **exactly one `has` (composition) relation** — its one parent; root
+> objects have none. `knows` (reference) relations may point at any existing object, any number of times.
+
+This yields two rules, applied uniformly to `SETOBJ`/`APPENDOBJ`/`DROPOBJ`:
+
+- A **`has`** relation target must be a **new** object — produced by an `EVAL`/`MACRO` that builds a fresh
+  object (and its embedded subtree). It is embedded here, assigned a fresh id, and registered. Putting an
+  already-contained object into a `has` relation is rejected (it would gain a second parent).
+- A **`knows`** relation target must be an **existing** object — addressed by a data-access path (`VALUE`)
+  or a macro returning `reference("T")`. Only a reference is added/repointed. A brand-new object is rejected
+  (it would dangle, with no `has` parent).
+
+`SETOBJ` on an atomic `has` relation drops the previous occupant (cascading like `DROPOBJ`) before embedding
+the new one. `DROPOBJ` detaches the object from its `has` parent, scrubs every inbound `knows` reference,
+and recursively removes its embedded subtree; each removed object id is reported to observers via an
+`objectDeleted` notification.
+
+### WITH … AS binding blocks
+
+A `WITH macro_call AS "name" { ... }` block evaluates the macro **once** and binds its result to `name` for
+the body, readable as `$(name->field)` (object result) or `$(name)` (scalar/list). This is how a single
+macro evaluation feeds several writes — for example a value-wise update of an existing object's fields,
+preserving its id, instead of replacing the whole object:
+
+```
+WITH MACRO("opposite_direction_with_variance", "boundingBox->position", "closest_obstacle->boundingBox->position") AS "dir" {
+    SET("direction->x", EVAL { return $(dir->x) })
+    SET("direction->y", EVAL { return $(dir->y) })
+}
+```
+
+Without it, two `SET("...->x/y", MACRO(...))` would run the macro twice — inconsistent for nondeterministic
+macros and wasteful. Bindings live in the action scope (the same scope mechanism as `event`), are visible to
+nested `EVAL`/`MACRO` right-hand sides and macro-call arguments, and blocks may be nested and combined with
+`IF IN SCOPE`.
 
 ### Right-Hand Side Value Types
 
