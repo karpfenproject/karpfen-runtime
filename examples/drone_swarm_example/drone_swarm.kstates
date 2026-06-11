@@ -1,0 +1,172 @@
+// Drone swarm coordinator — demonstrates the full set of model manipulators.
+//
+// What to look for (each manipulator is annotated inline below):
+//   APPENDOBJ into a has-list   -> spawn a brand-new drone object        ("launching")
+//   SETOBJ on an atomic knows   -> assign the leader to an existing drone ("forming")
+//   APPENDOBJ into a knows-list  -> add an existing drone to the watchlist ("forming")
+//   SETLIST on a simple list    -> rebuild the roster of drone statuses   ("forming"/"maintenance")
+//   SETOBJ + DROPOBJ            -> address the weakest drone, then remove it ("maintenance")
+//   DROPLIST on a simple list   -> clear the roster                        ("shutdown")
+//   WITH ... AS                 -> value-wise update of the embedded formationCenter ("operating")
+
+STATEMACHINE ATTACHED TO "Swarm" {
+
+    STATES {
+
+        INITIAL STATE "standby" {
+            ENTRY {
+                APPEND("log", "Swarm on standby. Awaiting deploy command.")
+            }
+        }
+
+        STATE "launching" {
+            ENTRY {
+                APPEND("log", "Launching: bringing the fleet up to target size.")
+            }
+            DO {
+                // APPENDOBJ a *new* object built by a macro into the `has("drones")` composition list.
+                // The engine embeds it, assigns it a fresh id and registers it. One drone per tick until
+                // the launching -> forming guard below stops us at targetSize.
+                APPENDOBJ("self", "drones", MACRO("make_drone"))
+                APPEND("log", EVAL { return "spawned a drone (" + str(len($(drones))) + "/" + str($(targetSize)) + ")" })
+            }
+        }
+
+        STATE "forming" {
+            ENTRY {
+                // SETOBJ on an atomic `knows`: repoint leader at an existing drone (the fittest one).
+                SETOBJ("self", "leader", MACRO("fittest_drone", "drones"))
+                // APPENDOBJ an existing drone into a `knows` list: keep an eye on the weakest unit.
+                APPENDOBJ("self", "watchlist", MACRO("weakest_drone", "drones"))
+                // SETLIST: rebuild the simple roster list from scratch.
+                SETLIST("roster", MACRO("roster_of", "drones"))
+                APPEND("log", EVAL { return "Formation set with " + str(len($(drones))) + " drones; leader and watchlist assigned." })
+            }
+        }
+
+        STATE "operating" {
+            DO {
+                // WITH ... AS: evaluate the drift macro once and scatter its fields into the existing
+                // formationCenter Vector, preserving that object's id (a value-wise update).
+                WITH MACRO("drift", "formationCenter") AS "c" {
+                    SET("formationCenter->x", EVAL { return $(c->x) })
+                    SET("formationCenter->y", EVAL { return $(c->y) })
+                }
+                SET("tick", EVAL { return $(tick) + 1 })
+                APPEND("log", EVAL { return "patrolling, center (" + str(round($(formationCenter->x), 2)) + ", " + str(round($(formationCenter->y), 2)) + ")" })
+            }
+        }
+
+        STATE "maintenance" {
+            ENTRY {
+                // Address the drone to remove via an atomic `knows` (SETOBJ to the weakest existing drone),
+                // then DROPOBJ through it. DROPOBJ detaches it from its `has` parent, scrubs every inbound
+                // `knows` reference to it (leader / watchlist / condemned) and removes its subtree.
+                SETOBJ("self", "condemned", MACRO("weakest_drone", "drones"))
+                DROPOBJ("condemned")
+                SETLIST("roster", MACRO("roster_of", "drones"))
+                APPEND("log", EVAL { return "Retired the weakest drone; " + str(len($(drones))) + " remaining. Replenishing." })
+            }
+        }
+
+        STATE "shutdown" {
+            ENTRY {
+                // DROPLIST: clear the simple roster list.
+                DROPLIST("roster")
+                APPEND("log", "Swarm recalled. Roster cleared; holding position.")
+            }
+        }
+    }
+
+    TRANSITIONS {
+        TRANSITION "standby" -> "launching" {
+            CONDITION { EVENT("swarm", "deploy") }
+        }
+
+        // Keep spawning (the DO above runs each tick) until the fleet has reached its target size.
+        TRANSITION "launching" -> "forming" {
+            CONDITION { EVAL { return len($(drones)) >= $(targetSize) } }
+        }
+
+        TRANSITION "forming" -> "operating" { }
+
+        TRANSITION "operating" -> "maintenance" {
+            CONDITION { EVENT("swarm", "droneDown") }
+        }
+        TRANSITION "operating" -> "shutdown" {
+            CONDITION { EVENT("swarm", "recall") }
+        }
+
+        // After retiring a unit, go relaunch to top the fleet back up to target size.
+        TRANSITION "maintenance" -> "launching" { }
+    }
+
+    MACROS {
+        MACRO "make_drone" {
+            RETURNS("Drone")
+            DEFINITION {
+                EVAL {
+                    import random
+                    return {"battery": round(random.uniform(40.0, 100.0), 1), "status": "active", "position": {"x": round(random.uniform(-3.0, 3.0), 2), "y": round(random.uniform(-3.0, 3.0), 2)}}
+                }
+            }
+        }
+        MACRO "fittest_drone" {
+            TAKES("drones", list("Drone"))
+            RETURNS(reference("Drone"))
+            DEFINITION {
+                EVAL {
+                    best = None
+                    best_battery = -1.0
+                    for d in $(drones) :
+                        if $(d->battery) > best_battery :
+                            best_battery = $(d->battery)
+                            best = $(d)
+                        endif
+                    endfor
+                    return $(best)
+                }
+            }
+        }
+        MACRO "weakest_drone" {
+            TAKES("drones", list("Drone"))
+            RETURNS(reference("Drone"))
+            DEFINITION {
+                EVAL {
+                    worst = None
+                    worst_battery = 9999.0
+                    for d in $(drones) :
+                        if $(d->battery) < worst_battery :
+                            worst_battery = $(d->battery)
+                            worst = $(d)
+                        endif
+                    endfor
+                    return $(worst)
+                }
+            }
+        }
+        MACRO "roster_of" {
+            TAKES("drones", list("Drone"))
+            RETURNS(list("string"))
+            DEFINITION {
+                EVAL {
+                    result = []
+                    for d in $(drones) :
+                        result.append(str($(d->__id__)) + ": " + str($(d->battery)) + "%")
+                    endfor
+                    return result
+                }
+            }
+        }
+        MACRO "drift" {
+            TAKES("center", "Vector")
+            RETURNS("Vector")
+            DEFINITION {
+                EVAL {
+                    import random
+                    return {"x": $(center->x) + random.uniform(-0.5, 0.5), "y": $(center->y) + random.uniform(-0.5, 0.5)}
+                }
+            }
+        }
+    }
+}

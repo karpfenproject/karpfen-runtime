@@ -1,0 +1,22 @@
+type "Position" "A planar position in meters" {
+    prop("x", "number")
+    prop("y", "number")
+}
+
+type "Car" "An autonomous car that self-tests its subsystems in parallel before driving" {
+    prop("log", list("string"))
+
+    prop("batteryStatus", "string")
+    prop("brakeStatus", "string")
+    prop("sensorStatus", "string")
+
+    prop("speed", "number")
+    prop("distanceToGoal", "number")
+
+    has("position", "Position")
+    has("goal", "Position")
+}
+
+type "Garage" "Holds the car" {
+    has("car", "Car")
+}

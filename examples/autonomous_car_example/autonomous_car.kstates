@@ -1,0 +1,136 @@
+// Autonomous car — demonstrates parallel states (SPLIT / JOIN).
+//
+// What to look for:
+//   * SPLIT (1-to-N): on ignition the machine leaves "off" and forks into three independent branches,
+//     one per subsystem self-test. The split is guarded by an EVENT condition.
+//   * Branches advance at different rates: the battery and sensor checks are one step each, while the
+//     brake check takes two (test -> bleed). Each branch ticks on its own.
+//   * JOIN (N-to-1): the join fires only once *every* branch has reached its join-point state, collapsing
+//     the parallel context back to a single state ("ready"). Joins are checked before branch transitions.
+//   * After the join the machine is "simple" again and drives normally to its goal.
+//
+// Note on the "*Ready" states: a JOIN fires as soon as all branches *sit on* their join-point states —
+// before those states are ticked — so a join-point state's own ENTRY is not a reliable place to do work.
+// Each subsystem therefore does its check (and logs "self-test passed") in the step *before* its join
+// point, and the "*Ready" states are left as empty markers.
+
+STATEMACHINE ATTACHED TO "Car" {
+
+    STATES {
+
+        INITIAL STATE "off" {
+            ENTRY {
+                APPEND("log", "Powered down. Waiting for ignition.")
+            }
+        }
+
+        // --- branch 1: battery (1 step) ---
+        STATE "checkBattery" {
+            ENTRY {
+                SET("batteryStatus", "ok")
+                APPEND("log", "[battery] cell voltage nominal — self-test passed")
+            }
+        }
+        STATE "batteryReady" { } // empty join-point marker
+
+        // --- branch 2: brakes (2 steps, so this branch finishes later than the others) ---
+        STATE "checkBrakes" {
+            ENTRY {
+                SET("brakeStatus", "checking")
+                APPEND("log", "[brakes] testing line pressure...")
+            }
+        }
+        STATE "bleedBrakes" {
+            ENTRY {
+                SET("brakeStatus", "ok")
+                APPEND("log", "[brakes] lines bled — self-test passed")
+            }
+        }
+        STATE "brakesReady" { } // empty join-point marker
+
+        // --- branch 3: sensors (1 step) ---
+        STATE "calibrateSensors" {
+            ENTRY {
+                SET("sensorStatus", "ok")
+                APPEND("log", "[sensors] LIDAR + cameras calibrated — self-test passed")
+            }
+        }
+        STATE "sensorsReady" { } // empty join-point marker
+
+        // --- merged (simple context again) ---
+        STATE "ready" {
+            ENTRY {
+                APPEND("log", "All systems nominal. Engaging autonomous drive.")
+            }
+        }
+        STATE "driving" {
+            DO {
+                WITH MACRO("advance", "position", "goal", "speed") AS "p" {
+                    SET("position->x", EVAL { return $(p->x) })
+                    SET("position->y", EVAL { return $(p->y) })
+                }
+                SET("distanceToGoal", MACRO("planar_distance", "position", "goal"))
+                APPEND("log", EVAL { return "driving, distanceToGoal " + str(round($(distanceToGoal), 2)) })
+            }
+        }
+        STATE "parked" {
+            ENTRY {
+                SET("speed", "0.0")
+                APPEND("log", "Arrived at goal. Parked.")
+            }
+        }
+    }
+
+    TRANSITIONS {
+        // 1-to-N: fork into the three self-test branches when the ignition event arrives.
+        SPLIT "off" -> "checkBattery", "checkBrakes", "calibrateSensors" {
+            CONDITION { EVENT("ignition", "powerOn") }
+        }
+
+        // Independent per-branch transitions (1-to-1). Each fires within its own branch.
+        TRANSITION "checkBattery" -> "batteryReady" { }
+        TRANSITION "checkBrakes" -> "bleedBrakes" { }
+        TRANSITION "bleedBrakes" -> "brakesReady" { }
+        TRANSITION "calibrateSensors" -> "sensorsReady" { }
+
+        // N-to-1: only fires once all three branches sit on their ready markers.
+        JOIN "batteryReady", "brakesReady", "sensorsReady" -> "ready" { }
+
+        TRANSITION "ready" -> "driving" { }
+        TRANSITION "driving" -> "parked" {
+            CONDITION { EVAL { return $(distanceToGoal) < 0.5 } }
+        }
+    }
+
+    MACROS {
+        MACRO "planar_distance" {
+            TAKES("a", "Position")
+            TAKES("b", "Position")
+            RETURNS("number")
+            DEFINITION {
+                EVAL {
+                    import math
+                    return math.sqrt(($(a->x) - $(b->x)) ** 2 + ($(a->y) - $(b->y)) ** 2)
+                }
+            }
+        }
+        MACRO "advance" {
+            TAKES("origin", "Position")
+            TAKES("dest", "Position")
+            TAKES("speed", "number")
+            RETURNS("Position")
+            DEFINITION {
+                EVAL {
+                    import math
+                    dx = $(dest->x) - $(origin->x)
+                    dy = $(dest->y) - $(origin->y)
+                    dist = math.sqrt(dx * dx + dy * dy)
+                    if dist <= $(speed) :
+                        return {"x": $(dest->x), "y": $(dest->y)}
+                    endif
+                    return {"x": $(origin->x) + $(speed) * dx / dist, "y": $(origin->y) + $(speed) * dy / dist}
+                }
+            }
+        }
+    }
+}

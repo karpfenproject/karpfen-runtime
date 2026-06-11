@@ -1,0 +1,31 @@
+make object "alpha-swarm":"Swarm" {
+
+    prop("targetSize") -> "4"
+    prop("tick") -> "0"
+
+    has("formationCenter") -> make object "center":"Vector" {
+        prop("x") -> "0.0"
+        prop("y") -> "0.0"
+    }
+
+    // The swarm starts with two drones; the coordinator will spawn more up to targetSize.
+    has("drones") -> make object "drone_a":"Drone" {
+        prop("battery") -> "90.0"
+        prop("status") -> "idle"
+        has("position") -> make object "pos_a":"Vector" {
+            prop("x") -> "0.0"
+            prop("y") -> "1.0"
+        }
+    }
+    has("drones") -> make object "drone_b":"Drone" {
+        prop("battery") -> "70.0"
+        prop("status") -> "idle"
+        has("position") -> make object "pos_b":"Vector" {
+            prop("x") -> "1.0"
+            prop("y") -> "0.0"
+        }
+    }
+
+    knows("leader") -> "drone_a"
+    knows("condemned") -> "drone_b" // placeholder; repointed before it is ever used
+}

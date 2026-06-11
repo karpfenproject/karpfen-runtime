@@ -1,0 +1,2 @@
+type "powerOn" "Ignition signal that starts the pre-drive self-test. No payload. Published on the ignition domain." {
+}

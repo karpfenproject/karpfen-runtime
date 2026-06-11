@@ -1,0 +1,24 @@
+type "Vector" "A planar position / point in meters" {
+    prop("x", "number")
+    prop("y", "number")
+}
+
+type "Drone" "A single swarm drone" {
+    prop("battery", "number")
+    prop("status", "string")
+    has("position", "Vector")
+}
+
+type "Swarm" "Coordinator that grows and shrinks a fleet of drones at runtime" {
+    prop("log", list("string"))
+    prop("roster", list("string"))
+    prop("targetSize", "number")
+    prop("tick", "number")
+
+    has("drones", list("Drone"))
+    has("formationCenter", "Vector")
+
+    knows("leader", "Drone")
+    knows("watchlist", list("Drone"))
+    knows("condemned", "Drone")
+}

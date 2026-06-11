@@ -1,0 +1,8 @@
+type "deploy" "Start deploying the swarm: spawn drones up to the target size. No payload. Published on the swarm domain." {
+}
+
+type "droneDown" "Report that a unit has failed; the coordinator retires its weakest drone. No payload." {
+}
+
+type "recall" "Recall and shut the swarm down. No payload." {
+}

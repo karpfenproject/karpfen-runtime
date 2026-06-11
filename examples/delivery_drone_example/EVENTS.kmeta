@@ -1,0 +1,12 @@
+type "assignDelivery" "Assign a delivery job; carries the destination, package id and priority. Published on the control domain." {
+    prop("packageId", "string")
+    prop("priority", "number")
+    has("destination", "GeoPoint")
+}
+
+type "setCruiseSpeed" "Change the drone's cruise speed while it is in flight." {
+    prop("factor", "number")
+}
+
+type "recall" "Abort the current job and fly home immediately. No payload." {
+}

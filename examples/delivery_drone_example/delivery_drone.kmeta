@@ -1,0 +1,25 @@
+type "GeoPoint" "A planar point in meters relative to the skyport origin" {
+    prop("x", "number")
+    prop("y", "number")
+}
+
+type "Battery" "State of charge in percent" {
+    prop("charge", "number")
+}
+
+type "Drone" "An autonomous package-delivery drone (driven entirely by events with payloads)" {
+    prop("log", list("string"))
+
+    prop("packageId", "string")
+    prop("cruiseSpeed", "number")
+    prop("distanceToTarget", "number")
+
+    has("position", "GeoPoint")
+    has("target", "GeoPoint")
+    has("home", "GeoPoint")
+    has("battery", "Battery")
+}
+
+type "Skyport" "Ground station that houses the delivery drone" {
+    has("drone", "Drone")
+}

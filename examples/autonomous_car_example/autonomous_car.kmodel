@@ -1,0 +1,21 @@
+make object "depot":"Garage" {
+
+    has("car") -> make object "av-1":"Car" {
+
+        prop("batteryStatus") -> "unknown"
+        prop("brakeStatus") -> "unknown"
+        prop("sensorStatus") -> "unknown"
+
+        prop("speed") -> "2.0"
+        prop("distanceToGoal") -> "9999.0" // large so driving -> parked does not fire before the first DO
+
+        has("position") -> make object "carPosition":"Position" {
+            prop("x") -> "0.0"
+            prop("y") -> "0.0"
+        }
+        has("goal") -> make object "carGoal":"Position" {
+            prop("x") -> "20.0"
+            prop("y") -> "12.0"
+        }
+    }
+}

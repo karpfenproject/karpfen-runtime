@@ -1,0 +1,145 @@
+// Delivery drone — demonstrates the event-payload features.
+//
+// What to look for:
+//   * An EVENT condition clause followed by EVAL guards that read the *payload* of the candidate event
+//     (idle -> cruise filters on $(event->priority) and on the model's battery charge).
+//   * Reading a scoped event payload inside an ENTRY block ($(event->factor), $(event->destination->x)).
+//   * IF IN SCOPE(...): the "cruise" state is reachable two ways — through the assignDelivery event
+//     (payload available) and through a plain transition back from "throttle" (no payload) — and its
+//     ENTRY captures the destination only when it was actually carried in.
+//   * Persisting a payload value into the model (packageId) so it outlives the scoped event.
+
+STATEMACHINE ATTACHED TO "Drone" {
+
+    STATES {
+
+        INITIAL STATE "idle" {
+            ENTRY {
+                APPEND("log", "Idle at base, awaiting a delivery assignment.")
+            }
+        }
+
+        STATE "cruise" {
+            ENTRY {
+                // Reached via assignDelivery -> the destination payload is in scope: capture the job.
+                // Reached via a plain transition back from "throttle" -> no payload, so this is skipped
+                // and the existing target/packageId are kept.
+                IF IN SCOPE("event->destination") {
+                    SET("packageId", EVAL { return $(event->packageId) })
+                    SET("target->x", EVAL { return $(event->destination->x) })
+                    SET("target->y", EVAL { return $(event->destination->y) })
+                    APPEND("log", EVAL { return "Accepted delivery " + $(event->packageId) + " (priority " + str($(event->priority)) + ")" })
+                }
+            }
+            DO {
+                // Fly one step toward the target, keeping the GeoPoint object id (value-wise update).
+                WITH MACRO("step_toward", "position", "target", "cruiseSpeed") AS "p" {
+                    SET("position->x", EVAL { return $(p->x) })
+                    SET("position->y", EVAL { return $(p->y) })
+                }
+                SET("distanceToTarget", MACRO("planar_distance", "position", "target"))
+                SET("battery->charge", EVAL { return $(battery->charge) - 0.5 })
+                APPEND("log", EVAL { return "enroute with " + $(packageId) + ", distance " + str(round($(distanceToTarget), 2)) })
+            }
+        }
+
+        STATE "throttle" {
+            ENTRY {
+                // Entered only through a setCruiseSpeed event, so the factor is always in scope here.
+                SET("cruiseSpeed", EVAL { return $(event->factor) })
+                APPEND("log", EVAL { return "Cruise speed changed to " + str($(event->factor)) })
+            }
+        }
+
+        STATE "delivering" {
+            ENTRY {
+                // packageId was copied into the model on assignment, so it is still readable even though
+                // the assignDelivery event has long been consumed.
+                APPEND("log", EVAL { return "Dropped " + $(packageId) + " at (" + str(round($(position->x), 1)) + ", " + str(round($(position->y), 1)) + ")" })
+                SET("packageId", "none")
+            }
+        }
+
+        STATE "returning" {
+            ENTRY {
+                SET("target->x", EVAL { return $(home->x) })
+                SET("target->y", EVAL { return $(home->y) })
+                SET("distanceToTarget", MACRO("planar_distance", "position", "target"))
+                APPEND("log", "Returning to base.")
+            }
+            DO {
+                WITH MACRO("step_toward", "position", "target", "cruiseSpeed") AS "p" {
+                    SET("position->x", EVAL { return $(p->x) })
+                    SET("position->y", EVAL { return $(p->y) })
+                }
+                SET("distanceToTarget", MACRO("planar_distance", "position", "target"))
+                SET("battery->charge", EVAL { return $(battery->charge) - 0.5 })
+                APPEND("log", EVAL { return "homeward, distance " + str(round($(distanceToTarget), 2)) })
+            }
+        }
+    }
+
+    TRANSITIONS {
+        // EVENT clause first (brings the candidate into scope), then guards on the payload and the model.
+        // A low-priority job (priority < 1) or a flat battery (<= 20%) is therefore ignored.
+        TRANSITION "idle" -> "cruise" {
+            CONDITION {
+                EVENT("control", "assignDelivery")
+                EVAL { return $(event->priority) >= 1 }
+                EVAL { return $(battery->charge) > 20 }
+            }
+        }
+
+        // In-flight speed change: leave cruise (drops the assignDelivery scope), enter throttle (scopes
+        // setCruiseSpeed), then come straight back to cruise via a plain transition.
+        TRANSITION "cruise" -> "throttle" {
+            CONDITION { EVENT("control", "setCruiseSpeed") }
+        }
+        TRANSITION "throttle" -> "cruise" { }
+
+        TRANSITION "cruise" -> "returning" {
+            CONDITION { EVENT("control", "recall") }
+        }
+        TRANSITION "cruise" -> "delivering" {
+            CONDITION { EVAL { return $(distanceToTarget) < 0.5 } }
+        }
+
+        TRANSITION "delivering" -> "returning" { }
+
+        TRANSITION "returning" -> "idle" {
+            CONDITION { EVAL { return $(distanceToTarget) < 0.5 } }
+        }
+    }
+
+    MACROS {
+        MACRO "planar_distance" {
+            TAKES("a", "GeoPoint")
+            TAKES("b", "GeoPoint")
+            RETURNS("number")
+            DEFINITION {
+                EVAL {
+                    import math
+                    return math.sqrt(($(a->x) - $(b->x)) ** 2 + ($(a->y) - $(b->y)) ** 2)
+                }
+            }
+        }
+        MACRO "step_toward" {
+            TAKES("origin", "GeoPoint")
+            TAKES("dest", "GeoPoint")
+            TAKES("speed", "number")
+            RETURNS("GeoPoint")
+            DEFINITION {
+                EVAL {
+                    import math
+                    dx = $(dest->x) - $(origin->x)
+                    dy = $(dest->y) - $(origin->y)
+                    dist = math.sqrt(dx * dx + dy * dy)
+                    if dist <= $(speed) :
+                        return {"x": $(dest->x), "y": $(dest->y)}
+                    endif
+                    return {"x": $(origin->x) + $(speed) * dx / dist, "y": $(origin->y) + $(speed) * dy / dist}
+                }
+            }
+        }
+    }
+}

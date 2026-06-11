@@ -1,0 +1,25 @@
+make object "skyport-1":"Skyport" {
+
+    has("drone") -> make object "scout":"Drone" {
+
+        prop("packageId") -> "none"
+        prop("cruiseSpeed") -> "1.5"
+        prop("distanceToTarget") -> "9999.0" // large so the "arrived" guards do not fire before a target is set
+
+        has("position") -> make object "scoutPosition":"GeoPoint" {
+            prop("x") -> "0.0"
+            prop("y") -> "0.0"
+        }
+        has("target") -> make object "scoutTarget":"GeoPoint" {
+            prop("x") -> "0.0"
+            prop("y") -> "0.0"
+        }
+        has("home") -> make object "scoutHome":"GeoPoint" {
+            prop("x") -> "0.0"
+            prop("y") -> "0.0"
+        }
+        has("battery") -> make object "scoutBattery":"Battery" {
+            prop("charge") -> "100.0"
+        }
+    }
+}
