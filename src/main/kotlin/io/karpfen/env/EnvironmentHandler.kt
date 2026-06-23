@@ -16,6 +16,7 @@
 package io.karpfen.env
 
 import io.karpfen.EngineTraceLogger
+import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.websocket.ClientSessionManager
 import java.util.concurrent.ConcurrentHashMap
 
@@ -47,7 +48,7 @@ object EnvironmentHandler {
     var defaultEventConsumptionOnFire: Boolean = true
 
     fun createEnv(key: String): Environment {
-        val env = Environment(key, tickDelayMS = defaultTickDelayMs, eventTtlMs = defaultEventTtlMs, eventConsumptionOnFire = defaultEventConsumptionOnFire)
+        val env = Environment(key, tickDelayMS = defaultTickDelayMs, eventTtlMs = defaultEventTtlMs, eventConsumptionOnFire = defaultEventConsumptionOnFire, featureManager = FeatureManager())
         envs[key] = env
         return env
     }

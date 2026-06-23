@@ -17,6 +17,8 @@ package io.karpfen
 
 import instance.Model
 import io.karpfen.io.karpfen.exec.*
+import io.karpfen.io.karpfen.features.FeatureManager
+import io.karpfen.io.karpfen.features.runtime.TickByTickFeature
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
 import meta.Metamodel
@@ -39,7 +41,8 @@ class Engine(
     /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
     val eventConsumptionOnFire: Boolean = true,
     /** Metamodel for event payloads; used to parse incoming payloads into objects. Null when unused. */
-    val eventMetamodel: Metamodel? = null
+    val eventMetamodel: Metamodel? = null,
+    val featureManager: FeatureManager,
 ) {
 
     /** Parses incoming event payloads into the runtime object model against [eventMetamodel]. */
@@ -170,6 +173,11 @@ class Engine(
 
         var tickCount = 0L
         while (isRunning) {
+
+            featureManager.executeIfPresent<TickByTickFeature> { feature ->
+                feature.checkPausedState()
+            }
+
             tickCount++
             val tickStart = System.currentTimeMillis()
 

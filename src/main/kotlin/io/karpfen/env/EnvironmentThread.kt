@@ -18,6 +18,7 @@ package io.karpfen.env
 import io.karpfen.DataObservationListener
 import io.karpfen.Engine
 import io.karpfen.EngineTraceLogger
+import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
 import java.util.concurrent.LinkedBlockingQueue
@@ -47,7 +48,8 @@ class EnvironmentThread(
         sharedEventBus,
         traceLogger = traceLogger,
         eventConsumptionOnFire = environment.eventConsumptionOnFire,
-        eventMetamodel = environment.eventMetamodel
+        eventMetamodel = environment.eventMetamodel,
+        featureManager = environment.featureManager
     )
 
     fun setup() {

@@ -25,6 +25,7 @@ import io.ktor.server.application.install
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
@@ -205,7 +206,7 @@ object HTTPRoutes {
             }
 
             get("/health") {
-                call.respond(mapOf("status" to "ok"))
+                call.respond(HttpStatusCode.OK, "")
             }
 
             // --- Observatory endpoints ---
@@ -250,6 +251,71 @@ object HTTPRoutes {
                     val accessKey = APIService.registerObservatoryClient(clientId, envKey, modelElement)
                     call.respond(HttpStatusCode.OK, accessKey)
                 } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            // Feature-related endpoints
+
+            get("/getRegisteredFeatures") {
+                try {
+                    val featureNames = APIService.getRegisteredFeatures()
+                    call.respond(HttpStatusCode.OK, featureNames.joinToString(separator = ","))
+                }
+                catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            post("/activateFeature") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                    ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val feature = call.request.queryParameters["featureName"]
+                    ?: throw IllegalArgumentException("Missing required parameter: featureName")
+                    APIService.activateFeature(envKey, feature)
+                    call.respond(HttpStatusCode.OK, "")
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            get("/getActiveFeatures") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                    ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val activeFeatureNames = APIService.getActiveFeatures(envKey)
+                    call.respond(HttpStatusCode.OK, activeFeatureNames.joinToString(separator = ","))
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            post("/deactivateFeature") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                    ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val feature = call.request.queryParameters["featureName"]
+                    ?: throw IllegalArgumentException("Missing required parameter: featureName")
+                    APIService.deactivateFeature(envKey, feature)
+                    call.respond(HttpStatusCode.OK, "")
+                }
+                catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            post("/sendMessageToFeature") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val feature = call.request.queryParameters["featureName"]
+                        ?: throw IllegalArgumentException("Missing required parameter: featureName")
+                    val message = call.receiveText()
+                    APIService.sendMessage(envKey, feature, message)
+                    call.respond(HttpStatusCode.OK, "")
+                }
+                catch (e: Exception) {
                     respondWithError(call, e)
                 }
             }
