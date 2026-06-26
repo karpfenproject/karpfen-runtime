@@ -162,14 +162,17 @@ object APIService {
     }
 
     fun activateFeature(envKey: String, featureName: String) {
-        val env = EnvironmentHandler.getEnv(envKey) ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
-        val featureClass = FeatureRegistry.getClassByName(featureName) ?: throw IllegalArgumentException("Feature '$featureName' is not registered")
-        if (env.featureManager.getFeature(featureClass) != null) throw IllegalArgumentException("Feature '$featureName' does already exist in environment $envKey")
-        env.featureManager.addFeature(FeatureFactory.createFeature(featureClass, true, env.featureManager))
+        val env = EnvironmentHandler.getEnv(envKey)
+            ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        val featureClass = FeatureRegistry.getClassByName(featureName)
+            ?: throw IllegalArgumentException("Feature '$featureName' is not registered")
+        if (!env.featureManager.requestFeatureActivation(featureClass))
+            throw IllegalArgumentException("Feature '$featureName' is already active in environment $envKey")
     }
 
     fun getActiveFeatures(envKey: String): Set<String> {
-        val env = EnvironmentHandler.getEnv(envKey) ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        val env = EnvironmentHandler.getEnv(envKey)
+            ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
         val set = mutableSetOf<String>()
         for (featureClass in env.featureManager.getActiveFeaturesClasses()) {
             FeatureRegistry.getNameByClass(featureClass)?.let { set.add(it) }
@@ -178,15 +181,19 @@ object APIService {
     }
 
     fun deactivateFeature(envKey: String, featureName: String) {
-        val env = EnvironmentHandler.getEnv(envKey) ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
-        val featureClass = FeatureRegistry.getClassByName(featureName) ?: throw IllegalArgumentException("Feature '$featureName' is not registered")
-        val feature = env.featureManager.getFeature(featureClass) ?: throw IllegalArgumentException("Feature '$featureName' does not exist in environment $envKey")
-        env.featureManager.removeFeature(feature)
+        val env = EnvironmentHandler.getEnv(envKey)
+            ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        val featureClass = FeatureRegistry.getClassByName(featureName)
+            ?: throw IllegalArgumentException("Feature '$featureName' is not registered")
+        if (!env.featureManager.requestFeatureDeactivation(featureClass))
+            throw IllegalArgumentException("Feature '$featureName' is not active in environment $envKey")
     }
 
-    fun sendMessage(envKey: String, featureName: String, message: String) {
-        val env = EnvironmentHandler.getEnv(envKey) ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
-        val featureClass = FeatureRegistry.getClassByName(featureName) ?: throw IllegalArgumentException("Feature '$featureName' is not registered")
-        env.featureManager.onMessage(featureClass, message)
+    fun sendMessage(envKey: String, featureName: String, message: String): String {
+        val env = EnvironmentHandler.getEnv(envKey)
+            ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        val featureClass = FeatureRegistry.getClassByName(featureName)
+            ?: throw IllegalArgumentException("Feature '$featureName' is not registered")
+        return env.featureManager.onMessage(featureClass, message) ?: throw IllegalArgumentException("${FeatureRegistry.getNameByClass(featureClass)} has not been activated in environment $envKey")
     }
 }

@@ -312,8 +312,7 @@ object HTTPRoutes {
                     val feature = call.request.queryParameters["featureName"]
                         ?: throw IllegalArgumentException("Missing required parameter: featureName")
                     val message = call.receiveText()
-                    APIService.sendMessage(envKey, feature, message)
-                    call.respond(HttpStatusCode.OK, "")
+                    call.respond(HttpStatusCode.OK, APIService.sendMessage(envKey, feature, message))
                 }
                 catch (e: Exception) {
                     respondWithError(call, e)

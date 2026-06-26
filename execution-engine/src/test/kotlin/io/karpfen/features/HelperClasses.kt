@@ -6,98 +6,117 @@ import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.FeatureProvider
 import kotlin.reflect.KClass
 
-open class DummyFactoryFeature(isUserAdded: Boolean) : DefaultFeature(isUserAdded)
+open class FeatA(explicitlyRequested: Boolean): DefaultFeature(explicitlyRequested)
+class FeatB(explicitlyRequested: Boolean): DefaultFeature(explicitlyRequested)
+class FeatC(explicitlyRequested: Boolean): DefaultFeature(explicitlyRequested)
+class FeatD(explicitlyRequested: Boolean): DefaultFeature(explicitlyRequested)
+class FeatE(explicitlyRequested: Boolean): DefaultFeature(explicitlyRequested)
+class FeatF(explicitlyRequested: Boolean): DefaultFeature(explicitlyRequested)
+class FeatG(explicitlyRequested: Boolean): DefaultFeature(explicitlyRequested)
+class FeatH(explicitlyRequested: Boolean): DefaultFeature(explicitlyRequested)
 
-val objectMap = arrayOf(
-    object: DummyFactoryFeature(true) {},
-    object: DummyFactoryFeature(false) {},
-    object: DummyFactoryFeature(true) {}
-)
+class FeatAProvider(): FeatureProvider {
+    override val registryName: String = "A"
+    override val registryClass: KClass<out Feature> = FeatA::class
+    override val featureDependencies: Set<KClass<out Feature>> = emptySet()
 
-class DummyFeatureProvider0 : FeatureProvider {
-    override val registryName = "dummy0"
-    override val registryClass = objectMap[0]::class
-    override fun createFeature(isUserAdded: Boolean, manager: FeatureManager) = objectMap[0]
+    override fun createFeature(explicitlyRequested: Boolean, manager: FeatureManager): Feature {
+        return FeatA(explicitlyRequested)
+    }
 }
 
-class DummyFeatureProvider1 : FeatureProvider {
-    override val registryName = "dummy1"
-    override val registryClass = objectMap[1]::class
-    override fun createFeature(isUserAdded: Boolean, manager: FeatureManager) = objectMap[1]
+class FeatBProvider(): FeatureProvider {
+    override val registryName: String = "B"
+    override val registryClass: KClass<out Feature> = FeatB::class
+    override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatA::class)
+
+    override fun createFeature(explicitlyRequested: Boolean, manager: FeatureManager): Feature {
+        return FeatB(explicitlyRequested)
+    }
 }
 
-class DummyFeatureProvider2 : FeatureProvider {
-    override val registryName = "dummy2"
-    override val registryClass = objectMap[2]::class
-    override fun createFeature(isUserAdded: Boolean, manager: FeatureManager) = objectMap[2]
+class FeatCProvider(): FeatureProvider {
+    override val registryName: String = "C"
+    override val registryClass: KClass<out Feature> = FeatC::class
+    override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatA::class)
+
+    override fun createFeature(explicitlyRequested: Boolean, manager: FeatureManager): Feature {
+        return FeatC(explicitlyRequested)
+    }
 }
 
-open class DummyManagerFeature(override val dependencies: Set<KClass<out Feature>>, isUserAdded: Boolean) : DefaultFeature(isUserAdded)
+class FeatDProvider(): FeatureProvider {
+    override val registryName: String = "D"
+    override val registryClass: KClass<out Feature> = FeatD::class
+    override val featureDependencies: Set<KClass<out Feature>> = emptySet()
 
-class DummyExecutionFeature : DummyManagerFeature(setOf(), false) {
+    override fun createFeature(explicitlyRequested: Boolean, manager: FeatureManager): Feature {
+        return FeatD(explicitlyRequested)
+    }
+}
+
+class FeatEProvider(): FeatureProvider {
+    override val registryName: String = "E"
+    override val registryClass: KClass<out Feature> = FeatE::class
+    override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatB::class)
+
+    override fun createFeature(explicitlyRequested: Boolean, manager: FeatureManager): Feature {
+        return FeatE(explicitlyRequested)
+    }
+}
+
+class FeatFProvider(): FeatureProvider {
+    override val registryName: String = "F"
+    override val registryClass: KClass<out Feature> = FeatF::class
+    override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatC::class, FeatD::class)
+
+    override fun createFeature(explicitlyRequested: Boolean, manager: FeatureManager): Feature {
+        return FeatF(explicitlyRequested)
+    }
+}
+
+class FeatGProvider(): FeatureProvider {
+    override val registryName: String = "G"
+    override val registryClass: KClass<out Feature> = FeatG::class
+    override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatE::class, FeatF::class)
+
+    override fun createFeature(explicitlyRequested: Boolean, manager: FeatureManager): Feature {
+        return FeatG(explicitlyRequested)
+    }
+}
+
+class FeatHProvider(): FeatureProvider {
+    override val registryName: String = "H"
+    override val registryClass: KClass<out Feature> = FeatH::class
+    override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatF::class)
+
+    override fun createFeature(explicitlyRequested: Boolean, manager: FeatureManager): Feature {
+        return FeatH(explicitlyRequested)
+    }
+}
+
+class ExecutionFeature: DefaultFeature(true) {
     override fun onActivate() {
-        throw RuntimeException("Simulate Execution of onAdd")
+        throw RuntimeException("Simulate Execution of onActivate")
     }
-
     override fun onDeactivate() {
-        throw RuntimeException("Simulate Execution of onRemove")
+        throw RuntimeException("Simulate Execution of onDeactivate")
     }
 
-    override fun onMessage(message: String) {
+    override fun onMessage(message: String): String {
         throw RuntimeException("Simulate Execution of onMessage with message: $message")
     }
 
     fun execute(vararg params: String) {
-        throw RuntimeException("Simulate Execution of execute with Parameters ${params.contentToString()}")
+        throw RuntimeException("Simulate Execution of execute with Parameters: ${params.contentToString()}")
     }
 }
 
-class FeatA(isUserAdded: Boolean) : DummyManagerFeature(setOf(), isUserAdded)
-class FeatB(isUserAdded: Boolean) : DummyManagerFeature(setOf(FeatA::class), isUserAdded)
-class FeatC(isUserAdded: Boolean) : DummyManagerFeature(setOf(FeatA::class), isUserAdded)
-class FeatD(isUserAdded: Boolean) : DummyManagerFeature(setOf(), isUserAdded)
-class FeatE(isUserAdded: Boolean) : DummyManagerFeature(setOf(FeatB::class), isUserAdded)
-class FeatF(isUserAdded: Boolean) : DummyManagerFeature(setOf(FeatC::class, FeatD::class), isUserAdded)
-class FeatG(isUserAdded: Boolean) : DummyManagerFeature(setOf(FeatE::class, FeatF::class), isUserAdded)
-class FeatH(isUserAdded: Boolean) : DummyManagerFeature(setOf(FeatF::class), isUserAdded)
-
-class FeatAProvider() : FeatureProvider {
-    override val registryName = "A"
-    override val registryClass = FeatA::class
-    override fun createFeature(isUserAdded: Boolean, manager: FeatureManager): Feature = FeatA(isUserAdded)
-}
-class FeatBProvider() : FeatureProvider {
-    override val registryName = "B"
-    override val registryClass = FeatB::class
-    override fun createFeature(isUserAdded: Boolean, manager: FeatureManager): Feature = FeatB(isUserAdded)
-}
-class FeatCProvider() : FeatureProvider {
-    override val registryName = "C"
-    override val registryClass = FeatC::class
-    override fun createFeature(isUserAdded: Boolean, manager: FeatureManager): Feature = FeatC(isUserAdded)
-}
-class FeatDProvider() : FeatureProvider {
-    override val registryName = "D"
-    override val registryClass = FeatD::class
-    override fun createFeature(isUserAdded: Boolean, manager: FeatureManager): Feature = FeatD(isUserAdded)
-}
-class FeatEProvider() : FeatureProvider {
-    override val registryName = "E"
-    override val registryClass = FeatE::class
-    override fun createFeature(isUserAdded: Boolean, manager: FeatureManager): Feature = FeatE(isUserAdded)
-}
-class FeatFProvider() : FeatureProvider {
-    override val registryName = "F"
-    override val registryClass = FeatF::class
-    override fun createFeature(isUserAdded: Boolean, manager: FeatureManager): Feature = FeatF(isUserAdded)
-}
-class FeatGProvider() : FeatureProvider {
-    override val registryName = "G"
-    override val registryClass = FeatG::class
-    override fun createFeature(isUserAdded: Boolean, manager: FeatureManager): Feature = FeatG(isUserAdded)
-}
-class FeatHProvider() : FeatureProvider {
-    override val registryName = "H"
-    override val registryClass = FeatH::class
-    override fun createFeature(isUserAdded: Boolean, manager: FeatureManager): Feature = FeatH(isUserAdded)
+class ExecutionProvider: FeatureProvider {
+    override val registryName: String = "execution"
+    override val registryClass: KClass<out Feature> = ExecutionFeature::class
+    override val featureDependencies: Set<KClass<out Feature>> = emptySet()
+    override fun createFeature(explicitlyRequested: Boolean, manager: FeatureManager): Feature {
+        return ExecutionFeature()
+    }
 }

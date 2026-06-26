@@ -7,12 +7,16 @@ import io.karpfen.io.karpfen.features.FeatureRegistry
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.assertThrows
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.collections.iterator
+import kotlin.collections.mutableMapOf
 import kotlin.reflect.KClass
 import kotlin.test.Test
-import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FeatureManagerTest {
@@ -22,59 +26,81 @@ class FeatureManagerTest {
     @BeforeEach
     fun init() {
         manager = FeatureManager()
-
     }
 
     @Test
     fun testRequestFeatureUpdate() {
-        assertTrue(manager.requestFeatureUpdate())
-        assertFalse(manager.requestFeatureUpdate())
+        val isUpdatingField = manager::class.java.getDeclaredField("isUpdatingFeatures")
+        isUpdatingField.setAccessible(true)
+        assertFalse((isUpdatingField.get(manager) as AtomicBoolean).get())
 
-        manager.unlockFeatureUpdate()
+        val requestUpdateMethod = manager::class.java.getDeclaredMethod("requestFeatureUpdate")
+        requestUpdateMethod.setAccessible(true)
+        assertTrue(requestUpdateMethod.invoke(manager) as Boolean)
+        assertTrue((isUpdatingField.get(manager) as AtomicBoolean).get())
 
-        assertTrue(manager.requestFeatureUpdate())
+        val unlockUpdateMethod = manager::class.java.getDeclaredMethod("unlockFeatureUpdate")
+        unlockUpdateMethod.setAccessible(true)
+        unlockUpdateMethod.invoke(manager)
+        assertFalse((isUpdatingField.get(manager) as AtomicBoolean).get())
+
     }
 
     @Test
     fun testActiveFeatures() {
-        val features = arrayOf<Feature>(
-            object : DummyManagerFeature(setOf(), true) {},
-            object : DummyManagerFeature(setOf(), false) {},
-            object : DummyManagerFeature(setOf(), false) {},
+        val features = setOf<KClass<out Feature>>(
+            FeatA::class,
+            FeatB::class,
+            FeatC::class,
         )
 
-        for (feature in features) {
-            manager.addFeature(feature)
+        for (featureClass in features) {
+            manager.requestFeatureActivation(featureClass)
         }
 
-        val expectedFeatures = features.map {feature -> feature::class}
+        for (featureClass in features) {
+            val feature = manager.getActiveFeature(featureClass)
+            assertNotNull(feature)
+            assertEquals(featureClass, feature::class)
+        }
+
         val managerFeatures = manager.getActiveFeaturesClasses();
 
-        assertTrue(expectedFeatures.size == managerFeatures.size && managerFeatures.containsAll(expectedFeatures) && expectedFeatures.containsAll(managerFeatures))
+        assertTrue(features.size == managerFeatures.size && managerFeatures.containsAll(features) && features.containsAll(managerFeatures))
 
     }
 
     @Test
     fun testIndependentFeatures() {
-        val features = arrayOf<Feature>(
-            object : DummyManagerFeature(setOf(), true) {},
-            object : DummyManagerFeature(setOf(), false) {},
-            object : DummyManagerFeature(setOf(), false) {},
+        val features = arrayOf<KClass<out Feature>>(
+            FeatA::class,
+            FeatD::class
         )
 
         for (feature in features) {
-            assertTrue(manager.addFeature(feature))
-            assertFalse(manager.addFeature(feature))
+            assertTrue(manager.requestFeatureActivation(feature))
+            assertFalse(manager.requestFeatureActivation(feature))
         }
+        
+        val dependantsField = manager::class.java.getDeclaredField("localDependantsRegistry")
+        dependantsField.setAccessible(true)
+        @Suppress("UNCHECKED_CAST")
+        val dependantsMap = dependantsField.get(manager) as MutableMap<KClass<out Feature>, MutableSet<KClass<out Feature>>>
 
-        for (feature in features) {
-            assertEquals(0, feature.dependants.size)
+        val activeFeaturesField = manager::class.java.getDeclaredField("activeFeatureRegistry")
+        activeFeaturesField.setAccessible(true)
+        @Suppress("UNCHECKED_CAST")
+        val activeFeatureRegistry = activeFeaturesField.get(manager) as ConcurrentHashMap<KClass<out Feature>, Feature>
+
+        for (featureClass in features) {
+            val dependants = dependantsMap[featureClass] ?: emptySet()
+            assertEquals(0, dependants.size)
         }
 
         for (i in features.size downTo 1) {
-            assertEquals(i, manager.activeFeatureRegistry.size)
-            assertTrue(manager.removeFeature(features[i - 1]))
-            assertFalse(manager.removeFeature(features[i - 1]))
+            assertEquals(i, activeFeatureRegistry.size)
+            assertTrue(manager.requestFeatureDeactivation(features[i - 1]))
+            assertFalse(manager.requestFeatureDeactivation(features[i - 1]))
         }
     }
 
@@ -97,53 +123,69 @@ class FeatureManagerTest {
              \     /     \
              |FeatG|   |FeatH| */
 
-
-        val featA = FeatureFactory.createFeature(FeatA::class, true, manager)
-        val featG = FeatureFactory.createFeature(FeatG::class, true, manager)
-        val featH = FeatureFactory.createFeature(FeatH::class, true, manager)
+        val dependantsField = manager::class.java.getDeclaredField("localDependantsRegistry")
+        dependantsField.setAccessible(true)
+        @Suppress("UNCHECKED_CAST")
+        val dependantsMap = dependantsField.get(manager) as MutableMap<KClass<out Feature>, MutableSet<KClass<out Feature>>>
 
         fun generateDependencyTree() {
             //Simulate addition of A, G, H
-            manager.addFeature(featA)
-            manager.addFeature(featG)
-            manager.addFeature(featH)
+            manager.requestFeatureActivation(FeatA::class)
+            manager.requestFeatureActivation(FeatG::class)
+            manager.requestFeatureActivation(FeatH::class)
 
             //Check if Dependency tree is correct
-            assertEquals(setOf<KClass<out Feature>>(FeatA::class, FeatB::class, FeatC::class, FeatD::class, FeatE::class, FeatF::class, FeatG::class, FeatH::class), manager.activeFeatureRegistry.keys)
+            assertEquals(setOf<KClass<out Feature>>(FeatA::class, FeatB::class, FeatC::class, FeatD::class, FeatE::class, FeatF::class, FeatG::class, FeatH::class), manager.getActiveFeaturesClasses())
 
-            for ((featureClass, feature) in manager.activeFeatureRegistry) {
+            for (featureClass in setOf(FeatA::class, FeatB::class, FeatC::class, FeatD::class, FeatE::class, FeatF::class, FeatG::class, FeatH::class)) {
                 when (featureClass) {
                     FeatA::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatB::class, FeatC::class), feature.dependants)
-                        assertTrue(feature.isUserAdded)
+                        assertEquals(setOf<KClass<out Feature>>(FeatB::class, FeatC::class), dependantsMap[featureClass] ?: emptySet())
+                        val feature = manager.getActiveFeature(featureClass)
+                        assertNotNull(feature)
+                        assertTrue(feature.explicitlyRequested)
                     }
                     FeatB::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatE::class), feature.dependants)
-                        assertFalse(feature.isUserAdded)
+                        assertEquals(setOf<KClass<out Feature>>(FeatE::class), dependantsMap[featureClass] ?: emptySet())
+                        val feature = manager.getActiveFeature(featureClass)
+                        assertNotNull(feature)
+                        assertFalse(feature.explicitlyRequested)
                     }
                     FeatC::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatF::class), feature.dependants)
-                        assertFalse(feature.isUserAdded)
+                        assertEquals(setOf<KClass<out Feature>>(FeatF::class), dependantsMap[featureClass] ?: emptySet())
+                        val feature = manager.getActiveFeature(featureClass)
+                        assertNotNull(feature)
+                        assertFalse(feature.explicitlyRequested)
                     }
                     FeatD::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatF::class), feature.dependants)
-                        assertFalse(feature.isUserAdded)
+                        assertEquals(setOf<KClass<out Feature>>(FeatF::class), dependantsMap[featureClass] ?: emptySet())
+                        val feature = manager.getActiveFeature(featureClass)
+                        assertNotNull(feature)
+                        assertFalse(feature.explicitlyRequested)
                     }
                     FeatE::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatG::class), feature.dependants)
-                        assertFalse(feature.isUserAdded)
+                        assertEquals(setOf<KClass<out Feature>>(FeatG::class), dependantsMap[featureClass] ?: emptySet())
+                        val feature = manager.getActiveFeature(featureClass)
+                        assertNotNull(feature)
+                        assertFalse(feature.explicitlyRequested)
                     }
                     FeatF::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatG::class, FeatH::class), feature.dependants)
-                        assertFalse(feature.isUserAdded)
+                        assertEquals(setOf<KClass<out Feature>>(FeatG::class, FeatH::class), dependantsMap[featureClass] ?: emptySet())
+                        val feature = manager.getActiveFeature(featureClass)
+                        assertNotNull(feature)
+                        assertFalse(feature.explicitlyRequested)
                     }
                     FeatG::class -> {
-                        assertEquals(setOf(), feature.dependants)
-                        assertTrue(feature.isUserAdded)
+                        assertEquals(setOf(), dependantsMap[featureClass] ?: emptySet())
+                        val feature = manager.getActiveFeature(featureClass)
+                        assertNotNull(feature)
+                        assertTrue(feature.explicitlyRequested)
                     }
                     FeatH::class -> {
-                        assertEquals(setOf(), feature.dependants)
-                        assertTrue(feature.isUserAdded)
+                        assertEquals(setOf(), dependantsMap[featureClass] ?: emptySet())
+                        val feature = manager.getActiveFeature(featureClass)
+                        assertNotNull(feature)
+                        assertTrue(feature.explicitlyRequested)
                     }
                 }
             }
@@ -153,107 +195,84 @@ class FeatureManagerTest {
         generateDependencyTree()
 
         //Simulate Removal of C
-        var registryBeforeRemoval = manager.activeFeatureRegistry
-
-        assertTrue(manager.removeFeature(manager.getFeature(FeatC::class)!!))
+        assertTrue(manager.requestFeatureDeactivation(FeatC::class))
 
         //Check that only FeatA is still present
-        assertEquals(setOf(FeatA::class), manager.activeFeatureRegistry.keys)
+        assertEquals(setOf(FeatA::class), manager.getActiveFeaturesClasses())
 
-        //Check that all Features have no dependants
-        for ((_, feature) in registryBeforeRemoval) {
-            assertEquals(setOf(), feature.dependants)
-        }
-
+        assertEquals(mutableMapOf<KClass<out Feature>, MutableSet<KClass<out Feature>>>(
+            Pair(FeatA::class, mutableSetOf())
+        ), dependantsMap)
 
 
         //Test2
         generateDependencyTree()
 
         //Simulate Removal of E
-        registryBeforeRemoval = manager.activeFeatureRegistry
+        assertTrue(manager.requestFeatureDeactivation(FeatE::class))
 
-        assertTrue(manager.removeFeature(manager.getFeature(FeatE::class)!!))
+        //Check that only FeatA, FeatC, FeatD, FeatF, FeatH are still present
+        assertEquals(setOf(FeatA::class, FeatC::class, FeatD::class, FeatF::class, FeatH::class), manager.getActiveFeaturesClasses())
 
-        //Check that only B, E and G are missing
-        assertEquals(setOf(FeatA::class, FeatC::class, FeatD::class, FeatF::class, FeatH::class), manager.activeFeatureRegistry.keys)
-
-        //Check that all Features correct dependants
-        for ((featureClass, feature) in registryBeforeRemoval) {
-            when (featureClass) {
-                FeatA::class -> assertEquals(setOf<KClass<out Feature>>(FeatC::class), feature.dependants)
-                FeatB::class -> assertEquals(setOf(), feature.dependants)
-                FeatC::class -> assertEquals(setOf<KClass<out Feature>>(FeatF::class), feature.dependants)
-                FeatD::class -> assertEquals(setOf<KClass<out Feature>>(FeatF::class), feature.dependants)
-                FeatE::class -> assertEquals(setOf(), feature.dependants)
-                FeatF::class -> assertEquals(setOf<KClass<out Feature>>(FeatH::class), feature.dependants)
-                FeatG::class -> assertEquals(setOf(), feature.dependants)
-                FeatH::class -> assertEquals(setOf(), feature.dependants)
-            }
-        }
+        assertEquals(mutableMapOf<KClass<out Feature>, MutableSet<KClass<out Feature>>>(
+            Pair(FeatA::class, mutableSetOf(FeatC::class)),
+            Pair(FeatC::class, mutableSetOf(FeatF::class)),
+            Pair(FeatD::class, mutableSetOf(FeatF::class)),
+            Pair(FeatF::class, mutableSetOf(FeatH::class)),
+        ), dependantsMap)
 
 
         //Test3
         generateDependencyTree()
 
-        //Simulate removal of A
-        registryBeforeRemoval = manager.activeFeatureRegistry
+        //Simulate Removal of A
+        assertTrue(manager.requestFeatureDeactivation(FeatA::class))
 
-        assertTrue(manager.removeFeature(manager.getFeature(FeatA::class)!!))
+        //Check that no feature is still present
+        assertEquals(setOf(), manager.getActiveFeaturesClasses())
 
-        //Check that nothing is present anymore
-        assertEquals(setOf(), manager.activeFeatureRegistry.keys)
-
-        //Check that all Features have no dependants
-        for ((_, feature) in registryBeforeRemoval) {
-            assertEquals(0, feature.dependants.size)
-        }
+        assertEquals(mutableMapOf(), dependantsMap)
     }
 
     @Test
     fun testFeatureFunctionExecution() {
-        val dummyExecutionFeature = DummyExecutionFeature()
-
-        //onAdd
+        //Method execution is simulated by throwing exceptions
+        //onActivate
         var exception: RuntimeException = assertThrows {
-            manager.addFeature(dummyExecutionFeature)
+            manager.requestFeatureActivation(ExecutionFeature::class)
         }
 
-        assertEquals("Simulate Execution of onAdd", exception.message)
+        assertEquals("Simulate Execution of onActivate", exception.message)
 
-        assertDoesNotThrow { manager.addFeature(dummyExecutionFeature) }
+        assertDoesNotThrow { manager.requestFeatureActivation(ExecutionFeature::class) }
 
         //does execute
         exception = assertThrows {
-            manager.executeIfPresent<DummyExecutionFeature> { feature -> feature.execute("additional", "parameters") }
+            manager.executeIfPresent<ExecutionFeature> { feature -> feature.execute("additional", "parameters") }
         }
 
-        assertEquals("Simulate Execution of execute with Parameters ${arrayOf("additional", "parameters").contentToString()}", exception.message)
+        assertEquals("Simulate Execution of execute with Parameters: ${arrayOf("additional", "parameters").contentToString()}", exception.message)
 
         //does receive message
         exception = assertThrows {
-            manager.onMessage(dummyExecutionFeature::class, "test")
+            manager.onMessage(ExecutionFeature::class, "test")
         }
 
         assertEquals("Simulate Execution of onMessage with message: test", exception.message)
 
-        //onRemove
+        //onDeactivate
         exception = assertThrows {
-            manager.removeFeature(dummyExecutionFeature)
+            manager.requestFeatureDeactivation(ExecutionFeature::class)
         }
 
-        assertEquals("Simulate Execution of onRemove", exception.message)
+        assertEquals("Simulate Execution of onDeactivate", exception.message)
 
-        assertDoesNotThrow { manager.removeFeature(dummyExecutionFeature) }
+        assertDoesNotThrow { manager.requestFeatureDeactivation(ExecutionFeature::class) }
 
         //does not execute
-        assertDoesNotThrow { manager.executeIfPresent<DummyExecutionFeature> { feature -> feature.execute() } }
+        assertDoesNotThrow { manager.executeIfPresent<ExecutionFeature> { feature -> feature.execute() } }
 
         //does not receive message
-        exception = assertThrows {
-            manager.onMessage(dummyExecutionFeature::class, "test")
-        }
-
-        assertEquals("${FeatureRegistry.getNameByClass(dummyExecutionFeature::class)} has not been activated", exception.message)
+        assertNull(manager.onMessage(ExecutionFeature::class, "test"))
     }
 }

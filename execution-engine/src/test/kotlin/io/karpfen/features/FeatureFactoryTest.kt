@@ -10,20 +10,24 @@ import kotlin.test.assertEquals
 class FeatureFactoryTest {
 
     val manager = FeatureManager()
-    
+
     @Test
     fun testFeatureCreationClass() {
-        
-        assertEquals(objectMap[0], FeatureFactory.createFeature(objectMap[0]::class, true, manager))
-        assertEquals(objectMap[1], FeatureFactory.createFeature(objectMap[1]::class, true, manager))
-        assertEquals(objectMap[2], FeatureFactory.createFeature(objectMap[2]::class, true, manager))
-        
+
+        var explicitlyRequested = false
+
+        for (featureClass in setOf(FeatA::class, FeatB::class, FeatC::class, FeatD::class, FeatE::class, FeatF::class, FeatG::class, FeatH::class)) {
+            val feature = FeatureFactory.createFeature(featureClass, explicitlyRequested, manager)
+            assertEquals(featureClass, feature::class)
+            assertEquals(explicitlyRequested, feature.explicitlyRequested)
+            explicitlyRequested = !explicitlyRequested
+        }
     }
-    
-    @Test 
+
+    @Test
     fun testMissingRegistryEntries() {
 
-        val featureClass = object: DummyFactoryFeature(true) {}::class
+        val featureClass = object: FeatA(true) {}::class
 
         val exception = assertThrows<IllegalStateException> {
             FeatureFactory.createFeature(featureClass, false, manager)
