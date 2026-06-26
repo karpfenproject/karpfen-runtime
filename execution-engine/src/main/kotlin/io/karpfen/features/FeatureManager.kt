@@ -124,6 +124,13 @@ class FeatureManager {
         return activeFeatureRegistry[featureClass]
     }
 
+    inline fun <reified T: Feature> getActiveFeatureAsClass(): T {
+        val feature = getActiveFeature(T::class) as T?
+        return checkNotNull(feature) {
+            "Feature ${FeatureRegistry.getNameByClass(T::class)} has not been activated"
+        }
+    }
+
     fun getActiveFeaturesClasses(): Set<KClass<out Feature>> {
         return activeFeatureRegistry.keys
     }
