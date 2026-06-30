@@ -115,6 +115,22 @@ object HTTPRoutes {
                 }
             }
 
+            // Force a running machine into a given leaf state and clear its pending events (manual resync).
+            post("/setActiveState") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val modelElement = call.request.queryParameters["modelElement"]
+                        ?: throw IllegalArgumentException("Missing required parameter: modelElement")
+                    val state = call.request.queryParameters["state"]
+                        ?: throw IllegalArgumentException("Missing required parameter: state")
+                    APIService.forceActiveState(envKey, modelElement, state)
+                    call.respond(HttpStatusCode.OK, "")
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
             post("/setEventTtl") {
                 try {
                     val envKey = call.request.queryParameters["envKey"]

@@ -23,6 +23,7 @@ import meta.Metamodel
 import states.JoinTransition
 import states.StateMachine
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.concurrent.thread
 
 class Engine(
@@ -55,6 +56,21 @@ class Engine(
     private var isRunning: Boolean = false
     private var executionThread: Thread? = null
 
+    /**
+     * Called whenever a state machine's active state stack changes (initial state, transition,
+     * split, join, or a forced resync). Carries (modelElementId, full active stack). The environment
+     * uses this to push lightweight "stateChange" updates to the observatory instead of per-tick
+     * trace spam. Invoked on the engine thread.
+     */
+    var onActiveStackChanged: ((String, List<String>) -> Unit)? = null
+
+    /**
+     * Commands to run on the engine thread at the top of a tick, with access to the live [SMContext]s.
+     * Lets external threads (e.g. an HTTP request) safely mutate engine state — the contexts are
+     * otherwise engine-thread-confined and unlocked. Used by [forceActiveState].
+     */
+    private val commandQueue = ConcurrentLinkedQueue<(List<SMContext>) -> Unit>()
+
     /** Per-engine event processor that wraps the shared bus with this engine's identity. */
     val eventProcessor = EventProcessor(engineId, eventBus)
 
@@ -71,6 +87,38 @@ class Engine(
     fun receiveExternalEvent(event: Event) {
         eventPayloadParser.parseInto(event)
         eventProcessor.publishExternalEvent(event)
+    }
+
+    /**
+     * Forces the state machine attached to [modelElementId] into the leaf state [leaf], dropping any
+     * pending events on its domain. The work is queued and executed on the engine thread at the next
+     * tick boundary (the contexts are not visible/safe off-thread). A pure SNAP: the target's
+     * ENTRY/DO blocks are NOT re-run, so it does not publish further events. Unknown ids/states are
+     * logged and ignored (the HTTP layer validates the state name up front for a clean error).
+     */
+    fun forceActiveState(modelElementId: String, leaf: String) {
+        commandQueue.add { contexts ->
+            val ctx = contexts.firstOrNull { it.modelElementId == modelElementId }
+            if (ctx == null) {
+                System.err.println("[Engine $engineId] forceActiveState: no state machine '$modelElementId'")
+                return@add
+            }
+            val newStack = ctx.smQueryHelper.getStateStackForState(leaf)
+            if (newStack.isEmpty()) {
+                System.err.println("[Engine $engineId] forceActiveState: unknown state '$leaf' for '$modelElementId'")
+                return@add
+            }
+            eventBus.clearDomain(modelElementId)
+            // Empty notEnteredSubstack => pure snap, no ENTRY/DO re-run; empty lineage is safe because
+            // the domain bucket was just cleared.
+            ctx.branches = mutableListOf(ctx.newBranch(newStack, mutableListOf(), null, emptySet()))
+            traceLogger?.log(
+                modelElementId,
+                EngineTraceLogger.TraceEventType.INITIAL_STATE,
+                "Forced state: ${newStack.joinToString(" > ")}",
+                mapOf("stack" to newStack.joinToString(","))
+            )
+        }
     }
 
     fun setMessageOutChannel(channel: Channel) {
@@ -168,10 +216,21 @@ class Engine(
         )
         println("[Engine $engineId] Started with ${contexts.size} state machine(s)")
 
+        // Last active stack pushed via onActiveStackChanged, per machine. Starts empty so the initial
+        // state is emitted on the first tick; thereafter only real changes (transition/split/join/
+        // forced resync) fire a push — no per-tick spam.
+        val lastStacks = HashMap<String, List<String>>()
+
         var tickCount = 0L
         while (isRunning) {
             tickCount++
             val tickStart = System.currentTimeMillis()
+
+            // Run queued engine-thread commands (e.g. forced resync) before ticking.
+            while (true) {
+                val cmd = commandQueue.poll() ?: break
+                cmd(contexts)
+            }
 
             // Purge expired events once per tick
             eventProcessor.purgeExpired()
@@ -191,6 +250,13 @@ class Engine(
                     "Tick #$tickCount completed",
                     tickDetails(ctx)
                 )
+
+                // Notify observers only when the active stack actually changed.
+                val cur = ctx.branches.flatMap { it.stateStack }
+                if (cur != lastStacks[ctx.modelElementId]) {
+                    lastStacks[ctx.modelElementId] = cur
+                    onActiveStackChanged?.invoke(ctx.modelElementId, cur)
+                }
             }
 
             val elapsed = System.currentTimeMillis() - tickStart

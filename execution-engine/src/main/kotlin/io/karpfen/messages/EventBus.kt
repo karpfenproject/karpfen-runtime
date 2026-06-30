@@ -132,6 +132,15 @@ class EventBus(
     // ---- Maintenance ------------------------------------------------------
 
     /**
+     * Removes ALL events from a single [domain] bucket regardless of TTL/processing.
+     * Used by the force-set/resync API to drop pending events for one machine so they
+     * cannot immediately transition it away from the snapped state.
+     */
+    fun clearDomain(domain: String) {
+        buckets[domain]?.clear()
+    }
+
+    /**
      * Removes all expired events from every bucket. Should be called periodically,
      * e.g., once per engine tick.
      */

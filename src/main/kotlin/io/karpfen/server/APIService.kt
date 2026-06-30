@@ -22,6 +22,7 @@ import instance.Model
 import io.karpfen.env.DomainListener
 import io.karpfen.env.EnvironmentHandler
 import io.karpfen.env.Observation
+import io.karpfen.io.karpfen.exec.StateMachineQueryHelper
 import meta.Metamodel
 
 object APIService {
@@ -89,6 +90,28 @@ object APIService {
     fun updateEventTtl(envKey: String, ttlMs: Long) {
         assertEnv(envKey)
         EnvironmentHandler.getEnv(envKey)!!.eventTtlMs = ttlMs
+    }
+
+    /**
+     * Forces the state machine [modelElement] of a RUNNING environment into the leaf [state] and clears
+     * its pending events (a manual "resync"). Unlike most setters this requires the env to be active.
+     */
+    fun forceActiveState(envKey: String, modelElement: String, state: String) {
+        val env = EnvironmentHandler.getEnv(envKey)
+            ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        if (!EnvironmentHandler.isActiveEnv(envKey)) {
+            throw IllegalStateException("Environment with key $envKey is not active")
+        }
+        val sm = env.stateMachines[modelElement]
+            ?: throw IllegalArgumentException("No state machine for model element '$modelElement' in environment $envKey")
+        // Validate the leaf up front so an unknown state returns 400 synchronously (the engine-thread
+        // command would otherwise only log it).
+        if (StateMachineQueryHelper(sm).getStateStackForState(state).isEmpty()) {
+            throw IllegalArgumentException("Unknown state '$state' for model element '$modelElement'")
+        }
+        val envThread = EnvironmentHandler.executionThreads[envKey]
+            ?: throw IllegalStateException("Environment with key $envKey has no execution thread")
+        envThread.forceActiveState(modelElement, state)
     }
 
     fun addObjectObservation(envKey: String, clientId: String, objectId: String) {

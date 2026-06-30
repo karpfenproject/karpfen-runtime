@@ -41,6 +41,14 @@ class EngineTraceLogger(
     val logFilePath: String? = null,
     val consoleOutput: Boolean = true
 ) {
+    companion object {
+        /**
+         * Cap on retained in-memory trace entries. Large enough that test
+         * scenarios keep their full history, small enough that a long-running
+         * engine stays bounded (older entries are evicted FIFO).
+         */
+        const val MAX_IN_MEMORY_TRACES = 100_000
+    }
     /**
      * Represents a single trace entry produced by the engine.
      */
@@ -82,11 +90,21 @@ class EngineTraceLogger(
         ENGINE_ERROR
     }
 
-    /** In-memory trace log — thread-safe for concurrent reads/writes. */
-    //FIXME only used for testing so logging into _traces can be disabled in production, otherwise memory leak
-    private val _traces = CopyOnWriteArrayList<TraceEntry>()
+    /**
+     * In-memory trace log, kept only for programmatic inspection (tests read it
+     * via [tracesOfType] / [firedTransitions] / [enteredStates] / [errors]). It
+     * is a BOUNDED ring: appends are O(1) amortised and the oldest entries are
+     * evicted past [MAX_IN_MEMORY_TRACES]. This used to be an unbounded
+     * CopyOnWriteArrayList, which grew without limit and whose O(n) copy-per-add
+     * made the engine tick loop slow to a crawl in long runs (the old FIXME
+     * memory leak). The observatory does NOT read this — it is fed live via
+     * [traceListeners] — so bounding it never affects the live visualisation.
+     * Guarded by [_tracesLock]; reads take a consistent snapshot.
+     */
+    private val _traces = ArrayDeque<TraceEntry>()
+    private val _tracesLock = Any()
 
-    /** External listeners notified on each new trace entry. */
+    /** External listeners notified on each new trace entry (e.g. the observatory push). */
     private val traceListeners = CopyOnWriteArrayList<(TraceEntry) -> Unit>()
 
     private var fileWriter: PrintWriter? = null
@@ -119,7 +137,10 @@ class EngineTraceLogger(
             message = message,
             details = details
         )
-        _traces.add(entry)
+        synchronized(_tracesLock) {
+            _traces.addLast(entry)
+            while (_traces.size > MAX_IN_MEMORY_TRACES) _traces.removeFirst()
+        }
 
         val formatted = entry.format()
 
@@ -152,7 +173,7 @@ class EngineTraceLogger(
      * Returns all trace entries matching the given event type.
      */
     fun tracesOfType(type: TraceEventType): List<TraceEntry> =
-        _traces.filter { it.eventType == type }
+        synchronized(_tracesLock) { _traces.filter { it.eventType == type } }
 
     /**
      * Returns all transitions that were fired, as a list of "fromState -> toState" strings.
@@ -172,7 +193,9 @@ class EngineTraceLogger(
      * Returns all error trace entries.
      */
     fun errors(): List<TraceEntry> =
-        _traces.filter { it.eventType == TraceEventType.ACTION_ERROR || it.eventType == TraceEventType.ENGINE_ERROR }
+        synchronized(_tracesLock) {
+            _traces.filter { it.eventType == TraceEventType.ACTION_ERROR || it.eventType == TraceEventType.ENGINE_ERROR }
+        }
 
     fun close() {
         synchronized(fileLock) {
