@@ -15,6 +15,7 @@
  */
 package io.karpfen.server
 
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
@@ -25,6 +26,7 @@ import io.ktor.server.application.install
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
@@ -221,7 +223,10 @@ object HTTPRoutes {
             }
 
             get("/health") {
-                call.respond(mapOf("status" to "ok"))
+                // Respond with an explicit JSON string + content type. We cannot use
+                // call.respond(map) here because no ContentNegotiation/JSON serializer
+                // plugin is installed, which would make the call fail with a 500.
+                call.respondText("""{"status":"ok"}""", ContentType.Application.Json)
             }
 
             // --- Observatory endpoints ---

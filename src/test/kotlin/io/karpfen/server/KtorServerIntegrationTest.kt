@@ -18,6 +18,12 @@ package io.karpfen.server
 import io.karpfen.env.EnvironmentHandler
 import io.karpfen.websocket.WebSocketMessage
 import io.karpfen.websocket.ClientSessionManager
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -54,6 +60,27 @@ class KtorServerIntegrationTest {
     }
 
     // ========== HTTP API Tests ==========
+
+    @Test
+    fun testHealthEndpointReturnsOkJson() {
+        // Regression test: /health previously responded with a Map via call.respond(),
+        // which failed with HTTP 500 because no ContentNegotiation/JSON serializer is
+        // installed. It must return 200 with the JSON body {"status":"ok"}.
+        val client = HttpClient(CIO)
+        try {
+            runBlocking {
+                val response = client.get("http://127.0.0.1:8081/health")
+                assertEquals(HttpStatusCode.OK, response.status, "Health endpoint should return 200 OK")
+                val body = response.bodyAsText()
+                assertTrue(
+                    body.contains("\"status\"") && body.contains("\"ok\""),
+                    "Health body should be the status JSON, was: $body"
+                )
+            }
+        } finally {
+            client.close()
+        }
+    }
 
     @Test
     fun testCreateEnvironmentReturnsKey() {

@@ -46,6 +46,9 @@ curl -X PUT "http://localhost:8080/setEventDefinitions?envKey=$ENV" -H "Content-
 curl -X PUT "http://localhost:8080/setStateMachine?envKey=$ENV&attachedTo=av-1" -H "Content-Type: text/plain" --data-binary @autonomous_car.kstates
 
 curl -X POST "http://localhost:8080/setTickDelay?envKey=$ENV&milliseconds=300"
+
+# Activate (required before start), then start the engine
+curl -X POST "http://localhost:8080/runEnvironment?envKey=$ENV"
 curl -X POST "http://localhost:8080/startEnvironment?envKey=$ENV"
 ```
 

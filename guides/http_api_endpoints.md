@@ -107,7 +107,7 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
   - `envKey` (string): The environment key
 - **Request Body**: Empty
 - **Response**: Empty (200 OK on success)
-- **Description**: Activates the environment and prepares the execution thread. Must be called after metamodel, model, and at least one state machine are set. Must be called before `/startEnvironment`.
+- **Description**: Activates the environment and creates its execution thread. Requires that the metamodel and model are set (a state machine is normally attached too, though not strictly enforced); otherwise returns `409 Conflict`. Must be called before `/startEnvironment`. Once activated, the environment can no longer be modified by the setup endpoints.
 - **Example**:
   ```bash
   curl -X POST "http://localhost:8080/runEnvironment?envKey=env-123"
@@ -135,6 +135,22 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
 - **Example**:
   ```bash
   curl -X POST "http://localhost:8080/stopEnvironment?envKey=env-123"
+  ```
+
+### Set Active State
+- **Endpoint**: `POST /setActiveState`
+- **Parameters**:
+  - `envKey` (string): The environment key
+  - `modelElement` (string): The model element the target state machine is attached to
+  - `state` (string): The leaf state to force the machine into
+- **Request Body**: Empty
+- **Response**: Empty (200 OK on success)
+- **Description**: Forces a running state machine into the given leaf state and clears its pending events
+  (a manual "resync"). Unlike the setup endpoints, this requires the environment to be **active**
+  (`/runEnvironment` already called). An unknown state for the model element returns `400 Bad Request`.
+- **Example**:
+  ```bash
+  curl -X POST "http://localhost:8080/setActiveState?envKey=env-123&modelElement=robot1&state=observe"
   ```
 
 ## Client Registration
@@ -187,12 +203,57 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
 - **Endpoint**: `GET /health`
 - **Parameters**: None
 - **Request Body**: Empty
-- **Response**: JSON object with status
-- **Description**: Basic health check endpoint to verify server is running.
+- **Response**: `200 OK` with `Content-Type: application/json` and body `{"status":"ok"}`.
+- **Description**: Basic health check endpoint to verify the server is running. Useful as a readiness/liveness probe.
 - **Example**:
   ```bash
-  curl http://localhost:8080/health
-  # Returns: {"status":"ok"}
+  curl -i http://localhost:8080/health
+  # HTTP/1.1 200 OK
+  # Content-Type: application/json
+  # {"status":"ok"}
+  ```
+
+## Observatory
+
+Read-only endpoints for inspecting running environments (used by observatory/monitoring clients). They do
+not modify execution state.
+
+### List Active Environments
+- **Endpoint**: `GET /observatory/environments`
+- **Parameters**: None
+- **Response**: JSON array of active environments, each with its key and the model elements that have a
+  state machine attached.
+- **Example**:
+  ```bash
+  curl http://localhost:8080/observatory/environments
+  # Returns: [{"envKey":"env-123","modelElements":["robot1"]}]
+  ```
+
+### Get State Machine Source
+- **Endpoint**: `GET /observatory/statemachine`
+- **Parameters**:
+  - `envKey` (string): The environment key
+  - `modelElement` (string): The model element the state machine is attached to
+- **Response**: String — the original `.kstates` source uploaded via `/setStateMachine`.
+- **Description**: Returns `400 Bad Request` if no state machine source is registered for the element.
+- **Example**:
+  ```bash
+  curl "http://localhost:8080/observatory/statemachine?envKey=env-123&modelElement=robot1"
+  ```
+
+### Register Observatory Client
+- **Endpoint**: `POST /observatory/registerClient`
+- **Parameters**:
+  - `clientId` (string): Unique identifier for the client
+  - `envKey` (string): The environment key
+  - `modelElement` (string): The model element to observe
+- **Response**: String (access key for WebSocket authentication)
+- **Description**: Registers a client to receive observatory trace and state updates for a model element
+  over WebSocket. Like `/registerClientForWebSocket`, the returned access key is used for the WebSocket
+  authentication handshake.
+- **Example**:
+  ```bash
+  curl -X POST "http://localhost:8080/observatory/registerClient?clientId=monitor1&envKey=env-123&modelElement=robot1"
   ```
 
 ## WebSocket Connection
