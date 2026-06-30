@@ -128,6 +128,11 @@ class FeatureManagerTest {
         @Suppress("UNCHECKED_CAST")
         val dependantsMap = dependantsField.get(manager) as MutableMap<KClass<out Feature>, MutableSet<KClass<out Feature>>>
 
+        val explicitlyRequestedField = manager::class.java.getDeclaredField("explicitlyRequestedFeatures")
+        explicitlyRequestedField.setAccessible(true)
+        @Suppress("UNCHECKED_CAST")
+        val explicitlyRequestedRegistry = explicitlyRequestedField.get(manager) as  Set<KClass<out Feature>>
+
         fun generateDependencyTree() {
             //Simulate addition of A, G, H
             manager.requestFeatureActivation(FeatA::class)
@@ -143,49 +148,49 @@ class FeatureManagerTest {
                         assertEquals(setOf<KClass<out Feature>>(FeatB::class, FeatC::class), dependantsMap[featureClass] ?: emptySet())
                         val feature = manager.getActiveFeature(featureClass)
                         assertNotNull(feature)
-                        assertTrue(feature.explicitlyRequested)
+                        assertTrue(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatB::class -> {
                         assertEquals(setOf<KClass<out Feature>>(FeatE::class), dependantsMap[featureClass] ?: emptySet())
                         val feature = manager.getActiveFeature(featureClass)
                         assertNotNull(feature)
-                        assertFalse(feature.explicitlyRequested)
+                        assertFalse(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatC::class -> {
                         assertEquals(setOf<KClass<out Feature>>(FeatF::class), dependantsMap[featureClass] ?: emptySet())
                         val feature = manager.getActiveFeature(featureClass)
                         assertNotNull(feature)
-                        assertFalse(feature.explicitlyRequested)
+                        assertFalse(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatD::class -> {
                         assertEquals(setOf<KClass<out Feature>>(FeatF::class), dependantsMap[featureClass] ?: emptySet())
                         val feature = manager.getActiveFeature(featureClass)
                         assertNotNull(feature)
-                        assertFalse(feature.explicitlyRequested)
+                        assertFalse(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatE::class -> {
                         assertEquals(setOf<KClass<out Feature>>(FeatG::class), dependantsMap[featureClass] ?: emptySet())
                         val feature = manager.getActiveFeature(featureClass)
                         assertNotNull(feature)
-                        assertFalse(feature.explicitlyRequested)
+                        assertFalse(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatF::class -> {
                         assertEquals(setOf<KClass<out Feature>>(FeatG::class, FeatH::class), dependantsMap[featureClass] ?: emptySet())
                         val feature = manager.getActiveFeature(featureClass)
                         assertNotNull(feature)
-                        assertFalse(feature.explicitlyRequested)
+                        assertFalse(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatG::class -> {
                         assertEquals(setOf(), dependantsMap[featureClass] ?: emptySet())
                         val feature = manager.getActiveFeature(featureClass)
                         assertNotNull(feature)
-                        assertTrue(feature.explicitlyRequested)
+                        assertTrue(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatH::class -> {
                         assertEquals(setOf(), dependantsMap[featureClass] ?: emptySet())
                         val feature = manager.getActiveFeature(featureClass)
                         assertNotNull(feature)
-                        assertTrue(feature.explicitlyRequested)
+                        assertTrue(explicitlyRequestedRegistry.contains(featureClass))
                     }
                 }
             }

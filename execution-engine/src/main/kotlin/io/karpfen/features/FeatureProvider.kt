@@ -20,5 +20,5 @@ interface FeatureProvider {
     //Either for usage in constructor or general functionality
     val featureDependencies: Set<KClass<out Feature>>
 
-    fun createFeature(explicitlyRequested: Boolean, manager: FeatureManager): Feature
+    fun createFeature(manager: FeatureManager): Feature
 }

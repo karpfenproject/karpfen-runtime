@@ -11,10 +11,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.time.Duration.Companion.milliseconds
@@ -24,7 +22,7 @@ class TickByTickTest {
     @Test
     fun testTickByTickCreation() {
         val tickByTick = assertDoesNotThrow {
-            FeatureFactory.createFeature(TickByTickFeature::class, true, FeatureManager())
+            FeatureFactory.createFeature(TickByTickFeature::class, FeatureManager())
         }
 
         assertTrue(tickByTick is TickByTickFeature)
@@ -42,7 +40,7 @@ class TickByTickTest {
 
     @Test
     fun testTickByTickCallbacks() {
-        val tickByTick = FeatureFactory.createFeature(TickByTickFeature::class, true, FeatureManager()) as TickByTickFeature
+        val tickByTick = FeatureFactory.createFeature(TickByTickFeature::class, FeatureManager()) as TickByTickFeature
 
         val isPausedField = tickByTick::class.java.getDeclaredField("isPaused")
         isPausedField.setAccessible(true)
@@ -113,7 +111,7 @@ class TickByTickTest {
 
     @Test
     fun testTickByTickHalting() = runTest {
-        val tickByTick = FeatureFactory.createFeature(TickByTickFeature::class, true, FeatureManager()) as TickByTickFeature
+        val tickByTick = FeatureFactory.createFeature(TickByTickFeature::class, FeatureManager()) as TickByTickFeature
 
         var tickCounter = 0
 

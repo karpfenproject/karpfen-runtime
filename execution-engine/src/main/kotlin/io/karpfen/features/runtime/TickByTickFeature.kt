@@ -7,7 +7,7 @@ import io.karpfen.io.karpfen.features.FeatureProvider
 import java.util.concurrent.Semaphore
 import kotlin.reflect.KClass
 
-class TickByTickFeature(explicitlyRequested: Boolean) : DefaultFeature(explicitlyRequested) {
+class TickByTickFeature : DefaultFeature() {
 
     private val semaphore = Semaphore(0)
 
@@ -68,9 +68,9 @@ class TickByTickProvider : FeatureProvider {
 
     override val registryClass = TickByTickFeature::class
 
-    override val featureDependencies: Set<KClass<out Feature>> = mutableSetOf()
+    override val featureDependencies: Set<KClass<out Feature>> = emptySet()
 
-    override fun createFeature(explicitlyRequested: Boolean, manager: FeatureManager): Feature {
-        return TickByTickFeature(explicitlyRequested)
+    override fun createFeature(manager: FeatureManager): Feature {
+        return TickByTickFeature()
     }
 }

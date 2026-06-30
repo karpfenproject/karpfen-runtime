@@ -42,7 +42,7 @@ object FeatureRegistry {
     }
 
     fun getNameByClass(featureClass: KClass<out Feature>): String? {
-        return classToNameRegistry[featureClass]
+        return classToNameRegistry[featureClass] ?: featureClass.simpleName
     }
 
     fun getClassByName(featureName: String): KClass<out Feature>? {
@@ -62,7 +62,7 @@ object FeatureRegistry {
         fun depthFirstSearch(currentClass: KClass<out Feature>) {
 
             if (visiting.contains(currentClass)) {
-                throw IllegalStateException("Cyclic dependency detected: ${currentClass.simpleName}")
+                throw IllegalStateException("Cyclic dependency detected at: ${getNameByClass(currentClass)}")
             }
 
             if (visited.contains(currentClass)) return

@@ -33,7 +33,7 @@ class FeatureRegistryTest {
         assertNotNull(FeatureRegistry.getProviderByClass(FeatG::class))
         assertNotNull(FeatureRegistry.getProviderByClass(FeatH::class))
 
-        assertNull(FeatureRegistry.getProviderByClass(object : FeatA(true) {}::class))
+        assertNull(FeatureRegistry.getProviderByClass(object : FeatA() {}::class))
 
         assertEquals(FeatAProvider::class, FeatureRegistry.getProviderByClass(FeatA::class)!!::class)
         assertEquals(FeatBProvider::class, FeatureRegistry.getProviderByClass(FeatB::class)!!::class)
@@ -57,7 +57,7 @@ class FeatureRegistryTest {
         assertNotNull(FeatureRegistry.getNameByClass(FeatG::class))
         assertNotNull(FeatureRegistry.getNameByClass(FeatH::class))
 
-        assertNull(FeatureRegistry.getNameByClass(object : FeatA(true) {}::class))
+        assertNull(FeatureRegistry.getNameByClass(object : FeatA() {}::class))
 
         assertEquals("A", FeatureRegistry.getNameByClass(FeatA::class))
         assertEquals("B", FeatureRegistry.getNameByClass(FeatB::class))

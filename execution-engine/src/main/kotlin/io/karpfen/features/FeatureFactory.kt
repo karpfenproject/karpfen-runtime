@@ -8,11 +8,11 @@ import kotlin.reflect.KClass
 
 object FeatureFactory {
 
-    fun createFeature(featureClass: KClass<out Feature>, explicitlyRequested: Boolean, manager: FeatureManager): Feature {
+    fun createFeature(featureClass: KClass<out Feature>, manager: FeatureManager): Feature {
         val featureProvider = FeatureRegistry.getProviderByClass(featureClass)
 
-        check(featureProvider !== null) {"${FeatureRegistry.getNameByClass(featureClass)} has no corresponding feature provider"}
+        check(featureProvider != null) {"${FeatureRegistry.getNameByClass(featureClass)} has no corresponding feature provider"}
 
-        return featureProvider.createFeature(explicitlyRequested, manager)
+        return featureProvider.createFeature(manager)
     }
 }

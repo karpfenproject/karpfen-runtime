@@ -6,6 +6,7 @@ import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.FeatureRegistry
 import org.junit.jupiter.api.assertThrows
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.collections.mutableSetOf
 import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -22,13 +23,9 @@ class FeatureFactoryTest {
         @Suppress("UNCHECKED_CAST")
         val activeFeaturesRegistry = activeFeaturesField.get(manager) as ConcurrentHashMap<KClass<out Feature>, Feature>
 
-        var explicitlyRequested = false
-
         for (featureClass in setOf(FeatA::class, FeatB::class, FeatC::class, FeatD::class, FeatE::class, FeatF::class, FeatG::class, FeatH::class)) {
-            val feature = FeatureFactory.createFeature(featureClass, explicitlyRequested, manager)
+            val feature = FeatureFactory.createFeature(featureClass, manager)
             assertEquals(featureClass, feature::class)
-            assertEquals(explicitlyRequested, feature.explicitlyRequested)
-            explicitlyRequested = !explicitlyRequested
             activeFeaturesRegistry[featureClass] = feature
         }
     }
@@ -36,10 +33,10 @@ class FeatureFactoryTest {
     @Test
     fun testMissingRegistryEntries() {
 
-        val featureClass = object: FeatA(true) {}::class
+        val featureClass = object: FeatA() {}::class
 
         val exception = assertThrows<IllegalStateException> {
-            FeatureFactory.createFeature(featureClass, false, manager)
+            FeatureFactory.createFeature(featureClass, manager)
         }
 
         assertEquals("${FeatureRegistry.getNameByClass(featureClass)} has no corresponding feature provider", exception.message)
