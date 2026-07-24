@@ -6,10 +6,12 @@ Lightweight runtime server for Karpfen models with an HTTP API and WebSocket sup
 
 ## Runtime Guides
 
-- [Documentation Index](guides/INDEX.md)
-- [Getting Started](guides/GETTING_STARTED.md)
-- [HTTP API Endpoints](guides/HTTP_API_ENDPOINTS.md)
-- [Quick Reference](guides/QUICK_REFERENCE.md)
+- [Documentation Index](guides/index.md)
+- [Getting Started](guides/getting_started.md)
+- [HTTP API Endpoints](guides/http_api_endpoints.md)
+- [Quick Reference](guides/quick_reference.md)
+- [State Machine Execution Semantics](guides/statemachine_execution_semantics.md)
+- [Examples](examples/README.md)
 
 ## DSL Tool Guides
 
@@ -27,4 +29,4 @@ Licensed under the Apache License, Version 2.0. See `LICENSE` for details.
 
 ---
 
-*Parts of this poject have been developed with the help of generative AI*.
+*Parts of this project have been developed with the help of generative AI*.

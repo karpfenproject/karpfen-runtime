@@ -295,7 +295,10 @@ class ClientSessionManager {
         subscriptionsLock.readLock().lock()
         try {
             observatorySubscriptions[environmentKey]?.forEach { (clientId, subscribedElement) ->
-                if (subscribedElement == modelElementId) {
+                // "*" subscribes to every model element of the environment (the observatory
+                // dashboard observes all charts over a single connection and routes each trace
+                // by its modelElementId); otherwise deliver only the exactly-subscribed element.
+                if (subscribedElement == "*" || subscribedElement == modelElementId) {
                     val message = OutgoingMessage(
                         environmentKey,
                         clientId,

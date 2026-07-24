@@ -27,38 +27,45 @@ Gradle is included via wrapper (`gradlew` on Linux/Mac, `gradlew.bat` on Windows
 
 ```text
 karpfen-runtime/
-├── src/main/kotlin/io/karpfen/
-│   ├── Main.kt                           # Application entry point
-│   ├── config/
-│   │   └── ApplicationConfig.kt          # Configuration loader
-│   ├── server/
-│   │   ├── KtorServer.kt                 # HTTP & WebSocket server
-│   │   ├── HTTPRoutes.kt                 # HTTP endpoint definitions
-│   │   └── APIService.kt                 # Business logic
-│   ├── env/
-│   │   ├── Environment.kt                # Environment data model
-│   │   ├── EnvironmentHandler.kt         # Lifecycle management
-│   │   ├── EnvironmentThread.kt          # Execution engine thread
-│   │   ├── Observation.kt                # Object observation model
-│   │   ├── DomainListener.kt             # Domain listener model
-│   │   └── ActiveEnvironment.kt          # Active environment wrapper
-│   └── websocket/
-│       ├── WebSocketManager.kt           # (deprecated) Legacy WebSocket manager
-│       ├── WebSocketMessage.kt           # Message data model
-│       ├── ClientSession.kt              # Client session model
-│       ├── ClientSessionManager.kt       # Session lifecycle management
-│       └── WebSocketBroadcaster.kt       # Async message broadcaster
+├── src/main/kotlin/
+│   ├── Main.kt                           # Application entry point (root package; main class MainKt)
+│   └── io/karpfen/
+│       ├── config/
+│       │   └── ApplicationConfig.kt      # Configuration loader
+│       ├── server/
+│       │   ├── KtorServer.kt             # HTTP & WebSocket server
+│       │   ├── HTTPRoutes.kt             # HTTP endpoint definitions
+│       │   └── APIService.kt             # Business logic
+│       ├── env/
+│       │   ├── Environment.kt            # Environment data model
+│       │   ├── EnvironmentHandler.kt     # Lifecycle management (singleton)
+│       │   ├── EnvironmentThread.kt      # Execution engine thread
+│       │   ├── Observation.kt            # Object observation model
+│       │   ├── DomainListener.kt         # Domain listener model
+│       │   └── ActiveEnvironment.kt      # Active environment wrapper
+│       └── websocket/
+│           ├── WebSocketMessage.kt       # Incoming message data model
+│           ├── ClientSession.kt          # Client session + OutgoingMessage model
+│           ├── ClientSessionManager.kt   # Session & subscription lifecycle management
+│           └── WebSocketBroadcaster.kt   # Async message broadcaster
 ├── src/test/kotlin/io/karpfen/server/
-│   └── KtorServerIntegrationTest.kt      # Integration tests
-├── execution-engine/                     # Engine module (separate)
-├── karpfen-dsl-tools/                    # DSL tools module (separate)
+│   ├── KtorServerIntegrationTest.kt      # HTTP/WebSocket server integration tests
+│   ├── EndToEndIntegrationTest.kt        # Full environment lifecycle tests
+│   ├── SystemTest.kt                     # End-to-end system tests
+│   └── MockWebSocketSession.kt           # Test helper
+├── execution-engine/                     # Engine module (separate Gradle subproject)
+├── karpfen-dsl-tools/                    # DSL tools module (git submodule)
+├── examples/                             # Runnable example scenarios
 ├── build.gradle                          # Main module config
 ├── application.conf                      # Server configuration
-├── guides/
-│   ├── INDEX.md
-│   ├── QUICK_REFERENCE.md
-│   ├── GETTING_STARTED.md                # This file
-│   └── HTTP_API_ENDPOINTS.md
+├── run_local.sh / run_docker.sh          # Convenience launch scripts
+├── Dockerfile                            # Multi-stage build (builder + Debian runtime)
+└── guides/
+    ├── index.md
+    ├── quick_reference.md
+    ├── getting_started.md                # This file
+    ├── http_api_endpoints.md
+    └── statemachine_execution_semantics.md
 ```
 
 ## Build and Run
@@ -67,7 +74,9 @@ The recommended way to start the server is via the provided shell scripts.  They
 
 ### Option A – Local (native Java + Python)
 
-**Prerequisites:** Java 21+, Python 3.12+
+**Prerequisites:** Java 21+, Python 3.12+. The engine shells out to Python for `EVAL`/`MACRO` blocks; if
+your models use scientific libraries (the bundled examples use `numpy` and the standard-library `random`/`math`),
+install them too: `pip install numpy scipy sympy pandas regex python-dateutil chardet`.
 
 ```bash
 # from the karpfen-runtime/ directory
@@ -91,7 +100,7 @@ Builds the distribution with `./gradlew installDist` and starts `./build/install
 ./run_docker.sh [HOST_LOG_DIR]
 ```
 
-Multi-stage build: a `eclipse-temurin:21-jdk` builder stage compiles the project; the resulting distribution is copied into a `debian:trixie-slim` runtime stage that installs only `openjdk-21-jre-headless` and `python3`.  The container is started with `--rm` and removed automatically on exit.
+Multi-stage build: a `eclipse-temurin:21-jdk` builder stage compiles the project; the resulting distribution is copied into a `debian:trixie-slim` runtime stage that installs `openjdk-21-jre-headless`, `python3`/`python3-pip`, and the Python libraries the engine's `EVAL`/`MACRO` blocks commonly use (`numpy`, `scipy`, `sympy`, `pandas`, `regex`, `python-dateutil`, `chardet`).  The container is started with `--rm` and removed automatically on exit.
 
 `HOST_LOG_DIR` is an optional host path where engine trace log files are written (default: `./logs` relative to `karpfen-runtime/`).  See [Trace Logging](#trace-logging) below.
 
@@ -102,9 +111,12 @@ Multi-stage build: a `eclipse-temurin:21-jdk` builder stage compiles the project
 ./gradlew run
 ```
 
-Direct JAR execution:
+To run outside Gradle, build the distribution and launch the generated start script (this puts all
+dependencies on the classpath — the plain `build/libs/*.jar` is a thin jar and is *not* runnable on its
+own):
 ```bash
-java -jar build/libs/karpfen-runtime-1.0-SNAPSHOT.jar
+./gradlew installDist
+./build/install/karpfen-runtime/bin/karpfen-runtime        # karpfen-runtime.bat on Windows
 ```
 
 Default server URL: `http://127.0.0.1:8080`
@@ -140,16 +152,23 @@ logging {
 
 # ── Engine ------------------------------------------------------------------
 engine {
-  defaultTickDelayMs = 1000
+  defaultTickDelayMs     = 1000   # 0 busy-loops a core; keep a small positive value
+  defaultEventTtlMs      = 1000   # 0 = events live forever
+  eventConsumptionOnFire = true   # true: consume only when a transition fires
 }
 
 # ── Engine Tracing ----------------------------------------------------------
 engineTracing {
-  tracingEnabled      = false
-  tracingLogDirectory = "logs"   # local: relative path; Docker: "/app/logs"
+  tracingEnabled       = false
+  tracingLogDirectory  = "logs"   # local: relative path; Docker: "/app/logs"
   tracingConsoleOutput = false
+  simpleTrace          = true     # compact observatory trace messages
 }
 ```
+
+> The `application.conf` shipped in the repository overrides some of these code defaults (for example
+> `defaultTickDelayMs = 50`, `defaultEventTtlMs = 3000`, `logging.consoleOutput = false`). The values
+> above are the built-in fallbacks used when a key is absent.
 
 ### Configuration options
 
@@ -161,10 +180,13 @@ engineTracing {
 | `websocket.queueTimeoutMs` | Long | `1000` | Message queue drain timeout (ms). |
 | `logging.level` | String | `"INFO"` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `logging.consoleOutput` | Boolean | `true` | Print log lines to stdout. |
-| `engine.defaultTickDelayMs` | Int | `1000` | Default tick delay (ms) for new environments (overridable via `/setTickDelay`). |
+| `engine.defaultTickDelayMs` | Int | `1000` | Default tick delay (ms) for new environments (overridable via `/setTickDelay`). `0` makes the loop busy-spin a core. |
+| `engine.defaultEventTtlMs` | Long | `1000` | Default event time-to-live (ms) for new environments (overridable via `/setEventTtl`). `0` = events live forever. |
+| `engine.eventConsumptionOnFire` | Boolean | `true` | When `true`, events are consumed only when a transition fires; when `false`, they are consumed as soon as their condition is evaluated. |
 | `engineTracing.tracingEnabled` | Boolean | `false` | Write per-environment execution trace log files. |
 | `engineTracing.tracingLogDirectory` | String | `null` | Directory for trace log files (see below). |
 | `engineTracing.tracingConsoleOutput` | Boolean | `false` | Also print trace lines to stdout. |
+| `engineTracing.simpleTrace` | Boolean | `true` | When `true`, observatory WebSocket trace messages use a compact format (short message, no details map). |
 
 ### Trace logging
 
@@ -202,7 +224,7 @@ Then start with a custom log location:
 
 ## API Overview
 
-The API is organized into three categories:
+The API is organized into four categories:
 
 ### Environment Setup
 - `POST /createEnvironment` - Create new environment
@@ -211,17 +233,29 @@ The API is organized into three categories:
 - `PUT /setEventDefinitions` - Upload event payload definitions (optional)
 - `PUT /setStateMachine` - Upload state machine
 - `POST /setTickDelay` - Configure execution tick delay
+- `POST /setEventTtl` - Configure event time-to-live
 
 ### Execution Control
-- `POST /startEnvironment` - Start execution engine
-- `POST /stopEnvironment` - Stop execution engine
+- `POST /runEnvironment` - **Activate** the environment and create its execution thread (required before start)
+- `POST /startEnvironment` - Start the execution engine thread
+- `POST /stopEnvironment` - Stop the execution engine
+- `POST /setActiveState` - Force a running state machine into a given leaf state (manual resync)
 
 ### Client Registration
 - `POST /registerClientForWebSocket` - Get WebSocket access key
 - `POST /registerObjectObserver` - Subscribe to object changes
 - `POST /registerDomainListener` - Subscribe to domain events
 
-For complete endpoint reference with examples, see [HTTP_API_ENDPOINTS.md](HTTP_API_ENDPOINTS.md).
+### Observatory (read-only inspection)
+- `GET /observatory/environments` - List active environments and their state-machine model elements
+- `GET /observatory/statemachine` - Fetch the `.kstates` source for a model element
+- `POST /observatory/registerClient` - Register for observatory trace/state updates over WebSocket
+
+> **Lifecycle note:** `/runEnvironment` requires the metamodel and model to be set (you normally attach a
+> state machine too) and must be called **before** `/startEnvironment`. Calling `/startEnvironment` first
+> returns a `409 Conflict`. Once an environment is activated it can no longer be modified by the setup endpoints.
+
+For complete endpoint reference with examples, see [http_api_endpoints.md](http_api_endpoints.md).
 
 ## WebSocket Communication
 
@@ -260,12 +294,18 @@ ws.onopen = () => {
 Here `environmentKey` is the event domain, `messageType` is both the event name and its payload type, and `payload` may be empty, a JSON object, or a kmodel `make object` block. The optional `payloadFormat` (`none`/`json`/`kmodel`) is guessed from the payload when omitted. Payload types are declared via `/setEventDefinitions`.
 
 ### Incoming notifications
-Subscribed clients receive data change notifications:
+
+All outgoing notifications share the shape
+`{"environmentKey": "...", "clientId": "...", "messageType": "...", "payload": ...}`, where `payload`
+is a JSON value whose contents depend on `messageType`.
+
+Object observers (`/registerObjectObserver`) receive `objectChanged` when an observed object's value changes:
 ```json
 {
+  "environmentKey": "env-123",
   "clientId": "client1",
   "messageType": "objectChanged",
-  "payload": "{\"objectId\":\"obj1\",\"value\":...}"
+  "payload": {"objectId": "obj1", "value": ...}
 }
 ```
 
@@ -273,9 +313,21 @@ When an object is removed from the model (e.g. by a `DROPOBJ` action, which also
 object's embedded subtree), subscribers receive a deletion notification instead:
 ```json
 {
+  "environmentKey": "env-123",
   "clientId": "client1",
   "messageType": "objectDeleted",
-  "payload": "{\"objectId\":\"obj1\"}"
+  "payload": {"objectId": "obj1"}
+}
+```
+
+Domain listeners (`/registerDomainListener`) receive `domainEvent` when an event is published on a
+subscribed domain:
+```json
+{
+  "environmentKey": "env-123",
+  "clientId": "client1",
+  "messageType": "domainEvent",
+  "payload": {"domain": "robot_events", "payload": ...}
 }
 ```
 
@@ -328,8 +380,12 @@ curl -X POST "http://localhost:8080/registerObjectObserver?envKey=$ENV_KEY&clien
 curl -X POST "http://localhost:8080/registerDomainListener?envKey=$ENV_KEY&clientId=client1&domain=robot_domain"
 ```
 
-### 5. Start environment
+### 5. Activate and start environment
 ```bash
+# Activate: validates the environment and creates its execution thread (required before start)
+curl -X POST "http://localhost:8080/runEnvironment?envKey=$ENV_KEY"
+
+# Start the execution thread
 curl -X POST "http://localhost:8080/startEnvironment?envKey=$ENV_KEY"
 echo "Environment started"
 ```
@@ -388,11 +444,11 @@ build/reports/tests/test/index.html
 ```
 Main.kt
 ├── Load ApplicationConfig from application.conf
-├── Initialize EnvironmentHandler (singleton)
-├── Initialize ClientSessionManager (singleton)
-├── Start WebSocketBroadcaster thread
+├── Apply engine + tracing config to EnvironmentHandler (singleton; owns the ClientSessionManager)
+├── Create KtorServer
+├── Start WebSocketBroadcaster thread (only if websocket.enabled = true)
 └── Start KtorServer
-    ├── Configure HTTP routes
+    ├── Configure HTTP routes (+ CORS)
     └── Configure WebSocket endpoint
 ```
 
@@ -458,9 +514,19 @@ curl http://localhost:8080/health
 curl -X POST http://localhost:8080/createEnvironment
 ```
 
+### `/startEnvironment` returns 409 Conflict
+
+The environment was not activated first. Call `/runEnvironment?envKey=...` (after the metamodel, model,
+and at least one state machine are set) before `/startEnvironment`.
+
+### Cannot upload metamodel/model/state machine (409 Conflict)
+
+The environment is already active. Setup endpoints are rejected once `/runEnvironment` has been called —
+create a fresh environment to change its configuration.
+
 ### Messages not received after WebSocket connection
 
-1. Ensure environment has been started with `/startEnvironment`
+1. Ensure the environment was activated (`/runEnvironment`) and started (`/startEnvironment`)
 2. Verify client is subscribed to correct domain/object
 3. Check that execution engine is processing events (look at console output)
 

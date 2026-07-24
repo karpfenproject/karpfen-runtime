@@ -5,7 +5,7 @@ a state machine (`*.kstates`), and — where the scenario uses events with struc
 definitions (`EVENTS.kmeta`). Every folder has its own `README.md` with run instructions.
 
 For the DSL and engine semantics these examples rely on, see
-[`../guides/STATEMACHINE_EXECUTION_SEMANTICS.md`](../guides/STATEMACHINE_EXECUTION_SEMANTICS.md).
+[`../guides/statemachine_execution_semantics.md`](../guides/statemachine_execution_semantics.md).
 
 | Example | Domain | Feature focus |
 |---------|--------|---------------|

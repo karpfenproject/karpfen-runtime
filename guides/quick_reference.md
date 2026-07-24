@@ -25,20 +25,29 @@ Default URLs:
 
 ## Available HTTP Endpoints
 
-| Method | Endpoint |
-|--------|----------|
-| POST | `/createEnvironment` |
-| PUT | `/setMetamodel?envKey=...` |
-| PUT | `/setModel?envKey=...` |
-| PUT | `/setEventDefinitions?envKey=...` |
-| PUT | `/setStateMachine?envKey=...&attachedTo=...` |
-| POST | `/setTickDelay?envKey=...&milliseconds=...` |
-| POST | `/registerObjectObserver?envKey=...&clientId=...&objectId=...` |
-| POST | `/registerDomainListener?envKey=...&clientId=...&domain=...` |
-| POST | `/registerClientForWebSocket?clientId=...&envKey=...` |
-| POST | `/startEnvironment?envKey=...` |
-| POST | `/stopEnvironment?envKey=...` |
-| GET | `/health` |
+| Method | Endpoint | Notes |
+|--------|----------|-------|
+| POST | `/createEnvironment` | Returns the new env key |
+| PUT | `/setMetamodel?envKey=...` | |
+| PUT | `/setModel?envKey=...` | |
+| PUT | `/setEventDefinitions?envKey=...` | Optional (events with payloads) |
+| PUT | `/setStateMachine?envKey=...&attachedTo=...` | |
+| POST | `/setTickDelay?envKey=...&milliseconds=...` | |
+| POST | `/setEventTtl?envKey=...&ttlMs=...` | `0` = events never expire |
+| POST | `/registerObjectObserver?envKey=...&clientId=...&objectId=...` | |
+| POST | `/registerDomainListener?envKey=...&clientId=...&domain=...` | |
+| POST | `/registerClientForWebSocket?clientId=...&envKey=...` | Returns an access key |
+| POST | `/runEnvironment?envKey=...` | **Activate — required before start** |
+| POST | `/startEnvironment?envKey=...` | |
+| POST | `/stopEnvironment?envKey=...` | |
+| POST | `/setActiveState?envKey=...&modelElement=...&state=...` | Force a running machine into a leaf state |
+| GET | `/health` | |
+| GET | `/observatory/environments` | List active environments |
+| GET | `/observatory/statemachine?envKey=...&modelElement=...` | Fetch `.kstates` source |
+| POST | `/observatory/registerClient?clientId=...&envKey=...&modelElement=...` | Returns an access key |
+
+> Order matters: **`/runEnvironment` must be called before `/startEnvironment`**, and the setup endpoints
+> (`/set*`) only work *before* `/runEnvironment` — an active environment is immutable.
 
 ## WebSocket Connection
 
@@ -96,8 +105,10 @@ curl -X POST "http://localhost:8080/registerClientForWebSocket?clientId=client1&
 # Response: ak-client1-1609459234567-5432
 ```
 
-### 4. Start Environment
+### 4. Activate and Start Environment
 ```bash
+# Activate first (creates the execution thread) — required before start
+curl -X POST "http://localhost:8080/runEnvironment?envKey=env-123"
 curl -X POST "http://localhost:8080/startEnvironment?envKey=env-123"
 ```
 

@@ -15,6 +15,7 @@
  */
 package io.karpfen.server
 
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
@@ -25,7 +26,7 @@ import io.ktor.server.application.install
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
-import io.ktor.server.routing.delete
+import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
@@ -110,6 +111,22 @@ object HTTPRoutes {
                     val milliseconds = call.request.queryParameters["milliseconds"]?.toIntOrNull()
                         ?: throw IllegalArgumentException("Missing or invalid required parameter: milliseconds")
                     APIService.updateTickDelay(envKey, milliseconds)
+                    call.respond(HttpStatusCode.OK, "")
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            // Force a running machine into a given leaf state and clear its pending events (manual resync).
+            post("/setActiveState") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val modelElement = call.request.queryParameters["modelElement"]
+                        ?: throw IllegalArgumentException("Missing required parameter: modelElement")
+                    val state = call.request.queryParameters["state"]
+                        ?: throw IllegalArgumentException("Missing required parameter: state")
+                    APIService.forceActiveState(envKey, modelElement, state)
                     call.respond(HttpStatusCode.OK, "")
                 } catch (e: Exception) {
                     respondWithError(call, e)
@@ -206,7 +223,10 @@ object HTTPRoutes {
             }
 
             get("/health") {
-                call.respond(HttpStatusCode.OK, "")
+                // Respond with an explicit JSON string + content type. We cannot use
+                // call.respond(map) here because no ContentNegotiation/JSON serializer
+                // plugin is installed, which would make the call fail with a 500.
+                call.respondText("""{"status":"ok"}""", ContentType.Application.Json)
             }
 
             // --- Observatory endpoints ---
