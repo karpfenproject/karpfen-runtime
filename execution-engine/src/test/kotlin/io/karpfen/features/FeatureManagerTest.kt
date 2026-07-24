@@ -1,23 +1,14 @@
 package io.karpfen.features
 
 import io.karpfen.io.karpfen.features.Feature
-import io.karpfen.io.karpfen.features.FeatureFactory
 import io.karpfen.io.karpfen.features.FeatureManager
-import io.karpfen.io.karpfen.features.FeatureRegistry
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.assertThrows
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.collections.iterator
-import kotlin.collections.mutableMapOf
 import kotlin.reflect.KClass
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
+import kotlin.test.*
 
 class FeatureManagerTest {
 
@@ -59,12 +50,12 @@ class FeatureManagerTest {
         }
 
         for (featureClass in features) {
-            val feature = manager.getActiveFeature(featureClass)
+            val feature = manager.getFeatureInternally(featureClass)
             assertNotNull(feature)
             assertEquals(featureClass, feature::class)
         }
 
-        val managerFeatures = manager.getActiveFeaturesClasses();
+        val managerFeatures = manager.getActiveFeatureClasses();
 
         assertTrue(features.size == managerFeatures.size && managerFeatures.containsAll(features) && features.containsAll(managerFeatures))
 
@@ -82,10 +73,10 @@ class FeatureManagerTest {
             assertFalse(manager.requestFeatureActivation(feature))
         }
         
-        val dependantsField = manager::class.java.getDeclaredField("localDependantsRegistry")
-        dependantsField.setAccessible(true)
+        val dependentsField = manager::class.java.getDeclaredField("localDependentsRegistry")
+        dependentsField.setAccessible(true)
         @Suppress("UNCHECKED_CAST")
-        val dependantsMap = dependantsField.get(manager) as MutableMap<KClass<out Feature>, MutableSet<KClass<out Feature>>>
+        val dependentsMap = dependentsField.get(manager) as MutableMap<KClass<out Feature>, MutableSet<KClass<out Feature>>>
 
         val activeFeaturesField = manager::class.java.getDeclaredField("activeFeatureRegistry")
         activeFeaturesField.setAccessible(true)
@@ -93,8 +84,8 @@ class FeatureManagerTest {
         val activeFeatureRegistry = activeFeaturesField.get(manager) as ConcurrentHashMap<KClass<out Feature>, Feature>
 
         for (featureClass in features) {
-            val dependants = dependantsMap[featureClass] ?: emptySet()
-            assertEquals(0, dependants.size)
+            val dependents = dependentsMap[featureClass] ?: emptySet()
+            assertEquals(0, dependents.size)
         }
 
         for (i in features.size downTo 1) {
@@ -123,10 +114,10 @@ class FeatureManagerTest {
              \     /     \
              |FeatG|   |FeatH| */
 
-        val dependantsField = manager::class.java.getDeclaredField("localDependantsRegistry")
-        dependantsField.setAccessible(true)
+        val dependentsField = manager::class.java.getDeclaredField("localDependentsRegistry")
+        dependentsField.setAccessible(true)
         @Suppress("UNCHECKED_CAST")
-        val dependantsMap = dependantsField.get(manager) as MutableMap<KClass<out Feature>, MutableSet<KClass<out Feature>>>
+        val dependentsMap = dependentsField.get(manager) as MutableMap<KClass<out Feature>, MutableSet<KClass<out Feature>>>
 
         val explicitlyRequestedField = manager::class.java.getDeclaredField("explicitlyRequestedFeatures")
         explicitlyRequestedField.setAccessible(true)
@@ -140,55 +131,55 @@ class FeatureManagerTest {
             manager.requestFeatureActivation(FeatH::class)
 
             //Check if Dependency tree is correct
-            assertEquals(setOf<KClass<out Feature>>(FeatA::class, FeatB::class, FeatC::class, FeatD::class, FeatE::class, FeatF::class, FeatG::class, FeatH::class), manager.getActiveFeaturesClasses())
+            assertEquals(setOf<KClass<out Feature>>(FeatA::class, FeatB::class, FeatC::class, FeatD::class, FeatE::class, FeatF::class, FeatG::class, FeatH::class), manager.getActiveFeatureClasses())
 
             for (featureClass in setOf(FeatA::class, FeatB::class, FeatC::class, FeatD::class, FeatE::class, FeatF::class, FeatG::class, FeatH::class)) {
                 when (featureClass) {
                     FeatA::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatB::class, FeatC::class), dependantsMap[featureClass] ?: emptySet())
-                        val feature = manager.getActiveFeature(featureClass)
+                        assertEquals(setOf<KClass<out Feature>>(FeatB::class, FeatC::class), dependentsMap[featureClass] ?: emptySet())
+                        val feature = manager.getFeatureInternally(featureClass)
                         assertNotNull(feature)
                         assertTrue(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatB::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatE::class), dependantsMap[featureClass] ?: emptySet())
-                        val feature = manager.getActiveFeature(featureClass)
+                        assertEquals(setOf<KClass<out Feature>>(FeatE::class), dependentsMap[featureClass] ?: emptySet())
+                        val feature = manager.getFeatureInternally(featureClass)
                         assertNotNull(feature)
                         assertFalse(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatC::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatF::class), dependantsMap[featureClass] ?: emptySet())
-                        val feature = manager.getActiveFeature(featureClass)
+                        assertEquals(setOf<KClass<out Feature>>(FeatF::class), dependentsMap[featureClass] ?: emptySet())
+                        val feature = manager.getFeatureInternally(featureClass)
                         assertNotNull(feature)
                         assertFalse(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatD::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatF::class), dependantsMap[featureClass] ?: emptySet())
-                        val feature = manager.getActiveFeature(featureClass)
+                        assertEquals(setOf<KClass<out Feature>>(FeatF::class), dependentsMap[featureClass] ?: emptySet())
+                        val feature = manager.getFeatureInternally(featureClass)
                         assertNotNull(feature)
                         assertFalse(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatE::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatG::class), dependantsMap[featureClass] ?: emptySet())
-                        val feature = manager.getActiveFeature(featureClass)
+                        assertEquals(setOf<KClass<out Feature>>(FeatG::class), dependentsMap[featureClass] ?: emptySet())
+                        val feature = manager.getFeatureInternally(featureClass)
                         assertNotNull(feature)
                         assertFalse(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatF::class -> {
-                        assertEquals(setOf<KClass<out Feature>>(FeatG::class, FeatH::class), dependantsMap[featureClass] ?: emptySet())
-                        val feature = manager.getActiveFeature(featureClass)
+                        assertEquals(setOf<KClass<out Feature>>(FeatG::class, FeatH::class), dependentsMap[featureClass] ?: emptySet())
+                        val feature = manager.getFeatureInternally(featureClass)
                         assertNotNull(feature)
                         assertFalse(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatG::class -> {
-                        assertEquals(setOf(), dependantsMap[featureClass] ?: emptySet())
-                        val feature = manager.getActiveFeature(featureClass)
+                        assertEquals(setOf(), dependentsMap[featureClass] ?: emptySet())
+                        val feature = manager.getFeatureInternally(featureClass)
                         assertNotNull(feature)
                         assertTrue(explicitlyRequestedRegistry.contains(featureClass))
                     }
                     FeatH::class -> {
-                        assertEquals(setOf(), dependantsMap[featureClass] ?: emptySet())
-                        val feature = manager.getActiveFeature(featureClass)
+                        assertEquals(setOf(), dependentsMap[featureClass] ?: emptySet())
+                        val feature = manager.getFeatureInternally(featureClass)
                         assertNotNull(feature)
                         assertTrue(explicitlyRequestedRegistry.contains(featureClass))
                     }
@@ -203,11 +194,11 @@ class FeatureManagerTest {
         assertTrue(manager.requestFeatureDeactivation(FeatC::class))
 
         //Check that only FeatA is still present
-        assertEquals(setOf(FeatA::class), manager.getActiveFeaturesClasses())
+        assertEquals(setOf(FeatA::class), manager.getActiveFeatureClasses())
 
         assertEquals(mutableMapOf<KClass<out Feature>, MutableSet<KClass<out Feature>>>(
             Pair(FeatA::class, mutableSetOf())
-        ), dependantsMap)
+        ), dependentsMap)
 
 
         //Test2
@@ -217,14 +208,14 @@ class FeatureManagerTest {
         assertTrue(manager.requestFeatureDeactivation(FeatE::class))
 
         //Check that only FeatA, FeatC, FeatD, FeatF, FeatH are still present
-        assertEquals(setOf(FeatA::class, FeatC::class, FeatD::class, FeatF::class, FeatH::class), manager.getActiveFeaturesClasses())
+        assertEquals(setOf(FeatA::class, FeatC::class, FeatD::class, FeatF::class, FeatH::class), manager.getActiveFeatureClasses())
 
         assertEquals(mutableMapOf<KClass<out Feature>, MutableSet<KClass<out Feature>>>(
             Pair(FeatA::class, mutableSetOf(FeatC::class)),
             Pair(FeatC::class, mutableSetOf(FeatF::class)),
             Pair(FeatD::class, mutableSetOf(FeatF::class)),
             Pair(FeatF::class, mutableSetOf(FeatH::class)),
-        ), dependantsMap)
+        ), dependentsMap)
 
 
         //Test3
@@ -234,9 +225,9 @@ class FeatureManagerTest {
         assertTrue(manager.requestFeatureDeactivation(FeatA::class))
 
         //Check that no feature is still present
-        assertEquals(setOf(), manager.getActiveFeaturesClasses())
+        assertEquals(setOf(), manager.getActiveFeatureClasses())
 
-        assertEquals(mutableMapOf(), dependantsMap)
+        assertEquals(mutableMapOf(), dependentsMap)
     }
 
     @Test

@@ -22,8 +22,6 @@ import instance.Model
 import io.karpfen.env.DomainListener
 import io.karpfen.env.EnvironmentHandler
 import io.karpfen.env.Observation
-import io.karpfen.io.karpfen.features.FeatureFactory
-import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.FeatureRegistry
 import meta.Metamodel
 
@@ -174,7 +172,7 @@ object APIService {
         val env = EnvironmentHandler.getEnv(envKey)
             ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
         val set = mutableSetOf<String>()
-        for (featureClass in env.featureManager.getActiveFeaturesClasses()) {
+        for (featureClass in env.featureManager.getActiveFeatureClasses()) {
             FeatureRegistry.getNameByClass(featureClass)?.let { set.add(it) }
         }
         return set

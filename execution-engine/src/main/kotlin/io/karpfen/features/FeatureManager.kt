@@ -7,16 +7,16 @@ import kotlin.reflect.KClass
 /**
  * Feature Manager for managing [Feature]s
  *
- * Inspired by Service Locators, includes custom dependency injection and local dependants graph
+ * Inspired by Service Locators, includes custom dependency injection and local dependents graph
  */
 
 class FeatureManager {
 
     private val activeFeatureRegistry = ConcurrentHashMap<KClass<out Feature>, Feature>()
 
-    private val localDependantsRegistry = mutableMapOf<KClass<out Feature>, MutableSet<KClass<out Feature>>>()
+    private val localDependentsRegistry = HashMap<KClass<out Feature>, MutableSet<KClass<out Feature>>>()
 
-    private val explicitlyRequestedFeatures = mutableSetOf<KClass<out Feature>>()
+    private val explicitlyRequestedFeatures = HashSet<KClass<out Feature>>()
 
     //Atomic Boolean for preventing multiple threads to change dependency tree simultaneously
     private val isUpdatingFeatures: AtomicBoolean = AtomicBoolean(false)
@@ -64,12 +64,14 @@ class FeatureManager {
                 println("${FeatureRegistry.getNameByClass(clazz)} has been activated")
 
                 FeatureRegistry.getProviderByClass(clazz)?.featureDependencies?.forEach { dependency ->
-                    localDependantsRegistry.getOrPut(dependency) { mutableSetOf() }.add(clazz)
+                    localDependentsRegistry.getOrPut(dependency) { HashSet() }.add(clazz)
                 }
             }
         }
     }
 
+    //Explicitly request feature deactivation
+    //Returns true if feature has been deactivated, false if not present
     fun requestFeatureDeactivation(featureClass: KClass<out Feature>): Boolean {
         if (!requestFeatureUpdate()) {
             throw IllegalStateException("FeatureManager is already updating features")
@@ -85,18 +87,16 @@ class FeatureManager {
         }
     }
 
-    //Explicitly request feature deactivation
-    //Returns true if feature has been deactivated, false if not present
     private fun deactivateFeature(featureClass: KClass<out Feature>) {
 
-        val featuresMarkedForDeletion = mutableSetOf<KClass<out Feature>>()
+        val featuresMarkedForDeletion = HashSet<KClass<out Feature>>()
 
         fun safeToCleanUp(featureClass: KClass<out Feature>): Boolean {
             activeFeatureRegistry[featureClass] ?: return false
             if (featuresMarkedForDeletion.contains(featureClass)) return false
-            val dependants = localDependantsRegistry[featureClass] ?: emptySet()
-            //Feature can be safely cleaned up if it is not explicitly requested by user and has no dependants
-            return !explicitlyRequestedFeatures.contains(featureClass) && dependants.isEmpty()
+            val dependents = localDependentsRegistry[featureClass] ?: emptySet()
+            //Feature can be safely cleaned up if it is not explicitly requested by user and has no dependents
+            return !explicitlyRequestedFeatures.contains(featureClass) && dependents.isEmpty()
         }
 
         fun recursiveDeletion(featureClass: KClass<out Feature>) {
@@ -107,21 +107,21 @@ class FeatureManager {
 
             val feature = activeFeatureRegistry[featureClass]!!
 
-            //Remove Dependants
-            val dependants = localDependantsRegistry[featureClass]?.toSet() ?: emptySet()
-            for (dependant in dependants) {
-                activeFeatureRegistry[dependant]?.let {
-                    deactivateFeature(dependant)
+            //Remove Dependents
+            val dependents = localDependentsRegistry[featureClass]?.toSet() ?: emptySet()
+            for (dependent in dependents) {
+                activeFeatureRegistry[dependent]?.let {
+                    deactivateFeature(dependent)
                 }
             }
             explicitlyRequestedFeatures.remove(featureClass)
-            localDependantsRegistry.remove(featureClass)
+            localDependentsRegistry.remove(featureClass)
             activeFeatureRegistry.remove(featureClass)
             feature.onDeactivate()
             println("${FeatureRegistry.getNameByClass(featureClass)} has been deactivated")
 
             FeatureRegistry.getProviderByClass(featureClass)?.featureDependencies?.forEach { dependency ->
-                localDependantsRegistry[dependency]?.remove(featureClass)
+                localDependentsRegistry[dependency]?.remove(featureClass)
                 if (safeToCleanUp(dependency)) deactivateFeature(dependency)
             }
         }
@@ -129,23 +129,36 @@ class FeatureManager {
         recursiveDeletion(featureClass)
     }
 
-    fun getActiveFeature(featureClass: KClass<out Feature>): Feature? {
+    @PublishedApi
+    internal fun getFeatureInternally(featureClass: KClass<out Feature>): Feature? {
         return activeFeatureRegistry[featureClass]
     }
 
-    inline fun <reified T: Feature> getActiveFeatureAsClass(): T {
-        val feature = getActiveFeature(T::class) as T?
+    /**
+     * Fetches the currently active feature and returns it
+     * Returns null if the feature is not active
+     */
+    inline fun <reified T: Feature> getActiveFeatureOrNull(): T? {
+        return getFeatureInternally(T::class) as T?
+    }
+
+    /**
+     * Fetches the currently active feature and returns it
+     * Throws an exception if the feature is not active
+     */
+    inline fun <reified T: Feature> getActiveFeature(): T {
+        val feature = getFeatureInternally(T::class) as T?
         return checkNotNull(feature) {
             "Feature ${FeatureRegistry.getNameByClass(T::class)} has not been activated"
         }
     }
 
-    fun getActiveFeaturesClasses(): Set<KClass<out Feature>> {
+    fun getActiveFeatureClasses(): Set<KClass<out Feature>> {
         return activeFeatureRegistry.keys
     }
 
     inline fun <reified T : Feature> executeIfPresent(action: (T) -> Unit) {
-        val feature = getActiveFeature(T::class) as? T
+        val feature = getActiveFeatureOrNull<T>()
         if (feature != null) {
             action(feature)
         }

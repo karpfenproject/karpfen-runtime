@@ -1,5 +1,6 @@
 package io.karpfen.io.karpfen.features.runtime
 
+import com.google.auto.service.AutoService
 import io.karpfen.io.karpfen.features.DefaultFeature
 import io.karpfen.io.karpfen.features.Feature
 import io.karpfen.io.karpfen.features.FeatureManager
@@ -36,7 +37,7 @@ class TickByTickFeature : DefaultFeature() {
         return "execution is advancing $amount tick${if (amount > 1) "s" else ""}"
     }
 
-    fun checkPausedState() {
+    fun evalPausedState() {
         if (isPaused) {
             semaphore.acquire()
         }
@@ -63,6 +64,7 @@ class TickByTickFeature : DefaultFeature() {
     }
 }
 
+@AutoService(FeatureProvider::class)
 class TickByTickProvider : FeatureProvider {
     override val registryName = "TickByTick"
 

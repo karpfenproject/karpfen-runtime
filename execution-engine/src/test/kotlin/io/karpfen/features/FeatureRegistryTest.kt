@@ -3,15 +3,9 @@ package io.karpfen.features
 import io.karpfen.io.karpfen.features.Feature
 import io.karpfen.io.karpfen.features.FeatureRegistry
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.assertThrows
 import kotlin.reflect.KClass
-import kotlin.test.Test
-import kotlin.test.assertContentEquals
-import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
+import kotlin.test.*
 
 class FeatureRegistryTest {
 

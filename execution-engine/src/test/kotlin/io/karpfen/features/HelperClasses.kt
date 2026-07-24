@@ -1,5 +1,6 @@
 package io.karpfen.features
 
+import com.google.auto.service.AutoService
 import io.karpfen.io.karpfen.features.DefaultFeature
 import io.karpfen.io.karpfen.features.Feature
 import io.karpfen.io.karpfen.features.FeatureManager
@@ -15,6 +16,7 @@ class FeatF(val featC: FeatC, val featD: FeatD): DefaultFeature()
 class FeatG(val featE: FeatE, val featF: FeatF): DefaultFeature()
 class FeatH(val featF: FeatF): DefaultFeature()
 
+@AutoService(FeatureProvider::class)
 class FeatAProvider(): FeatureProvider {
     override val registryName: String = "A"
     override val registryClass: KClass<out Feature> = FeatA::class
@@ -25,26 +27,29 @@ class FeatAProvider(): FeatureProvider {
     }
 }
 
+@AutoService(FeatureProvider::class)
 class FeatBProvider(): FeatureProvider {
     override val registryName: String = "B"
     override val registryClass: KClass<out Feature> = FeatB::class
     override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatA::class)
 
     override fun createFeature(manager: FeatureManager): Feature {
-        return FeatB(manager.getActiveFeatureAsClass<FeatA>())
+        return FeatB(manager.getActiveFeature<FeatA>())
     }
 }
 
+@AutoService(FeatureProvider::class)
 class FeatCProvider(): FeatureProvider {
     override val registryName: String = "C"
     override val registryClass: KClass<out Feature> = FeatC::class
     override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatA::class)
 
     override fun createFeature(manager: FeatureManager): Feature {
-        return FeatC(manager.getActiveFeatureAsClass<FeatA>())
+        return FeatC(manager.getActiveFeature<FeatA>())
     }
 }
 
+@AutoService(FeatureProvider::class)
 class FeatDProvider(): FeatureProvider {
     override val registryName: String = "D"
     override val registryClass: KClass<out Feature> = FeatD::class
@@ -55,43 +60,47 @@ class FeatDProvider(): FeatureProvider {
     }
 }
 
+@AutoService(FeatureProvider::class)
 class FeatEProvider(): FeatureProvider {
     override val registryName: String = "E"
     override val registryClass: KClass<out Feature> = FeatE::class
     override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatB::class)
 
     override fun createFeature(manager: FeatureManager): Feature {
-        return FeatE(manager.getActiveFeatureAsClass<FeatB>())
+        return FeatE(manager.getActiveFeature<FeatB>())
     }
 }
 
+@AutoService(FeatureProvider::class)
 class FeatFProvider(): FeatureProvider {
     override val registryName: String = "F"
     override val registryClass: KClass<out Feature> = FeatF::class
     override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatC::class, FeatD::class)
 
     override fun createFeature(manager: FeatureManager): Feature {
-        return FeatF(manager.getActiveFeatureAsClass<FeatC>(), manager.getActiveFeatureAsClass<FeatD>())
+        return FeatF(manager.getActiveFeature<FeatC>(), manager.getActiveFeature<FeatD>())
     }
 }
 
+@AutoService(FeatureProvider::class)
 class FeatGProvider(): FeatureProvider {
     override val registryName: String = "G"
     override val registryClass: KClass<out Feature> = FeatG::class
     override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatE::class, FeatF::class)
 
     override fun createFeature(manager: FeatureManager): Feature {
-        return FeatG(manager.getActiveFeatureAsClass<FeatE>(), manager.getActiveFeatureAsClass<FeatF>())
+        return FeatG(manager.getActiveFeature<FeatE>(), manager.getActiveFeature<FeatF>())
     }
 }
 
+@AutoService(FeatureProvider::class)
 class FeatHProvider(): FeatureProvider {
     override val registryName: String = "H"
     override val registryClass: KClass<out Feature> = FeatH::class
     override val featureDependencies: Set<KClass<out Feature>> = setOf(FeatF::class)
 
     override fun createFeature(manager: FeatureManager): Feature {
-        return FeatH(manager.getActiveFeatureAsClass<FeatF>())
+        return FeatH(manager.getActiveFeature<FeatF>())
     }
 }
 
@@ -112,6 +121,7 @@ class ExecutionFeature: DefaultFeature() {
     }
 }
 
+@AutoService(FeatureProvider::class)
 class ExecutionProvider: FeatureProvider {
     override val registryName: String = "execution"
     override val registryClass: KClass<out Feature> = ExecutionFeature::class

@@ -6,7 +6,6 @@ import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.FeatureRegistry
 import org.junit.jupiter.api.assertThrows
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.collections.mutableSetOf
 import kotlin.reflect.KClass
 import kotlin.test.Test
 import kotlin.test.assertEquals

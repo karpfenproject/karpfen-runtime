@@ -15,13 +15,13 @@ import kotlin.reflect.KClass
 
 object FeatureRegistry {
 
-    private val classToProviderRegistry: MutableMap<KClass<out Feature>, FeatureProvider> = mutableMapOf()
+    private val classToProviderRegistry: MutableMap<KClass<out Feature>, FeatureProvider> = hashMapOf()
 
-    private val nameToClassRegistry: MutableMap<String, KClass<out Feature>> = mutableMapOf()
+    private val nameToClassRegistry: MutableMap<String, KClass<out Feature>> = hashMapOf()
 
-    private val classToNameRegistry: MutableMap<KClass<out Feature>, String> = mutableMapOf()
+    private val classToNameRegistry: MutableMap<KClass<out Feature>, String> = hashMapOf()
 
-    private val featureDependencies: MutableMap<KClass<out Feature>, Set<KClass<out Feature>>> = mutableMapOf()
+    private val featureDependencies: MutableMap<KClass<out Feature>, Set<KClass<out Feature>>> = hashMapOf()
 
     init {
         initialize()
@@ -53,11 +53,11 @@ object FeatureRegistry {
         return nameToClassRegistry.keys
     }
 
-    fun getFeatureActivationOrder(featureClass: KClass<out Feature>): List<KClass<out Feature>> {
-        val order = mutableListOf<KClass<out Feature>>()
-        val visited = mutableSetOf<KClass<out Feature>>()
+    fun getFeatureActivationOrder(featureClass: KClass<out Feature>): ArrayList<KClass<out Feature>> {
+        val order = ArrayList<KClass<out Feature>>()
+        val visited = HashSet<KClass<out Feature>>()
         //Used for detecting cyclic dependencies
-        val visiting = mutableSetOf<KClass<out Feature>>()
+        val visiting = HashSet<KClass<out Feature>>()
 
         fun depthFirstSearch(currentClass: KClass<out Feature>) {
 

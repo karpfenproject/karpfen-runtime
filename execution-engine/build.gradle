@@ -1,5 +1,6 @@
 plugins {
     id 'org.jetbrains.kotlin.jvm'
+    id 'org.jetbrains.kotlin.kapt'
 }
 
 group = 'io.karpfen'
@@ -15,10 +16,17 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
     implementation 'org.json:json:20240303'
 
+    compileOnly 'com.google.auto.service:auto-service-annotations:1.1.1'
+    kapt 'com.google.auto.service:auto-service:1.1.1'
+
     // Testing
     testImplementation 'org.jetbrains.kotlin:kotlin-test'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.9.3'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test'
+    testImplementation 'io.mockk:mockk:1.14.11'
+
+    testCompileOnly 'com.google.auto.service:auto-service-annotations:1.1.1'
+    kaptTest 'com.google.auto.service:auto-service:1.1.1'
 }
 
 kotlin {

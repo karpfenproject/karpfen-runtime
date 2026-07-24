@@ -16,6 +16,10 @@
 package io.karpfen.io.karpfen.exec
 
 import io.karpfen.EngineTraceLogger
+import io.karpfen.io.karpfen.features.FeatureManager
+import io.karpfen.io.karpfen.features.language.HistoryFeature
+import io.karpfen.io.karpfen.features.language.TickLimitFeature
+import io.karpfen.io.karpfen.features.runtime.BreakpointFeature
 import io.karpfen.io.karpfen.messages.Event
 import states.SplitTransition
 import states.Transition
@@ -32,7 +36,8 @@ import states.conditions.EventCondition
  */
 class BranchRunner(
     private val traceLogger: EngineTraceLogger?,
-    private val eventConsumptionOnFire: Boolean
+    private val eventConsumptionOnFire: Boolean,
+    private val featureManager: FeatureManager
 ) {
 
     fun tick(ctx: SMContext, branch: Branch, allowSplit: Boolean): BranchTickResult {
@@ -40,6 +45,14 @@ class BranchRunner(
 
         // --- ENTRY phase ---
         while (branch.notEnteredSubstack.isNotEmpty()) {
+
+            //State entry breakpoint
+            //Queries state itself to keep internal variables unmodified when the breakpoint activates
+            featureManager.executeIfPresent<BreakpointFeature> { feature ->
+                val stateObj = smQueryHelper.findStateByName(branch.notEnteredSubstack[0]) ?: return@executeIfPresent
+                feature.evalStateEntryBreakpoint(ctx.modelElementId, stateObj)
+            }
+
             val stateName = branch.notEnteredSubstack.removeFirst()
             val stateObj = smQueryHelper.findStateByName(stateName) ?: continue
 
@@ -60,6 +73,29 @@ class BranchRunner(
             } else {
                 trace(ctx, branch, EngineTraceLogger.TraceEventType.STATE_ENTRY_SKIP,
                     "onEntry for state '$stateName' is empty — skipped", mapOf("state" to stateName))
+            }
+        }
+
+        //Timeout
+        //Is placed here so that onEntry still executes beforehand, but it therefore ignores joins
+        featureManager.executeIfPresent<TickLimitFeature> { feature ->
+            feature.evalNecessaryTransition(
+                ctx.modelElementId,
+                branch.stateStack.mapNotNull { smQueryHelper.findStateByName(it) })?.let { transition ->
+                    applyNormal(ctx, branch, transition, null)
+                    return BranchTickResult.Stable
+                }
+        }
+
+        //History
+        featureManager.executeIfPresent<HistoryFeature> { feature ->
+            val smQueryHelper = ctx.smQueryHelper
+            val currentStateStack = branch.stateStack.mapNotNull { stateName -> smQueryHelper.findStateByName(stateName) }
+            feature.updateHistory(ctx.modelElementId, currentStateStack)
+
+            feature.createTransitionOrNull(ctx.modelElementId, currentStateStack.last())?.let { transition ->
+                applyNormal(ctx, branch, transition, null)
+                return BranchTickResult.Stable
             }
         }
 
@@ -123,8 +159,35 @@ class BranchRunner(
 
     /** Applies a normal 1-to-1 transition by mutating [branch] in place. */
     private fun applyNormal(ctx: SMContext, branch: Branch, transition: Transition, matchedEvent: Event?) {
+
+        val smQueryHelper = ctx.smQueryHelper
+
+        //Delay
+        featureManager.executeIfPresent<TickLimitFeature> { feature ->
+            if (feature.isTransitionBlocked(ctx.modelElementId, branch.stateStack.mapNotNull { smQueryHelper.findStateByName(it) })) return
+        }
+
+        //Multiple state exit breakpoints
+        featureManager.executeIfPresent<BreakpointFeature> { feature ->
+            feature.evalStateExitBreakpointNormal(
+                ctx.modelElementId,
+                branch.stateStack.mapNotNull { stateName -> smQueryHelper.findStateByName(stateName) },
+                smQueryHelper.getStateStackForState(transition.toState)
+                    .mapNotNull { stateName -> smQueryHelper.findStateByName(stateName) },
+            )
+        }
+
+        trace(ctx, branch, EngineTraceLogger.TraceEventType.TRANSITION_START,
+            "${transition.fromState} -> ${transition.toState}",
+            mapOf("from" to transition.fromState, "to" to transition.toState))
+
+        //Normal transition start breakpoint
+        featureManager.executeIfPresent<BreakpointFeature> { feature ->
+            feature.evalTransitionStartBreakpoint(ctx.modelElementId, transition)
+        }
+
         val oldStack = branch.stateStack
-        val newStackBase = ctx.smQueryHelper.getStateStackForState(transition.toState)
+        val newStackBase = smQueryHelper.getStateStackForState(transition.toState)
         if (newStackBase.isEmpty()) {
             System.err.println("[BranchRunner] Cannot find state '${transition.toState}' — skipping transition")
             return
@@ -143,6 +206,11 @@ class BranchRunner(
         trace(ctx, branch, EngineTraceLogger.TraceEventType.TRANSITION_FIRED,
             "${transition.fromState} -> ${transition.toState}",
             mapOf("from" to transition.fromState, "to" to transition.toState))
+
+        //Normal transition end breakpoint
+        featureManager.executeIfPresent<BreakpointFeature> { feature ->
+            feature.evalTransitionEndBreakpoint(ctx.modelElementId, transition)
+        }
     }
 
     /** Consumes (for this branch's lineage) every event that matched a trigger but fired nothing. */
