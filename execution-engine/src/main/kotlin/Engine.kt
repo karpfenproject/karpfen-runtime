@@ -31,6 +31,7 @@ import states.JoinTransition
 import states.StateMachine
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
+import kotlin.collections.set
 import kotlin.concurrent.thread
 
 class Engine(
@@ -171,6 +172,32 @@ class Engine(
     }
 
     private fun runEngine() {
+
+        val contexts = runSetup()
+
+        traceLogger?.log(
+            "*",
+            EngineTraceLogger.TraceEventType.ENGINE_START,
+            "Engine started with ${contexts.size} state machine(s), tickDelay=${tickDelayMS}ms"
+        )
+        println("[Engine $engineId] Started with ${contexts.size} state machine(s)")
+
+        // Last active stack pushed via onActiveStackChanged, per machine. Starts empty so the initial
+        // state is emitted on the first tick; thereafter only real changes (transition/split/join/
+        // forced resync) fire a push — no per-tick spam.
+        val lastStacks = HashMap<String, List<String>>()
+
+        val tickCount = runLoop(contexts, lastStacks) {}
+
+        traceLogger?.log(
+            "*",
+            EngineTraceLogger.TraceEventType.ENGINE_STOP,
+            "Engine stopped after $tickCount ticks"
+        )
+    }
+
+    //split setup and loop for benchmarking
+    fun runSetup(): List<SMContext> {
         // Initialize execution contexts for each attached state machine
         val contexts = statemachineMap.map { (modelElementId, stateMachine) ->
             val smQueryHelper = StateMachineQueryHelper(stateMachine)
@@ -232,27 +259,20 @@ class Engine(
         featureManager.executeIfPresent<HistoryFeature> { feature ->
             feature.resetHistory()
         }
+        return contexts
+    }
 
-        traceLogger?.log(
-            "*",
-            EngineTraceLogger.TraceEventType.ENGINE_START,
-            "Engine started with ${contexts.size} state machine(s), tickDelay=${tickDelayMS}ms"
-        )
-        println("[Engine $engineId] Started with ${contexts.size} state machine(s)")
-
-        // Last active stack pushed via onActiveStackChanged, per machine. Starts empty so the initial
-        // state is emitted on the first tick; thereafter only real changes (transition/split/join/
-        // forced resync) fire a push — no per-tick spam.
-        val lastStacks = HashMap<String, List<String>>()
-
+    fun runLoop(contexts: List<SMContext>, lastStacks: MutableMap<String, List<String>>, eventInjection: (tickCount: Long) -> Unit) {
         var tickCount = 0L
-        while (isRunning) {
+        repeat(500) {
             featureManager.executeIfPresent<TickByTickFeature> { feature ->
                 feature.evalPausedState()
             }
 
             tickCount++
             val tickStart = System.currentTimeMillis()
+
+            eventInjection(tickCount)
 
             // Run queued engine-thread commands (e.g. forced resync) before ticking.
             while (true) {
@@ -306,12 +326,6 @@ class Engine(
             val remaining = tickDelayMS.toLong() - elapsed
             if (remaining > 0) Thread.sleep(remaining)
         }
-
-        traceLogger?.log(
-            "*",
-            EngineTraceLogger.TraceEventType.ENGINE_STOP,
-            "Engine stopped after $tickCount ticks"
-        )
     }
 
     /**

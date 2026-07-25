@@ -1,6 +1,11 @@
+import kotlinx.benchmark.gradle.BenchmarkConfiguration
+import kotlinx.benchmark.gradle.BenchmarkTarget
+
 plugins {
     id 'org.jetbrains.kotlin.jvm'
     id 'org.jetbrains.kotlin.kapt'
+    id 'org.jetbrains.kotlinx.benchmark' version '0.4.13'
+    id 'org.jetbrains.kotlin.plugin.allopen' version "2.2.0"
 }
 
 group = 'io.karpfen'
@@ -27,11 +32,26 @@ dependencies {
 
     testCompileOnly 'com.google.auto.service:auto-service-annotations:1.1.1'
     kaptTest 'com.google.auto.service:auto-service:1.1.1'
+
+    implementation 'org.jetbrains.kotlinx:kotlinx-benchmark-runtime:0.4.13'
+}
+
+allOpen {
+    //noinspection GroovyAssignabilityCheck
+    annotation('org.openjdk.jmh.annotations.State')
 }
 
 kotlin {
     jvmToolchain(21)
+    target {
+        compilations.create("benchmark")
+                .associateWith(compilations.named("main").get())
+    }
 }
+
+benchmark.targets.register("benchmark")
+
+
 
 test {
     useJUnitPlatform()
