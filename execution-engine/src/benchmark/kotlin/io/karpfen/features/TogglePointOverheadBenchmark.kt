@@ -12,8 +12,8 @@ import org.openjdk.jmh.annotations.Warmup
 
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(BenchmarkTimeUnit.MILLISECONDS)
-@Warmup(iterations = 10, time = 500, timeUnit = BenchmarkTimeUnit.MILLISECONDS)
-@Measurement(iterations = 20, time = 1, timeUnit = BenchmarkTimeUnit.SECONDS)
+@Warmup(iterations = 10, time = 1, timeUnit = BenchmarkTimeUnit.SECONDS)
+@Measurement(iterations = 20, time = 2, timeUnit = BenchmarkTimeUnit.SECONDS)
 @State(Scope.Benchmark)
 class TogglePointOverheadBenchmark: ComplexStateMachineBenchmark() {
 

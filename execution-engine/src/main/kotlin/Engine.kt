@@ -264,7 +264,7 @@ class Engine(
 
     fun runLoop(contexts: List<SMContext>, lastStacks: MutableMap<String, List<String>>, eventInjection: (tickCount: Long) -> Unit) {
         var tickCount = 0L
-        repeat(500) {
+        repeat(1000) {
             featureManager.executeIfPresent<TickByTickFeature> { feature ->
                 feature.evalPausedState()
             }
