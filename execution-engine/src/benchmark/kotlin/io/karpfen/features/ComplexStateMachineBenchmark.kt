@@ -8,23 +8,21 @@ import io.karpfen.EngineTraceLogger
 import io.karpfen.io.karpfen.exec.SMContext
 import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.messages.Event
-import kotlinx.benchmark.Scope
 import kotlinx.benchmark.Setup
-import kotlinx.coroutines.DelicateCoroutinesApi
 import org.openjdk.jmh.annotations.Level
-import org.openjdk.jmh.annotations.State
 
-@State(Scope.Benchmark)
-abstract class ComplexStateMachineBenchmark {
+abstract class ComplexStateMachineBenchmark: BenchmarkSettings() {
     lateinit var engine: Engine
 
     lateinit var contexts: List<SMContext>
+
+    val featureManager: FeatureManager = FeatureManager()
 
     val globalMetamodelId = "DrivingModel"
 
     val globalModelElementId = "drivingModel"
 
-    val metamodel = KmetaDSLConverter.parseKmetaString("type \"$globalMetamodelId\" \"advanced Statemachine for benchmarking\" {\n" +
+    val metamodel = KmetaDSLConverter.parseKmetaString("type \"$globalMetamodelId\" \"advanced state machine for benchmarking\" {\n" +
             "\tprop(\"driving\", \"boolean\")\n" +
             "\tprop(\"speed\", \"number\")\n" +
             "}".trimIndent())
@@ -34,7 +32,7 @@ abstract class ComplexStateMachineBenchmark {
             "\tprop(\"speed\") -> \"0\"\n" +
             "}".trimIndent()
 
-    val statemachineMap = mapOf(Pair(globalModelElementId, KstatesDSLConverter.parseKstatesString("STATEMACHINE ATTACHED TO \"DrivingModel\" {\n" +
+    val statemachineMap = mapOf(Pair(globalModelElementId, KstatesDSLConverter.parseKstatesString("STATEMACHINE ATTACHED TO \"$globalMetamodelId\" {\n" +
             "\tSTATES {\n" +
             "\t\tSTATE \"driving\" {\n" +
             "\t\t\tENTRY {\n" +
@@ -134,7 +132,6 @@ abstract class ComplexStateMachineBenchmark {
             "\t}\n" +
             "}".trimIndent())))
 
-    @OptIn(DelicateCoroutinesApi::class)
     @Setup(Level.Invocation)
     fun setup() {
         engine = Engine(
@@ -144,7 +141,7 @@ abstract class ComplexStateMachineBenchmark {
             tickDelayMS = 0,
             engineId = "engineId",
             traceLogger = EngineTraceLogger("engineId", logFilePath = null, consoleOutput = false),
-            featureManager = FeatureManager()
+            featureManager = featureManager
         )
         contexts = engine.runSetup()
     }

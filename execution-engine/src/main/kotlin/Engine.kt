@@ -259,6 +259,11 @@ class Engine(
         featureManager.executeIfPresent<HistoryFeature> { feature ->
             feature.resetHistory()
         }
+        //Only for benchmark
+        //Reset recording
+        featureManager.executeIfPresent<EventRecordingFeature> { feature ->
+            feature.onMessage("clear")
+        }
         return contexts
     }
 
