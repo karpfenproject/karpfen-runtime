@@ -45,25 +45,18 @@ class TickLimitOverheadSpecializedNotSupported(): BenchmarkSettings() {
 
     val globalModelElementId = "tickLimitModel"
 
-    val metamodel = KmetaDSLConverter.parseKmetaString("type \"$globalMetamodelId\" \"custom state machine not supporting tick limit\" {\n" +
-            "\tprop(\"tickCounter\", \"number\")\n" +
-            "}".trimIndent())
+    val metamodel = KmetaDSLConverter.parseKmetaString("type \"$globalMetamodelId\" \"custom state machine not supporting tick limit\" {}".trimIndent())
 
-    val modelDefinition = "make object \"$globalModelElementId\": \"$globalMetamodelId\" {\n" +
-            "\tprop(\"tickCounter\") -> \"0\"\n" +
-            "}".trimIndent()
+    val modelDefinition = "make object \"$globalModelElementId\": \"$globalMetamodelId\" {}".trimIndent()
 
     val statemachineMap = mapOf(Pair(globalModelElementId, KstatesDSLConverter.parseKstatesString("STATEMACHINE ATTACHED TO \"$globalMetamodelId\" {\n" +
             "\tSTATES {\n" +
             "\t\tSTATE \"delayTest\" {\n" +
-            "\t\t\tENTRY {\n" +
-            "\t\t\t\tSET(\"tickCounter\", \"0\")\n" +
-            "\t\t\t}\n" +
-            "\t\t\tINITIAL STATE \"waitForDelay\" {\n" +
-            "\t\t\t\tDO {\n" +
-            "\t\t\t\t\tSET(\"tickCounter\", MACRO(\"increment\", \"tickCounter\"))\n" +
-            "\t\t\t\t}\n" +
-            "\t\t\t}\n" +
+            "\t\t\tINITIAL STATE \"5TicksBeforeDelay\" {}\n" +
+            "\t\t\tSTATE \"4TicksBeforeDelay\" {}\n" +
+            "\t\t\tSTATE \"3TicksBeforeDelay\" {}\n" +
+            "\t\t\tSTATE \"2TicksBeforeDelay\" {}\n" +
+            "\t\t\tSTATE \"1TickBeforeDelay\" {}\n" +
             "\t\t}\n" +
             "\t\tSTATE \"timeoutTest\" {\n" +
             "\t\t\tSTATE \"5TicksBeforeTimeout\" {}\n" +
@@ -73,30 +66,17 @@ class TickLimitOverheadSpecializedNotSupported(): BenchmarkSettings() {
             "\t\t\tSTATE \"1TickBeforeTimeout\" {}\n" +
             "\t\t}\n" +
             "\t}\n" +
-            "\t\n" +
             "\tTRANSITIONS {\n" +
-            "\t\tTRANSITION \"waitForDelay\" -> \"5TicksBeforeTimeout\" {\n" +
-            "\t\t\tCONDITION {\n" +
-            "\t\t\t\tEVAL { return $(tickCounter) > 5 }\n" +
-            "\t\t\t}\n" +
-            "\t\t}\n" +
+            "\t\tTRANSITION \"5TicksBeforeDelay\" -> \"4TicksBeforeDelay\" {}\n" +
+            "\t\tTRANSITION \"4TicksBeforeDelay\" -> \"3TicksBeforeDelay\" {}\n" +
+            "\t\tTRANSITION \"3TicksBeforeDelay\" -> \"2TicksBeforeDelay\" {}\n" +
+            "\t\tTRANSITION \"2TicksBeforeDelay\" -> \"1TickBeforeDelay\" {}\n" +
+            "\t\tTRANSITION \"1TickBeforeDelay\" -> \"5TicksBeforeTimeout\" {}\n" +
             "\t\tTRANSITION \"5TicksBeforeTimeout\" -> \"4TicksBeforeTimeout\" {}\n" +
             "\t\tTRANSITION \"4TicksBeforeTimeout\" -> \"3TicksBeforeTimeout\" {}\n" +
             "\t\tTRANSITION \"3TicksBeforeTimeout\" -> \"2TicksBeforeTimeout\" {}\n" +
             "\t\tTRANSITION \"2TicksBeforeTimeout\" -> \"1TickBeforeTimeout\" {}\n" +
-            "\t\tTRANSITION \"1TickBeforeTimeout\" -> \"waitForDelay\" {}\n" +
-            "\t}\n" +
-            "\t\n" +
-            "\tMACROS {\n" +
-            "\t\tMACRO \"increment\" {\n" +
-            "\t\t\tTAKES(\"currentTick\", \"number\")\n" +
-            "\t\t\tRETURNS(\"number\")\n" +
-            "\t\t\tDEFINITION {\n" +
-            "\t\t\t\tEVAL {\n" +
-            "\t\t\t\t\treturn ($(currentTick) + 1)\n" +
-            "\t\t\t\t}\n" +
-            "\t\t\t}\n" +
-            "\t\t}\n" +
+            "\t\tTRANSITION \"1TickBeforeTimeout\" -> \"5TicksBeforeDelay\" {}\n" +
             "\t}\n" +
             "}".trimIndent())))
 
@@ -112,16 +92,6 @@ class TickLimitOverheadSpecializedNotSupported(): BenchmarkSettings() {
             featureManager = featureManager
         )
         contexts = engine.runSetup()
-    }
-
-    @Setup
-    fun featureActivation() {
-        this.featureManager.requestFeatureActivation(TickLimitFeature::class)
-    }
-
-    @TearDown
-    fun featureDeactivation() {
-        this.featureManager.requestFeatureDeactivation(TickLimitFeature::class)
     }
 
     @Benchmark

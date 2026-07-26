@@ -45,13 +45,13 @@ class HistoryOverheadSpecializedNotSupported: BenchmarkSettings() {
     val globalModelElementId = "historyModel"
 
     val metamodel = KmetaDSLConverter.parseKmetaString("type \"$globalMetamodelId\" \"custom state machine not supporting history\" {\n" +
-            "\tprop(\"shallowHistory\", \"number\")\n" +
-            "\tprop(\"deepHistory\", \"number\")\n" +
+            "\tprop(\"shallowHistory\", \"boolean\")\n" +
+            "\tprop(\"deepHistory\", \"boolean\")\n" +
             "}".trimIndent())
 
     val modelDefinition = "make object \"$globalModelElementId\": \"$globalMetamodelId\" {\n" +
-            "\tprop(\"shallowHistory\") -> \"0\"\n" +
-            "\tprop(\"deepHistory\") -> \"0\"\n" +
+            "\tprop(\"shallowHistory\") -> \"false\"\n" +
+            "\tprop(\"deepHistory\") -> \"false\"\n" +
             "}".trimIndent()
 
     val statemachineMap = mapOf(Pair(globalModelElementId, KstatesDSLConverter.parseKstatesString("STATEMACHINE ATTACHED TO \"$globalMetamodelId\" {\n" +
@@ -60,7 +60,7 @@ class HistoryOverheadSpecializedNotSupported: BenchmarkSettings() {
             "\t\tSTATE \"shallowHistory\" {\n" +
             "\t\t\tSTATE \"middleShallowHistory\" {\n" +
             "\t\t\t\tENTRY {\n" +
-            "\t\t\t\t\tSET(\"shallowHistory\", \"1\")\n" +
+            "\t\t\t\t\tSET(\"shallowHistory\", \"true\")\n" +
             "\t\t\t\t}\n" +
             "\t\t\t\tSTATE \"innerShallowHistory\" {}\n" +
             "\t\t\t}\n" +
@@ -69,7 +69,7 @@ class HistoryOverheadSpecializedNotSupported: BenchmarkSettings() {
             "\t\t\tSTATE \"middleDeepHistory\" {\n" +
             "\t\t\t\tSTATE \"innerDeepHistory\" {\n" +
             "\t\t\t\t\tENTRY {\n" +
-            "\t\t\t\t\t\tSET(\"deepHistory\", \"1\")\n" +
+            "\t\t\t\t\t\tSET(\"deepHistory\", \"true\")\n" +
             "\t\t\t\t\t}\n" +
             "\t\t\t\t}\n" +
             "\t\t\t}\n" +
@@ -79,7 +79,7 @@ class HistoryOverheadSpecializedNotSupported: BenchmarkSettings() {
             "\tTRANSITIONS {\n" +
             "\t\tTRANSITION \"noHistory\" -> \"middleShallowHistory\" {\n" +
             "\t\t\tCONDITION {\n" +
-            "\t\t\t\tEVAL { return $(shallowHistory) == 1 }\n" +
+            "\t\t\t\tEVAL { return $(shallowHistory) }\n" +
             "\t\t\t}\n" +
             "\t\t}\n" +
             "\t\tTRANSITION \"noHistory\" -> \"shallowHistory\" {}\n" +
@@ -87,7 +87,7 @@ class HistoryOverheadSpecializedNotSupported: BenchmarkSettings() {
             "\t\tTRANSITION \"middleShallowHistory\" -> \"innerShallowHistory\" {}\n" +
             "\t\tTRANSITION \"innerShallowHistory\" -> \"innerDeepHistory\" {\n" +
             "\t\t\tCONDITION {\n" +
-            "\t\t\t\tEVAL { return $(deepHistory) == 1 }\n" +
+            "\t\t\t\tEVAL { return $(deepHistory) }\n" +
             "\t\t\t}\n" +
             "\t\t}\n" +
             "\t\tTRANSITION \"innerShallowHistory\" -> \"deepHistory\" {}\n" +
@@ -109,16 +109,6 @@ class HistoryOverheadSpecializedNotSupported: BenchmarkSettings() {
             featureManager = featureManager
         )
         contexts = engine.runSetup()
-    }
-
-    @Setup
-    fun featureActivation() {
-        this.featureManager.requestFeatureActivation(HistoryFeature::class)
-    }
-
-    @TearDown
-    fun featureDeactivation() {
-        this.featureManager.requestFeatureDeactivation(HistoryFeature::class)
     }
 
     @Benchmark
