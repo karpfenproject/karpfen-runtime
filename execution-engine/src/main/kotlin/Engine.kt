@@ -40,7 +40,12 @@ class Engine(
     /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
     val eventConsumptionOnFire: Boolean = true,
     /** Metamodel for event payloads; used to parse incoming payloads into objects. Null when unused. */
-    val eventMetamodel: Metamodel? = null
+    val eventMetamodel: Metamodel? = null,
+    /**
+     * Gate the engine holds for the whole of each tick; [readBetweenTicks] waits on it, so readers on other threads
+     * see the model only between ticks.
+     */
+    private val tickGate: TickGate = TickGate()
 ) {
 
     /** Parses incoming event payloads into the runtime object model against [eventMetamodel]. */
@@ -54,7 +59,17 @@ class Engine(
 
     @Volatile
     private var isRunning: Boolean = false
+
+    /** The engine thread of the latest [start]; volatile so that other threads read [isTicking] safely. */
+    @Volatile
     private var executionThread: Thread? = null
+
+    /**
+     * True while the engine thread is alive: from [start] until the tick loop ends, either through [stop] or because
+     * an exception or error escaped it.
+     */
+    val isTicking: Boolean
+        get() = executionThread?.isAlive == true
 
     /**
      * Called whenever a state machine's active state stack changes (initial state, transition,
@@ -226,38 +241,7 @@ class Engine(
             tickCount++
             val tickStart = System.currentTimeMillis()
 
-            // Run queued engine-thread commands (e.g. forced resync) before ticking.
-            while (true) {
-                val cmd = commandQueue.poll() ?: break
-                cmd(contexts)
-            }
-
-            // Purge expired events once per tick
-            eventProcessor.purgeExpired()
-            //println(eventProcessor.eventBus.getUnprocessedEvents("public", engineId).size)
-
-            for (ctx in contexts) {
-                traceLogger?.log(
-                    ctx.modelElementId,
-                    EngineTraceLogger.TraceEventType.TICK_START,
-                    "Tick #$tickCount",
-                    tickDetails(ctx)
-                )
-                tickStateMachine(ctx)
-                traceLogger?.log(
-                    ctx.modelElementId,
-                    EngineTraceLogger.TraceEventType.TICK_END,
-                    "Tick #$tickCount completed",
-                    tickDetails(ctx)
-                )
-
-                // Notify observers only when the active stack actually changed.
-                val cur = ctx.branches.flatMap { it.stateStack }
-                if (cur != lastStacks[ctx.modelElementId]) {
-                    lastStacks[ctx.modelElementId] = cur
-                    onActiveStackChanged?.invoke(ctx.modelElementId, cur)
-                }
-            }
+            tickGate.duringTick { runTick(contexts, tickCount, lastStacks) }
 
             val elapsed = System.currentTimeMillis() - tickStart
             val remaining = tickDelayMS.toLong() - elapsed
@@ -270,6 +254,55 @@ class Engine(
             "Engine stopped after $tickCount ticks"
         )
     }
+
+    /**
+     * Runs one tick inside the [tickGate]: the queued engine commands, the purge of expired events, and for each state
+     * machine its tick followed by its active-stack notification when the stack changed. Every model write and every
+     * push of the tick happens here, on the engine thread.
+     */
+    private fun runTick(contexts: List<SMContext>, tickCount: Long, lastStacks: MutableMap<String, List<String>>) {
+        // Run queued engine-thread commands (e.g. forced resync) before ticking.
+        while (true) {
+            val cmd = commandQueue.poll() ?: break
+            cmd(contexts)
+        }
+
+        // Purge expired events once per tick
+        eventProcessor.purgeExpired()
+        //println(eventProcessor.eventBus.getUnprocessedEvents("public", engineId).size)
+
+        for (ctx in contexts) {
+            traceLogger?.log(
+                ctx.modelElementId,
+                EngineTraceLogger.TraceEventType.TICK_START,
+                "Tick #$tickCount",
+                tickDetails(ctx)
+            )
+            tickStateMachine(ctx)
+            traceLogger?.log(
+                ctx.modelElementId,
+                EngineTraceLogger.TraceEventType.TICK_END,
+                "Tick #$tickCount completed",
+                tickDetails(ctx)
+            )
+
+            // Notify observers only when the active stack actually changed.
+            val cur = ctx.branches.flatMap { it.stateStack }
+            if (cur != lastStacks[ctx.modelElementId]) {
+                lastStacks[ctx.modelElementId] = cur
+                onActiveStackChanged?.invoke(ctx.modelElementId, cur)
+            }
+        }
+    }
+
+    /**
+     * Runs [read] on the calling thread at the next tick boundary, waiting at most [timeoutMs] milliseconds for the
+     * running tick to end; without a running tick it runs at once. The read sees the model after a whole number of
+     * ticks with every push of those ticks enqueued.
+     *
+     * @return the result of [read], or `null` when no tick boundary came within the timeout.
+     */
+    fun <T> readBetweenTicks(timeoutMs: Long, read: () -> T): T? = tickGate.betweenTicks(timeoutMs, read)
 
     /**
      * Trace details for a tick. "stack" lists the active states across all branches (equal to the
