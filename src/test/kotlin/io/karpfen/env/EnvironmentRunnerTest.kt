@@ -20,12 +20,15 @@ import io.karpfen.fixtures.Eventually
 import io.karpfen.fixtures.RuntimeRegistry
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.server.APIService
+import io.karpfen.server.MockWebSocketSession
+import io.ktor.websocket.CloseReason
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -77,6 +80,23 @@ class EnvironmentRunnerTest {
         assertEquals(1, liveRunners(envKey))
         Eventually.awaitUntil("the restarted environment handled the event") { distanceToObstacle(environment) == 2.0 }
         assertTrue(environment.engine.isTicking)
+    }
+
+    @Test
+    fun `stopping closes the environment's WebSocket sessions with a normal close`() {
+        val envKey = CleaningRobotExample.createEnvironment()
+        val sessions = EnvironmentHandler.clientSessionManager
+        val accessKey = APIService.registerClientForWebSocket("ide", envKey)
+        val socket = MockWebSocketSession()
+        assertTrue(sessions.verifyAndAttachSession("ide", envKey, accessKey, socket))
+        APIService.runEnvironment(envKey)
+        APIService.startEnvironment(envKey)
+
+        APIService.stopEnvironment(envKey)
+
+        assertNull(sessions.getSessionForClient(envKey, "ide"))
+        Eventually.awaitUntil("the socket was closed") { socket.getCloseReasons().isNotEmpty() }
+        assertEquals(listOf(CloseReason(CloseReason.Codes.NORMAL, "Environment stopped")), socket.getCloseReasons())
     }
 
     /** The execution thread of the activated environment [envKey]. */

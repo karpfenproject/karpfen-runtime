@@ -15,12 +15,15 @@
  */
 package io.karpfen.server
 
+import io.ktor.websocket.CloseReason
 import io.ktor.websocket.WebSocketSession
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketExtension
+import io.ktor.websocket.readReason
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.channels.Channel
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
@@ -30,6 +33,9 @@ import kotlin.coroutines.EmptyCoroutineContext
  */
 class MockWebSocketSession : WebSocketSession {
     private val sentMessages = mutableListOf<String>()
+
+    /** Reasons of the close frames sent through [send], which is how Ktor's `close(reason)` sends them. */
+    private val closeReasons = CopyOnWriteArrayList<CloseReason>()
     private val frameChannel = Channel<Frame>()
     private val outgoingChannel = Channel<Frame>()
 
@@ -39,9 +45,13 @@ class MockWebSocketSession : WebSocketSession {
     override val outgoing: SendChannel<Frame>
         get() = outgoingChannel
 
+    /** Records the text of text frames and the reason of close frames. */
     override suspend fun send(frame: Frame) {
         if (frame is Frame.Text) {
             sentMessages.add(frame.data.decodeToString())
+        }
+        if (frame is Frame.Close) {
+            frame.readReason()?.let { closeReasons.add(it) }
         }
     }
 
@@ -74,4 +84,7 @@ class MockWebSocketSession : WebSocketSession {
     }
 
     fun getLastMessage(): String? = sentMessages.lastOrNull()
+
+    /** The reasons of every close frame sent so far, in sending order; safe to read from any thread. */
+    fun getCloseReasons(): List<CloseReason> = closeReasons.toList()
 }

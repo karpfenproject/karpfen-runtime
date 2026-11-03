@@ -16,7 +16,10 @@
 package io.karpfen.websocket
 
 import io.karpfen.io.karpfen.exec.ModelJsonWriter
+import io.ktor.websocket.CloseReason
 import io.ktor.websocket.WebSocketSession
+import io.ktor.websocket.close
+import kotlinx.coroutines.launch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
@@ -245,20 +248,41 @@ class ClientSessionManager {
     }
 
     /**
-     * Closes all sessions for an environment (e.g., when environment stops).
+     * Closes all sessions of an environment when it stops, with the close code 1000 and the reason
+     * `Environment stopped`.
+     *
+     * The sessions are removed under the write lock; each is then closed outside the lock in a coroutine launched in
+     * the session itself, so the calling HTTP thread never blocks on a client that does not read. Failures are printed
+     * and do not stop the other closes. The socket handler unregisters a closed session by its access key afterwards,
+     * which then finds nothing to remove. Subscriptions stay, keyed by environment and client id.
      */
     fun closeEnvironmentSessions(environmentKey: String) {
+        for (clientSession in removeEnvironmentSessions(environmentKey)) {
+            try {
+                clientSession.session.launch {
+                    try {
+                        clientSession.session.close(CloseReason(CloseReason.Codes.NORMAL, "Environment stopped"))
+                    } catch (e: Exception) {
+                        reportCloseFailure(clientSession, e)
+                    }
+                }
+                println("[ClientSessionManager] Closing session for client ${clientSession.clientId}")
+            } catch (e: Exception) {
+                reportCloseFailure(clientSession, e)
+            }
+        }
+    }
+
+    /** Prints that closing the socket of [clientSession] failed with [failure]. */
+    private fun reportCloseFailure(clientSession: ClientSession, failure: Exception) {
+        println("[ClientSessionManager] Error closing session of client ${clientSession.clientId}: ${failure.message}")
+    }
+
+    /** Removes and returns the attached sessions of [environmentKey] under the sessions write lock. */
+    private fun removeEnvironmentSessions(environmentKey: String): List<ClientSession> {
         sessionsLock.writeLock().lock()
         try {
-            clientSessions[environmentKey]?.values?.forEach { session ->
-                try {
-                    // Session close will be handled by Ktor
-                    println("[ClientSessionManager] Closed session for client ${session.clientId}")
-                } catch (e: Exception) {
-                    println("[ClientSessionManager] Error closing session: ${e.message}")
-                }
-            }
-            clientSessions.remove(environmentKey)
+            return clientSessions.remove(environmentKey)?.values?.toList() ?: emptyList()
         } finally {
             sessionsLock.writeLock().unlock()
         }
