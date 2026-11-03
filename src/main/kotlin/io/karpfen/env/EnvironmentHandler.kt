@@ -56,10 +56,37 @@ object EnvironmentHandler {
         return envs[key]
     }
 
+    /**
+     * Activates the environment [key]: freezes its configuration into an [EnvironmentThread] that is set up and stored,
+     * ready to be started.
+     *
+     * Activation is atomic. The key is claimed in [activeEnvs] with `putIfAbsent`, so a second activation is refused
+     * with an [IllegalStateException] and the first execution thread stays in charge. When building the trace logger
+     * or the thread, or its setup, fails, the claim is removed and the trace logger closed before the exception
+     * propagates, so the environment stays configurable.
+     */
     fun activeEnv(key: String) {
         val env = envs[key] ?: throw IllegalArgumentException("Environment with key '$key' does not exist.")
-        activeEnvs[key] = env
+        if (activeEnvs.putIfAbsent(key, env) != null) {
+            throw IllegalStateException(
+                "Environment with key $key is already active and cannot be modified in the intended way."
+            )
+        }
+        var traceLogger: EngineTraceLogger? = null
+        try {
+            traceLogger = createTraceLogger(key)
+            val envThread = EnvironmentThread(env, traceLogger)
+            envThread.setup()
+            executionThreads[key] = envThread
+        } catch (e: Exception) {
+            activeEnvs.remove(key, env)
+            traceLogger?.close()
+            throw e
+        }
+    }
 
+    /** Builds the trace logger of the environment [key], writing to the trace directory when one is configured. */
+    private fun createTraceLogger(key: String): EngineTraceLogger {
         // Always create the trace logger so that observatory WebSocket listeners work
         // even when file/console tracing is disabled.
         val logFile = traceLogDirectory?.let { "$it/engine-trace-$key.log" }
@@ -68,10 +95,7 @@ object EnvironmentHandler {
             logFilePath = logFile,
             consoleOutput = traceConsoleOutput
         )
-
-        val envThread = EnvironmentThread(env, traceLogger)
-        envThread.setup()
-        executionThreads[key] = envThread
+        return traceLogger
     }
 
     fun isActiveEnv(key: String): Boolean {
