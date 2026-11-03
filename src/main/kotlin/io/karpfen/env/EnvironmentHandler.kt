@@ -46,11 +46,34 @@ object EnvironmentHandler {
     /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
     var defaultEventConsumptionOnFire: Boolean = true
 
+    /** Creates an environment under [key] with the configured defaults, replacing any environment of that key. */
     fun createEnv(key: String): Environment {
-        val env = Environment(key, tickDelayMS = defaultTickDelayMs, eventTtlMs = defaultEventTtlMs, eventConsumptionOnFire = defaultEventConsumptionOnFire)
+        val env = newEnvironment(key)
         envs[key] = env
         return env
     }
+
+    /**
+     * Creates an environment under a key never handed out before, `env-<epoch millis>`.
+     *
+     * The key is claimed with `putIfAbsent`; when the key of the current millisecond is taken, the next millisecond is
+     * tried, and so on. Keys therefore keep their shape and stay unique also when several environments are created
+     * within one millisecond.
+     */
+    fun createUniqueEnv(): Environment {
+        var millis = System.currentTimeMillis()
+        while (true) {
+            val env = newEnvironment("env-$millis")
+            if (envs.putIfAbsent(env.key, env) == null) {
+                return env
+            }
+            millis++
+        }
+    }
+
+    /** A new environment under [key] with the configured default tick delay, event time to live and consumption. */
+    private fun newEnvironment(key: String): Environment =
+        Environment(key, tickDelayMS = defaultTickDelayMs, eventTtlMs = defaultEventTtlMs, eventConsumptionOnFire = defaultEventConsumptionOnFire)
 
     fun getEnv(key: String): Environment? {
         return envs[key]

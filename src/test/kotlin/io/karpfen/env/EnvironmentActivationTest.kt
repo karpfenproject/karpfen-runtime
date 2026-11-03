@@ -16,21 +16,26 @@
 package io.karpfen.env
 
 import io.karpfen.fixtures.CleaningRobotExample
+import io.karpfen.fixtures.Eventually
 import io.karpfen.fixtures.RuntimeRegistry
 import io.karpfen.server.APIService
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import kotlin.concurrent.thread
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 /**
- * Covers activating environments through [APIService] and [EnvironmentHandler]: activation happens once and
- * atomically.
+ * Covers creating and activating environments through [APIService] and [EnvironmentHandler]: keys are unique, and
+ * activation happens once and atomically.
  */
 class EnvironmentActivationTest {
 
@@ -73,12 +78,35 @@ class EnvironmentActivationTest {
         val refusal = assertFailsWith<IllegalStateException> { APIService.runEnvironment(envKey) }
 
         assertEquals(
-            "Environment with key $envKey has state machines attached to objects missing from its model: ghost, phantom",
+            "Environment with key $envKey has state machines attached to objects missing from its model: " +
+                "ghost, phantom",
             refusal.message
         )
         assertFalse(EnvironmentHandler.isActiveEnv(envKey))
         assertNull(EnvironmentHandler.executionThreads[envKey])
         APIService.updateTickDelay(envKey, 50)
+    }
+
+    @Test
+    fun `environments created within one millisecond get distinct keys`() {
+        val creators = 4
+        val perCreator = 50
+        val start = CountDownLatch(1)
+        val keys = ConcurrentLinkedQueue<String>()
+        val threads = (1..creators).map {
+            thread {
+                start.await()
+                repeat(perCreator) { keys.add(APIService.createEnvironment()) }
+            }
+        }
+
+        start.countDown()
+        threads.forEach { it.join(Eventually.DEADLINE_MS) }
+
+        assertEquals(creators * perCreator, keys.size)
+        assertEquals(keys.size, keys.toSet().size)
+        assertTrue(keys.all { Regex("env-\\d+").matches(it) })
+        assertEquals(keys.toSet(), EnvironmentHandler.envs.keys.toSet())
     }
 
     @Test

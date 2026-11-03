@@ -43,11 +43,11 @@ object APIService {
         return EnvironmentHandler.isActiveEnv(envKey)
     }
 
-    fun createEnvironment(): String {
-        val envKey = "env-${System.currentTimeMillis()}"
-        EnvironmentHandler.createEnv(envKey)
-        return envKey
-    }
+    /**
+     * Creates an environment and returns its key `env-<epoch millis>`, which is never handed out twice (see
+     * [EnvironmentHandler.createUniqueEnv]).
+     */
+    fun createEnvironment(): String = EnvironmentHandler.createUniqueEnv().key
 
     fun receiveMetamodel(envKey: String, metamodelData: String) {
         assertEnv(envKey)
