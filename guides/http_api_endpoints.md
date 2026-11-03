@@ -9,7 +9,9 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
 - **Parameters**: None
 - **Request Body**: Empty
 - **Response**: String (environment key)
-- **Description**: Creates a new environment and returns its unique key for later use.
+- **Description**: Creates a new environment and returns its unique key for later use. Keys have the shape
+  `env-<epoch millis>` and are never handed out twice: when the key of the current millisecond is taken, the next
+  free millisecond is used.
 - **Example**:
   ```bash
   curl -X POST http://localhost:8080/createEnvironment
@@ -107,7 +109,7 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
   - `envKey` (string): The environment key
 - **Request Body**: Empty
 - **Response**: Empty (200 OK on success)
-- **Description**: Activates the environment and creates its execution thread. Requires that the metamodel and model are set (a state machine is normally attached too, though not strictly enforced); otherwise returns `409 Conflict`. Must be called before `/startEnvironment`. Once activated, the environment can no longer be modified by the setup endpoints.
+- **Description**: Activates the environment and creates its execution thread. Requires that the metamodel and model are set (a state machine is normally attached too, though not strictly enforced); otherwise returns `409 Conflict`. Every state machine must be attached to an object of the model (nested objects included); otherwise the call answers `409 Conflict` naming the missing keys and the environment stays configurable. Must be called before `/startEnvironment`. Once activated, the environment can no longer be modified by the setup endpoints. An environment is activated once: a second call answers `409 Conflict` (`... is already active ...`) and the first execution thread stays in charge; to start an environment again after a stop, call `/startEnvironment` alone.
 - **Example**:
   ```bash
   curl -X POST "http://localhost:8080/runEnvironment?envKey=env-123"
@@ -119,7 +121,7 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
   - `envKey` (string): The environment key
 - **Request Body**: Empty
 - **Response**: Empty (200 OK on success)
-- **Description**: Starts the execution thread for the selected environment. The environment must have been activated first using `/runEnvironment`.
+- **Description**: Starts the execution thread for the selected environment. The environment must have been activated first using `/runEnvironment`. Calling it while the environment runs has no effect, so it is safe to repeat. Calling it after `/stopEnvironment` runs the environment again from the initial states over the model as the engine left it.
 - **Example**:
   ```bash
   curl -X POST "http://localhost:8080/startEnvironment?envKey=env-123"
@@ -131,7 +133,7 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
   - `envKey` (string): The environment key
 - **Request Body**: Empty
 - **Response**: Empty (200 OK on success)
-- **Description**: Stops the execution engine for the environment and closes all WebSocket connections.
+- **Description**: Stops the execution engine for the environment and closes the environment's WebSocket connections with the close code `1000` and the reason `Environment stopped`. Messages still queued for the environment are dropped. The final model stays readable through `GET /observatory/model` (phase `stopped`).
 - **Example**:
   ```bash
   curl -X POST "http://localhost:8080/stopEnvironment?envKey=env-123"
@@ -177,7 +179,7 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
   - `objectId` (string): The object ID to observe
 - **Request Body**: Empty
 - **Response**: Empty (200 OK on success)
-- **Description**: Registers a client to receive notifications when a specific object changes.
+- **Description**: Registers a client to receive notifications when a specific object changes. Observers are registered before `/runEnvironment` only; activation freezes them. To watch the whole object tree at any time, including objects created at run time, use the model subscription (`POST /observatory/subscribeModel`).
 - **Example**:
   ```bash
   curl -X POST "http://localhost:8080/registerObjectObserver?envKey=env-123&clientId=client1&objectId=obj1"
@@ -191,7 +193,7 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
   - `domain` (string): The domain to listen to
 - **Request Body**: Empty
 - **Response**: Empty (200 OK on success)
-- **Description**: Registers a client to receive domain events from the execution engine.
+- **Description**: Registers a client to receive domain events from the execution engine. Listeners are registered before `/runEnvironment` only. Every event published in the domain, whether sent by a client or raised by an `EVENT` action, is announced as a `domainEvent` message whose payload is `{"domain": <domain>, "payload": {"event", "payload", "payloadFormat", "source", "timestamp", "ttlMs"}}`: the event name, the raw payload text, its format (`none`, `json` or `kmodel`), its source (`INTERNAL`, `EXTERNAL_ENGINE` or `EXTERNAL_MESSAGE`), the receipt or raise time in epoch milliseconds, and the effective time to live.
 - **Example**:
   ```bash
   curl -X POST "http://localhost:8080/registerDomainListener?envKey=env-123&clientId=client1&domain=robot_events"
@@ -256,6 +258,82 @@ not modify execution state.
   curl -X POST "http://localhost:8080/observatory/registerClient?clientId=monitor1&envKey=env-123&modelElement=robot1"
   ```
 
+## Model Observation
+
+Endpoints for clients that mirror a whole environment, such as the karpfen IDE. They work in every phase of an
+environment, also while it runs, and are implemented in the package `io.karpfen.observation`
+(`ModelObservationRoutes`, `ModelSnapshotService`, `ModelSubscriptionService`).
+
+### Get Model Snapshot
+- **Endpoint**: `GET /observatory/model`
+- **Parameters**:
+  - `envKey` (string): The environment key
+- **Response**: `200 OK` with `Content-Type: application/json; charset=UTF-8` and one JSON object with the members in
+  this order:
+  - `environmentKey`: the environment
+  - `phase`: `configuring` (not yet run), `activated` (run, never started), `running`, `halted` (started, not
+    stopped, but the engine thread ended on its own after an error) or `stopped`
+  - `revision`: the revision of the last change the snapshot contains, `0` before anything happened
+  - `activeStates`: per state machine (keyed by `attachedTo`) the last reported active stack, `{}` before the first
+    tick after a start
+  - `roots`: every root object of the model, each written exactly like the `value` of an `objectChanged` message
+- **Description**: A running environment is read between two engine ticks, so the snapshot at revision R contains
+  exactly the changes up to R. The runtime waits at most 10 seconds for a tick to end. A configuring environment
+  answers its uploaded model at revision 0; a stopped one answers its final model.
+- **Errors**: `400` for a missing `envKey` or an unknown environment; `409` with
+  `Environment with key <envKey> has no model` (configuring, no model uploaded yet),
+  `Environment with key <envKey> did not reach a tick boundary within 10000 ms`, or
+  `Reference loop through object '<id>' cannot be written as JSON` (a `knows` loop has no JSON).
+- **Example**:
+  ```bash
+  curl "http://localhost:8080/observatory/model?envKey=env-123"
+  # {"environmentKey":"env-123","phase":"running","revision":57,"activeStates":{"robot1":["observe"]},"roots":[{"__id__": "room", ...}]}
+  ```
+
+### Subscribe to the Model
+- **Endpoint**: `POST /observatory/subscribeModel`
+- **Parameters**:
+  - `envKey` (string): The environment key
+  - `clientId` (string): The client ID
+- **Request Body**: Empty
+- **Response**: Empty (200 OK on success)
+- **Description**: From now on the client receives `objectChanged` and `objectDeleted` for every object of the
+  environment, objects created at run time included, and `stateChange` for every state machine. Unlike object
+  observers it works at any time, also while the environment runs, and it is idempotent. The client must have an open,
+  authenticated WebSocket session for the environment: the WebSocket handshake is never acknowledged, so a successful
+  subscribe is the moment a client knows its socket is attached. The subscription is keyed by environment and client
+  ID and survives reconnects.
+- **Errors**: `400` for a missing `envKey` or `clientId` (checked in this order) or an unknown environment; `409` with
+  `Client <clientId> has no open WebSocket session for environment <envKey>`.
+- **Example**:
+  ```bash
+  curl -X POST "http://localhost:8080/observatory/subscribeModel?envKey=env-123&clientId=client1"
+  ```
+
+### Unsubscribe from the Model
+- **Endpoint**: `POST /observatory/unsubscribeModel`
+- **Parameters**:
+  - `envKey` (string): The environment key
+  - `clientId` (string): The client ID
+- **Request Body**: Empty
+- **Response**: Empty (200 OK on success)
+- **Description**: No new object or stack messages are queued for the client because of its model subscription;
+  messages queued before may still arrive. Object observers and an observatory registration of the client stay.
+  Idempotent.
+- **Errors**: `400` for a missing `envKey` or `clientId` or an unknown environment.
+- **Example**:
+  ```bash
+  curl -X POST "http://localhost:8080/observatory/unsubscribeModel?envKey=env-123&clientId=client1"
+  ```
+
+### Switching observation on without losing changes
+1. Authenticate the client's WebSocket.
+2. Subscribe to the model. A `409` about a missing session means the handshake was not processed yet: wait and retry.
+3. From the `200` on, keep every incoming object and stack message.
+4. Get a snapshot; its revision is R. Replace the local copy with its `roots` and `activeStates`.
+5. Apply the kept and all later messages in arrival order, skipping those with a revision of R or less. A revision
+   larger than the last applied one plus 1 means messages were lost: take a new snapshot.
+
 ## WebSocket Connection
 
 ### WebSocket Endpoint
@@ -289,12 +367,35 @@ After authentication, clients can send and receive messages as JSON:
 - `payload` is the (optional) content. It may be empty, a JSON object, or a kmodel `make object` block.
 - `payloadFormat` is optional and may be `"none"`, `"json"`, or `"kmodel"`. When omitted, the runtime guesses: empty → none, starts with `{` → json, starts with `make object` → kmodel.
 
+#### Outgoing Messages
+The runtime sends every notification as one text frame:
+```json
+{"environmentKey":"env-123","clientId":"client1","messageType":"objectChanged","payload":{"objectId":"robot1","revision":58,"value":{"__id__": "robot1", "__type__": "Robot", "x": 5}}}
+```
+
+| `messageType` | `payload` | Sent to |
+|---|---|---|
+| `objectChanged` | `{"objectId", "revision", "value"}` in this order; `value` is the object's JSON | its object observers and the model subscribers |
+| `objectDeleted` | `{"objectId", "revision"}` in this order | the same |
+| `stateChange` | `{"stack", "modelElementId", "revision"}`, member order not defined | observatory clients of `*` or that element, and the model subscribers |
+| `domainEvent` | `{"domain", "payload"}`, see Register Domain Listener | the domain listeners of that domain |
+
+Each environment numbers the object changes, object deletions and stack changes of its engine: the first one has
+revision 1, every recipient of one change gets the same revision, and a client subscribed to the model receives them
+in order without gaps. Domain events carry no revision. A client never gets the same change twice, even when it is
+both an observer and a subscriber. All strings in a message are escaped as JSON.
+
 ## Error Handling
 
 All endpoints return appropriate HTTP status codes:
 - **200 OK**: Request successful
 - **400 Bad Request**: Missing or invalid parameters
-- **409 Conflict**: Environment state conflict (e.g., trying to modify active environment)
+- **409 Conflict**: Environment state conflict, for example:
+  - modifying or running an environment that is already active
+  - running an environment whose state machines are attached to objects missing from its model
+  - starting or stopping an environment that was never run
+  - a snapshot of an environment without a model, without a tick boundary within 10 seconds, or with a reference loop
+  - subscribing to the model without an open WebSocket session
 - **500 Internal Server Error**: Server error
 
 Error responses include a message body with details about the error.

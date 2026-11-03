@@ -39,20 +39,34 @@ karpfen-runtime/
 │       ├── env/
 │       │   ├── Environment.kt            # Environment data model
 │       │   ├── EnvironmentHandler.kt     # Lifecycle management (singleton)
-│       │   ├── EnvironmentThread.kt      # Execution engine thread
+│       │   ├── EnvironmentThread.kt      # Execution engine thread; owns its runner, revisions and stacks
+│       │   ├── RegistryEnvironmentLookup.kt  # The registry as seen by the observation package
 │       │   ├── Observation.kt            # Object observation model
 │       │   ├── DomainListener.kt         # Domain listener model
 │       │   └── ActiveEnvironment.kt      # Active environment wrapper
+│       ├── observation/
+│       │   ├── ObservationRelay.kt       # Engine changes and published events to push messages
+│       │   ├── ChangeRevision.kt         # Per-environment revision counter
+│       │   ├── ActiveStackRecord.kt      # Last reported active stacks
+│       │   ├── ModelSnapshot.kt          # Snapshot value and its JSON
+│       │   ├── ModelSnapshotService.kt   # Snapshots in every phase, read between ticks
+│       │   ├── ModelSubscriptionService.kt   # Model subscription with the session check
+│       │   ├── ModelObservationRoutes.kt # The three model observation routes
+│       │   └── EnvironmentLookup.kt, ObservedEnvironment.kt, EnvironmentPhase.kt
 │       └── websocket/
 │           ├── WebSocketMessage.kt       # Incoming message data model
 │           ├── ClientSession.kt          # Client session + OutgoingMessage model
 │           ├── ClientSessionManager.kt   # Session & subscription lifecycle management
 │           └── WebSocketBroadcaster.kt   # Async message broadcaster
-├── src/test/kotlin/io/karpfen/server/
-│   ├── KtorServerIntegrationTest.kt      # HTTP/WebSocket server integration tests
-│   ├── EndToEndIntegrationTest.kt        # Full environment lifecycle tests
-│   ├── SystemTest.kt                     # End-to-end system tests
-│   └── MockWebSocketSession.kt           # Test helper
+├── src/test/kotlin/io/karpfen/
+│   ├── server/
+│   │   ├── KtorServerIntegrationTest.kt  # HTTP/WebSocket server integration tests
+│   │   ├── EndToEndIntegrationTest.kt    # Full environment lifecycle tests
+│   │   ├── SystemTest.kt                 # End-to-end system tests (runs Python)
+│   │   └── MockWebSocketSession.kt       # Test helper
+│   ├── env/                              # Activation, keys, runner and stop tests
+│   ├── observation/                      # Relay, snapshot, subscription and route tests
+│   └── fixtures/                         # Example environments and registry reset for tests
 ├── execution-engine/                     # Engine module (separate Gradle subproject)
 ├── karpfen-dsl-tools/                    # DSL tools module (git submodule)
 ├── examples/                             # Runnable example scenarios
@@ -219,12 +233,13 @@ Then start with a custom log location:
 - **APIService** - Business logic behind the HTTP endpoints (parameter validation, environment lifecycle).
 - **EnvironmentHandler** - Global singleton that owns all environments, their execution threads, and client sessions.
 - **ClientSessionManager** - Keeps track of which WebSocket clients are subscribed to which objects/domains and queues outgoing notifications for them.
-- **EnvironmentThread** - Runs the execution engine loop for one environment: polls the event queue, ticks the engine, and fires data-change callbacks.
+- **EnvironmentThread** - Runs the execution engine loop for one environment: polls the event queue, ticks the engine, and fires data-change callbacks. It owns the environment's one runner thread, its revision counter and its record of active stacks.
+- **Model observation** (package `io.karpfen.observation`) - `ObservationRelay` numbers every model and stack change of an environment and announces published events; `ModelSnapshotService` and `ModelSubscriptionService` serve the snapshot and the model subscription routes.
 - **WebSocketBroadcaster** - Separate thread that drains the outgoing message queue and pushes messages to connected WebSocket sessions without blocking the engine.
 
 ## API Overview
 
-The API is organized into four categories:
+The API is organized into five categories:
 
 ### Environment Setup
 - `POST /createEnvironment` - Create new environment
@@ -236,8 +251,8 @@ The API is organized into four categories:
 - `POST /setEventTtl` - Configure event time-to-live
 
 ### Execution Control
-- `POST /runEnvironment` - **Activate** the environment and create its execution thread (required before start)
-- `POST /startEnvironment` - Start the execution engine thread
+- `POST /runEnvironment` - **Activate** the environment and create its execution thread (required before start; works once, checks that every state machine is attached to an object of the model)
+- `POST /startEnvironment` - Start the execution engine thread (safe to repeat; restarts a stopped environment)
 - `POST /stopEnvironment` - Stop the execution engine
 - `POST /setActiveState` - Force a running state machine into a given leaf state (manual resync)
 
@@ -250,6 +265,11 @@ The API is organized into four categories:
 - `GET /observatory/environments` - List active environments and their state-machine model elements
 - `GET /observatory/statemachine` - Fetch the `.kstates` source for a model element
 - `POST /observatory/registerClient` - Register for observatory trace/state updates over WebSocket
+
+### Model Observation
+- `GET /observatory/model` - Snapshot of the whole model with its phase, revision and active stacks
+- `POST /observatory/subscribeModel` - Receive every object and stack change of an environment (needs an open WebSocket session)
+- `POST /observatory/unsubscribeModel` - End the model subscription
 
 > **Lifecycle note:** `/runEnvironment` requires the metamodel and model to be set (you normally attach a
 > state machine too) and must be called **before** `/startEnvironment`. Calling `/startEnvironment` first
@@ -297,39 +317,56 @@ Here `environmentKey` is the event domain, `messageType` is both the event name 
 
 All outgoing notifications share the shape
 `{"environmentKey": "...", "clientId": "...", "messageType": "...", "payload": ...}`, where `payload`
-is a JSON value whose contents depend on `messageType`.
+is a JSON value whose contents depend on `messageType`. Every string in a message is escaped as JSON.
 
-Object observers (`/registerObjectObserver`) receive `objectChanged` when an observed object's value changes:
+Object observers (`/registerObjectObserver`) and model subscribers (`/observatory/subscribeModel`) receive
+`objectChanged` when an object's value changes:
 ```json
 {
   "environmentKey": "env-123",
   "clientId": "client1",
   "messageType": "objectChanged",
-  "payload": {"objectId": "obj1", "value": ...}
+  "payload": {"objectId": "obj1", "revision": 58, "value": ...}
 }
 ```
 
 When an object is removed from the model (e.g. by a `DROPOBJ` action, which also cascades to the
-object's embedded subtree), subscribers receive a deletion notification instead:
+object's embedded subtree), they receive a deletion notification instead:
 ```json
 {
   "environmentKey": "env-123",
   "clientId": "client1",
   "messageType": "objectDeleted",
-  "payload": {"objectId": "obj1"}
+  "payload": {"objectId": "obj1", "revision": 59}
 }
 ```
 
-Domain listeners (`/registerDomainListener`) receive `domainEvent` when an event is published on a
-subscribed domain:
+Observatory clients and model subscribers receive `stateChange` with a machine's active stack:
+`{"stack": ["observe"], "modelElementId": "robot1", "revision": 60}`.
+
+**Revisions.** Each environment numbers the object changes, object deletions and stack changes of its engine,
+starting at 1. Every recipient of one change gets the same revision, and a model subscriber receives every revision in
+order, so a jump in the numbers shows that messages were lost. A model snapshot (`GET /observatory/model`) carries the
+revision of the last change it contains.
+
+**The model subscription.** `POST /observatory/subscribeModel` subscribes a client with an open WebSocket session to
+every object change, deletion and stack change of the environment, objects created at run time included, at any time.
+`POST /observatory/unsubscribeModel` ends it. A client never gets one change twice, even when it also observes the
+object.
+
+Domain listeners (`/registerDomainListener`) receive `domainEvent` for every event published on a subscribed domain,
+sent by a client or raised by an `EVENT` action:
 ```json
 {
   "environmentKey": "env-123",
   "clientId": "client1",
   "messageType": "domainEvent",
-  "payload": {"domain": "robot_events", "payload": ...}
+  "payload": {"domain": "robot_events", "payload": {"event": "start", "payload": "", "payloadFormat": "none", "source": "EXTERNAL_MESSAGE", "timestamp": 1761560130123, "ttlMs": 3000}}
 }
 ```
+The inner `payload` holds the event name, its raw payload text, the payload format, the source (`INTERNAL`,
+`EXTERNAL_ENGINE` or `EXTERNAL_MESSAGE`), the receipt or raise time in epoch milliseconds and the effective time to
+live. Domain events carry no revision.
 
 ## Example Workflow
 
@@ -415,11 +452,21 @@ ws.onmessage = (event) => {
 };
 ```
 
-### 7. Stop environment when done
+### 7. Observe the whole model (optional)
+After the WebSocket is authenticated, subscribe to every object and stack change and take a snapshot to start from.
+Apply only messages whose revision is larger than the snapshot's.
+```bash
+curl -X POST "http://localhost:8080/observatory/subscribeModel?envKey=$ENV_KEY&clientId=client1"
+curl "http://localhost:8080/observatory/model?envKey=$ENV_KEY"
+```
+
+### 8. Stop environment when done
 ```bash
 curl -X POST "http://localhost:8080/stopEnvironment?envKey=$ENV_KEY"
 echo "Environment stopped"
 ```
+The stop closes the environment's WebSocket connections with `1000 Environment stopped`; the final model stays
+readable through `GET /observatory/model`.
 
 ## Testing
 
@@ -431,6 +478,14 @@ echo "Environment stopped"
 ### Run specific test class
 ```bash
 ./gradlew test --tests KtorServerIntegrationTest
+```
+
+### Run the tests without Python
+Tests that execute Python (`EVAL` and `MACRO` blocks, the persistent Python session) carry the JUnit tag `python`.
+`./gradlew test` runs them all; the property `skipPythonTests` excludes the tagged ones in the server and the engine
+module:
+```bash
+./gradlew :test :execution-engine:test -PskipPythonTests
 ```
 
 ### View test report
@@ -449,6 +504,7 @@ Main.kt
 ├── Start WebSocketBroadcaster thread (only if websocket.enabled = true)
 └── Start KtorServer
     ├── Configure HTTP routes (+ CORS)
+    ├── Install model observation routes
     └── Configure WebSocket endpoint
 ```
 
@@ -518,6 +574,12 @@ curl -X POST http://localhost:8080/createEnvironment
 
 The environment was not activated first. Call `/runEnvironment?envKey=...` (after the metamodel, model,
 and at least one state machine are set) before `/startEnvironment`.
+
+### `/runEnvironment` returns 409 Conflict
+
+Either the metamodel or the model is missing, the environment was already activated (start it again with
+`/startEnvironment` instead), or a state machine is attached to a key that names no object of the model; the message
+lists those keys.
 
 ### Cannot upload metamodel/model/state machine (409 Conflict)
 

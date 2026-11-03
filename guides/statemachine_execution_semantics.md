@@ -317,12 +317,23 @@ All engines within the same environment share a single `EventBus`. Events publis
 - Multiple state machines attached to objects within the same environment are executed sequentially within one tick (not in parallel).
 - The model is written only by the engine thread. Observer callbacks (e.g., WebSocket notifications) are dispatched asynchronously.
 - The `EventBus` is the only shared mutable data structure between engine threads and is fully thread-safe.
+- Each tick runs inside a tick gate (`TickGate` in the engine module): the engine holds a fair lock while it ticks
+  and sleeps outside it. Model snapshots (`GET /observatory/model`) are read between ticks through
+  `Engine.readBetweenTicks`, so a snapshot never sees a half-applied action block and contains every change whose
+  message was already queued.
+- Each `ENTRY` or `DO` block publishes its changes as one batch when it ends. When an action of the block fails, the
+  changes made before the failure are still published with that block; nothing waits for the next block.
+- Every event published on the bus, sent by a client or raised by an `EVENT` action, is announced to the domain
+  listeners of its domain as a `domainEvent` message. Raised events are announced while their block runs, so before
+  that block's object changes.
 
 ---
 
 ## Error Handling
 
 - If an `onEntry` or `onDo` action block throws an exception, the error is logged (via the trace logger and stderr) but the engine continues. The tick proceeds normally.
+- If a change reaches an object whose `knows` relations lead back to it, the object has no JSON: the block's commit
+  fails with `Reference loop through object '<id>' cannot be written as JSON`, which is logged like an action error.
 - If a transition target state cannot be found, the transition is skipped and an error is logged.
 - If an EVAL or MACRO Python subprocess fails (non-zero exit code), a `RuntimeException` is thrown, caught by the action block error handler, and logged.
 - If a VALUE condition path cannot be resolved, the condition evaluates to `false`.

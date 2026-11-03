@@ -27,24 +27,27 @@ Default URLs:
 
 | Method | Endpoint | Notes |
 |--------|----------|-------|
-| POST | `/createEnvironment` | Returns the new env key |
+| POST | `/createEnvironment` | Returns the new env key; never the same key twice |
 | PUT | `/setMetamodel?envKey=...` | |
 | PUT | `/setModel?envKey=...` | |
 | PUT | `/setEventDefinitions?envKey=...` | Optional (events with payloads) |
 | PUT | `/setStateMachine?envKey=...&attachedTo=...` | |
 | POST | `/setTickDelay?envKey=...&milliseconds=...` | |
 | POST | `/setEventTtl?envKey=...&ttlMs=...` | `0` = events never expire |
-| POST | `/registerObjectObserver?envKey=...&clientId=...&objectId=...` | |
-| POST | `/registerDomainListener?envKey=...&clientId=...&domain=...` | |
+| POST | `/registerObjectObserver?envKey=...&clientId=...&objectId=...` | Before `/runEnvironment` only |
+| POST | `/registerDomainListener?envKey=...&clientId=...&domain=...` | Before `/runEnvironment` only; receives `domainEvent` |
 | POST | `/registerClientForWebSocket?clientId=...&envKey=...` | Returns an access key |
-| POST | `/runEnvironment?envKey=...` | **Activate — required before start** |
-| POST | `/startEnvironment?envKey=...` | |
-| POST | `/stopEnvironment?envKey=...` | |
+| POST | `/runEnvironment?envKey=...` | **Activate — required before start**; works once (a second call is a 409); state machines must be attached to objects of the model |
+| POST | `/startEnvironment?envKey=...` | Safe to repeat; restarts a stopped environment |
+| POST | `/stopEnvironment?envKey=...` | Closes the environment's WebSockets with `1000 Environment stopped` |
 | POST | `/setActiveState?envKey=...&modelElement=...&state=...` | Force a running machine into a leaf state |
 | GET | `/health` | |
 | GET | `/observatory/environments` | List active environments |
 | GET | `/observatory/statemachine?envKey=...&modelElement=...` | Fetch `.kstates` source |
 | POST | `/observatory/registerClient?clientId=...&envKey=...&modelElement=...` | Returns an access key |
+| GET | `/observatory/model?envKey=...` | Snapshot: phase, revision, active stacks and every root object as JSON |
+| POST | `/observatory/subscribeModel?envKey=...&clientId=...` | Every object and stack change; needs an open WebSocket session |
+| POST | `/observatory/unsubscribeModel?envKey=...&clientId=...` | Ends the model subscription |
 
 > Order matters: **`/runEnvironment` must be called before `/startEnvironment`**, and the setup endpoints
 > (`/set*`) only work *before* `/runEnvironment` — an active environment is immutable.
