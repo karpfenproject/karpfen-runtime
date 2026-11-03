@@ -16,11 +16,13 @@
 package io.karpfen.exec
 
 import instance.ClassTypeAtomicPropertyObject
+import instance.ClassTypeListPropertyObject
 import instance.DataObject
 import instance.ObjectReference
 import instance.SimpleAtomicPropertyObject
 import instance.SimpleListPropertyObject
 import io.karpfen.io.karpfen.exec.ModelJsonWriter
+import io.karpfen.io.karpfen.exec.ModelQueryProcessor
 import meta.AssociationType
 import meta.ClassType
 import meta.ClassTypeProperty
@@ -29,9 +31,12 @@ import meta.SimpleProperty
 import meta.SimplePropertyType
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 /**
- * Covers [ModelJsonWriter]: the object JSON of pushes and snapshots and the quoting of every string it writes.
+ * Covers [ModelJsonWriter]: the object JSON of pushes and snapshots, the quoting of every string it writes, and its
+ * refusal of reference loops.
  */
 class ModelJsonWriterTest {
 
@@ -115,6 +120,53 @@ class ModelJsonWriterTest {
             "slash / angle </ emoji \uD83D\uDE00"
 
         assertEquals("\"" + text + "\"", ModelJsonWriter.quote(text))
+    }
+
+    @Test
+    fun `an object reachable from itself is refused with a reference loop error naming it`() {
+        val next = ClassTypeProperty(
+            "next",
+            ClassTypeReference(AssociationType.LINK, "Node"),
+            false,
+            AssociationType.LINK
+        )
+        val nodeType = ClassType("Node", "", emptyList(), listOf(next))
+        val first = DataObject(nodeType, "first", mutableListOf(), mutableListOf())
+        val second = DataObject(nodeType, "second", mutableListOf(), mutableListOf())
+        first.relations.add(ClassTypeAtomicPropertyObject(next, "next", ObjectReference(second.id, second)))
+        second.relations.add(ClassTypeAtomicPropertyObject(next, "next", ObjectReference(first.id, first)))
+        val holds = ClassTypeProperty(
+            "nodes",
+            ClassTypeReference(AssociationType.EMBEDDED, "Node", nodeType),
+            true,
+            AssociationType.EMBEDDED
+        )
+        val holderType = ClassType("Holder", "", emptyList(), listOf(holds))
+        val holder = DataObject(
+            holderType,
+            "holder",
+            mutableListOf(),
+            mutableListOf(ClassTypeListPropertyObject(holds, "nodes", mutableListOf(ObjectReference(first.id, first))))
+        )
+
+        val refusal = assertFailsWith<IllegalStateException> { ModelJsonWriter.write(holder) }
+
+        assertEquals("Reference loop through object 'first' cannot be written as JSON", refusal.message)
+    }
+
+    @Test
+    fun `an object shared by two knows relations is written twice without an error`() {
+        val metamodel = TestFixtures.buildMetamodel()
+        val model = TestFixtures.buildModel(metamodel)
+        val turtle = ModelQueryProcessor(metamodel, model).getDataObjectById("turtle")
+
+        val written = ModelJsonWriter.write(turtle)
+
+        val chair = "{\"__id__\": \"chair\", \"__type__\": \"Obstacle\", \"boundingBox\": "
+        assertEquals(2, written.windowed(chair.length).count { it == chair })
+        val holdingChair = turtle.relations.filter { relation -> turtle.getRel(relation.key).any { it.id == "chair" } }
+        assertEquals(listOf("obstacles", "closest_obstacle"), holdingChair.map { it.key })
+        assertTrue(holdingChair.all { it.getPropertyType().associationType == AssociationType.LINK })
     }
 
     private companion object {

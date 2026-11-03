@@ -21,6 +21,8 @@ import instance.DataObject
 import instance.SimpleAtomicPropertyObject
 import instance.SimpleListPropertyObject
 import meta.SimplePropertyType
+import java.util.Collections
+import java.util.IdentityHashMap
 
 /**
  * Writes model objects as the JSON text the runtime pushes in `objectChanged` messages and answers in model
@@ -32,6 +34,11 @@ import meta.SimplePropertyType
  * atomic relation is `null`, and an unresolved entry of a list relation is `null`. Numbers are doubles, written
  * without a fraction when integral and with [Double.toString] otherwise, so `NaN`, `Infinity` and `-Infinity`
  * appear as bare literals. Ids, type names, keys and string values go through [quote].
+ *
+ * Because `knows` relations are inlined like `has` relations, an object reachable from itself has no finite JSON. The
+ * writer tracks the objects on the current path by identity and refuses such a loop with an [IllegalStateException]
+ * instead of recursing until the stack overflows, which as an [Error] would end the engine thread. Inside the engine
+ * the exception leaves the commit of the action block, is reported as an action error, and the engine keeps ticking.
  */
 object ModelJsonWriter {
 
@@ -39,9 +46,11 @@ object ModelJsonWriter {
      * Writes [obj] with everything reachable through its relations as one JSON object.
      *
      * Every text that was valid JSON when string values only had their double quotes escaped is written byte for
-     * byte as before.
+     * byte as before. An object shared by several relations without a loop is written once per reference.
+     *
+     * @throws IllegalStateException when an object is reachable from itself, naming the first object met twice.
      */
-    fun write(obj: DataObject): String = writeObject(obj)
+    fun write(obj: DataObject): String = writeObject(obj, Collections.newSetFromMap(IdentityHashMap()))
 
     /**
      * Writes [text] as a JSON string literal in double quotes.
@@ -73,8 +82,14 @@ object ModelJsonWriter {
         return literal.toString()
     }
 
-    /** Writes one object and, recursively, the objects its relations hold. */
-    private fun writeObject(obj: DataObject): String {
+    /**
+     * Writes one object and, recursively, the objects its relations hold; [path] holds the objects being written
+     * around it.
+     */
+    private fun writeObject(obj: DataObject, path: MutableSet<DataObject>): String {
+        if (!path.add(obj)) {
+            throw IllegalStateException("Reference loop through object '${obj.id}' cannot be written as JSON")
+        }
         val entries = mutableListOf<String>()
         entries.add(entry("__id__", quote(obj.id)))
         entries.add(entry("__type__", quote(obj.ofType.name)))
@@ -93,14 +108,15 @@ object ModelJsonWriter {
         for (rel in obj.relations) {
             if (rel.isList()) {
                 val values = (rel as ClassTypeListPropertyObject).getValueRefs()
-                    .joinToString(", ") { ref -> ref.obj?.let { writeObject(it) } ?: "null" }
+                    .joinToString(", ") { ref -> ref.obj?.let { writeObject(it, path) } ?: "null" }
                 entries.add(entry(rel.key, "[$values]"))
             } else {
                 val value = (rel as ClassTypeAtomicPropertyObject).getValue()
-                entries.add(entry(rel.key, if (value != null) writeObject(value) else "null"))
+                entries.add(entry(rel.key, if (value != null) writeObject(value, path) else "null"))
             }
         }
 
+        path.remove(obj)
         return "{${entries.joinToString(", ")}}"
     }
 
