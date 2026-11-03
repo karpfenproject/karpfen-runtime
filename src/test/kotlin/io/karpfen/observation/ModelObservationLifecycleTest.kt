@@ -15,6 +15,8 @@
  */
 package io.karpfen.observation
 
+import instance.DataObject
+import instance.SimpleAtomicPropertyObject
 import io.karpfen.env.EnvironmentHandler
 import io.karpfen.env.EnvironmentThread
 import io.karpfen.env.RegistryEnvironmentLookup
@@ -23,12 +25,14 @@ import io.karpfen.fixtures.Eventually
 import io.karpfen.fixtures.RuntimeRegistry
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.server.APIService
+import io.karpfen.server.MockWebSocketSession
 import org.json.JSONObject
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /**
  * Covers model observation over real environments built through [APIService] from the cleaning-robot example, with
@@ -40,6 +44,10 @@ class ModelObservationLifecycleTest {
 
     /** Snapshots over the runtime's registry with the default wait for a tick boundary. */
     private val snapshots = ModelSnapshotService(RegistryEnvironmentLookup, ModelSnapshotService.DEFAULT_TICK_WAIT_MS)
+
+    /** Model subscriptions over the runtime's registry and its session manager. */
+    private val subscriptions =
+        ModelSubscriptionService(RegistryEnvironmentLookup, EnvironmentHandler.clientSessionManager)
 
     /** Starts from an empty registry and an empty outgoing queue. */
     @BeforeEach
@@ -87,6 +95,99 @@ class ModelObservationLifecycleTest {
         assertEquals(0L, halted.revision)
         assertEquals(emptyMap(), halted.activeStates)
         assertEquals(100.0, turtle(halted).getDouble("d_closest_obstacle"))
+    }
+
+    @Test
+    fun `switching observation on loses and repeats nothing`() {
+        val envKey = startedEnvironment()
+        awaitStack(envKey, "idle")
+        attachSession(envKey)
+        subscriptions.subscribe(envKey, CLIENT)
+        val environment = executionThread(envKey)
+
+        environment.acceptExternalEvent(Event("public", "go"))
+        val first = snapshots.snapshot(envKey)
+        awaitTurtle(envKey, "step", stepEntries = 1)
+        environment.acceptExternalEvent(Event("public", "back"))
+        awaitTurtle(envKey, "idle", stepEntries = 1)
+        environment.acceptExternalEvent(Event("public", "go"))
+        awaitTurtle(envKey, "step", stepEntries = 2)
+        val next = snapshots.snapshot(envKey)
+
+        val pushes = drainPushes(envKey)
+        val mirror = SnapshotMirror(first)
+        pushes.filter { it.second.getLong("revision") > first.revision }
+            .forEach { (messageType, payload) -> mirror.apply(messageType, payload) }
+        assertTrue(mirror.matches(next), "Mirror at ${mirror.revision} differs from the snapshot at ${next.revision}")
+        assertEquals(
+            ((first.revision + 1)..next.revision).toList(),
+            pushes.map { it.second.getLong("revision") }.filter { it > first.revision }
+        )
+    }
+
+    @Test
+    fun `switching observation off stops new object and stack pushes`() {
+        val envKey = startedEnvironment()
+        awaitStack(envKey, "idle")
+        attachSession(envKey)
+        subscriptions.subscribe(envKey, CLIENT)
+        val environment = executionThread(envKey)
+        environment.acceptExternalEvent(Event("public", "go"))
+        awaitTurtle(envKey, "step", stepEntries = 1)
+        assertEquals(listOf("stateChange", "objectChanged"), drainPushes(envKey).map { it.first })
+
+        subscriptions.unsubscribe(envKey, CLIENT)
+        val revisionWhenOff = snapshots.snapshot(envKey).revision
+        environment.acceptExternalEvent(Event("public", "back"))
+        awaitTurtle(envKey, "idle", stepEntries = 1)
+
+        assertEquals(revisionWhenOff + 2, snapshots.snapshot(envKey).revision)
+        assertEquals(emptyList(), drainPushes(envKey))
+    }
+
+    @Test
+    fun `run-time and deleted objects reach a model subscriber`() {
+        val envKey = startedEnvironment()
+        awaitStack(envKey, "idle")
+        attachSession(envKey)
+        subscriptions.subscribe(envKey, CLIENT)
+        val engine = executionThread(envKey).engine
+        val modelQueryProcessor = engine.modelQueryProcessor
+
+        val created = assertNotNull(engine.readBetweenTicks(Eventually.DEADLINE_MS) {
+            val vectorType = assertNotNull(engine.metamodel.getTypeByName("Vector"))
+            val vector = DataObject(
+                vectorType,
+                modelQueryProcessor.generateUniqueId("Vector"),
+                mutableListOf(
+                    SimpleAtomicPropertyObject(vectorType.getSimpleProperty("x"), "x", 1.0),
+                    SimpleAtomicPropertyObject(vectorType.getSimpleProperty("y"), "y", 0.0)
+                ),
+                mutableListOf()
+            )
+            modelQueryProcessor.setObjectRelation("turtle", "direction", vector)
+            vector.id
+        })
+        engine.readBetweenTicks(Eventually.DEADLINE_MS) { modelQueryProcessor.updateProperty(created, "x", 3.0) }
+        engine.readBetweenTicks(Eventually.DEADLINE_MS) { modelQueryProcessor.dropObject(created) }
+
+        val pushes = drainPushes(envKey)
+        assertEquals(
+            listOf(
+                "objectChanged" to "turtle",
+                "objectDeleted" to "turtleDirection",
+                "objectChanged" to "turtle",
+                "objectChanged" to created,
+                "objectChanged" to "turtle",
+                "objectDeleted" to created
+            ),
+            pushes.map { (messageType, payload) -> messageType to payload.getString("objectId") }
+        )
+        val revisions = pushes.map { it.second.getLong("revision") }
+        assertEquals((revisions.first() until revisions.first() + pushes.size).toList(), revisions)
+        assertEquals(created, pushes[2].second.getJSONObject("value").getJSONObject("direction").getString("__id__"))
+        assertEquals(3, pushes[3].second.getJSONObject("value").getInt("x"))
+        assertTrue(pushes[4].second.getJSONObject("value").isNull("direction"))
     }
 
     @Test
@@ -142,7 +243,39 @@ class ModelObservationLifecycleTest {
         }
     }
 
+    /** Waits until `turtle` rests in [state] after `step` was entered [stepEntries] times, judged by snapshots. */
+    private fun awaitTurtle(envKey: String, state: String, stepEntries: Int) {
+        val distance = if (state == "step") 2.0 else 1.0
+        Eventually.awaitUntil("turtle rests in $state after $stepEntries entries of step") {
+            val snapshot = snapshots.snapshot(envKey)
+            val turtle = turtle(snapshot)
+            snapshot.activeStates == mapOf("turtle" to listOf(state)) &&
+                turtle.getDouble("d_closest_obstacle") == distance &&
+                (turtle.optJSONArray("log")?.length() ?: 0) == stepEntries
+        }
+    }
+
+    /** Registers the IDE's client for [envKey] and attaches a mock WebSocket session with its access key. */
+    private fun attachSession(envKey: String) {
+        val accessKey = APIService.registerClientForWebSocket(CLIENT, envKey)
+        val attached = EnvironmentHandler.clientSessionManager
+            .verifyAndAttachSession(CLIENT, envKey, accessKey, MockWebSocketSession())
+        assertTrue(attached)
+    }
+
+    /** Takes every queued message and keeps the pushes for [CLIENT] in [envKey] as message type and payload. */
+    private fun drainPushes(envKey: String): List<Pair<String, JSONObject>> =
+        generateSequence { EnvironmentHandler.clientSessionManager.nextOutgoingMessage(0) }
+            .filter { it.environmentKey == envKey && it.clientId == CLIENT }
+            .map { it.messageType to JSONObject(it.payload) }
+            .toList()
+
     /** The `turtle` object inside the room of [snapshot], parsed from its root. */
     private fun turtle(snapshot: ModelSnapshot): JSONObject =
         JSONObject(snapshot.roots.single()).getJSONObject("robot")
+
+    private companion object {
+        /** The client id the tests subscribe with, like the IDE's. */
+        const val CLIENT = "karpfen-ide-4f2c9a1b7e03"
+    }
 }

@@ -19,7 +19,10 @@ import dsl.textual.KmetaDSLConverter
 import dsl.textual.KmodelDSLConverter
 import io.karpfen.fixtures.CleaningRobotExample
 import io.karpfen.io.karpfen.exec.ModelJsonWriter
+import io.karpfen.server.MockWebSocketSession
+import io.karpfen.websocket.ClientSessionManager
 import io.ktor.client.request.get
+import io.ktor.client.request.post
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
@@ -28,15 +31,21 @@ import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
- * Covers [ModelObservationRoutes] in Ktor's test application, which opens no port: parameter checks, error statuses,
- * and the snapshot's status, content type and member order.
+ * Covers [ModelObservationRoutes] in Ktor's test application, which opens no port: parameter checks in their order,
+ * error statuses, the session check of subscribing, empty success bodies, and the snapshot's status, content type and
+ * member order.
  */
 class ModelObservationRoutesTest {
 
     /** The environments the routes find. */
     private val environments = FakeEnvironments()
+
+    /** The sessions and subscriptions of the routes. */
+    private val sessions = ClientSessionManager()
 
     @Test
     fun `a snapshot without envKey is refused with the missing-parameter text`() = observationApplication {
@@ -92,10 +101,67 @@ class ModelObservationRoutesTest {
         )
     }
 
+    @Test
+    fun `subscribing and unsubscribing refuse missing parameters in the order envKey then clientId`() =
+        observationApplication {
+            for (route in listOf("/observatory/subscribeModel", "/observatory/unsubscribeModel")) {
+                val missingEnvKey = "Missing required parameter: envKey"
+                assertAnswer(HttpStatusCode.BadRequest, missingEnvKey, client.post(route))
+                assertAnswer(HttpStatusCode.BadRequest, missingEnvKey, client.post("$route?clientId=ide"))
+                assertAnswer(
+                    HttpStatusCode.BadRequest,
+                    "Missing required parameter: clientId",
+                    client.post("$route?envKey=env-404")
+                )
+            }
+        }
+
+    @Test
+    fun `subscribing and unsubscribing refuse an unknown environment`() = observationApplication {
+        for (route in listOf("/observatory/subscribeModel", "/observatory/unsubscribeModel")) {
+            assertAnswer(
+                HttpStatusCode.BadRequest,
+                "Environment with key env-404 does not exist",
+                client.post("$route?envKey=env-404&clientId=ide")
+            )
+        }
+    }
+
+    @Test
+    fun `subscribing without an open WebSocket session is a conflict`() = observationApplication {
+        environments.create(ENV)
+
+        assertAnswer(
+            HttpStatusCode.Conflict,
+            "Client ide has no open WebSocket session for environment $ENV",
+            client.post("/observatory/subscribeModel?envKey=$ENV&clientId=ide")
+        )
+        assertFalse(sessions.isSubscribedToModel(ENV, "ide"))
+    }
+
+    @Test
+    fun `subscribe and unsubscribe answer 200 with an empty body`() = observationApplication {
+        environments.create(ENV)
+        val accessKey = sessions.registerClientAccess("ide", ENV)
+        assertTrue(sessions.verifyAndAttachSession("ide", ENV, accessKey, MockWebSocketSession()))
+
+        assertAnswer(HttpStatusCode.OK, "", client.post("/observatory/subscribeModel?envKey=$ENV&clientId=ide"))
+        assertTrue(sessions.isSubscribedToModel(ENV, "ide"))
+        assertAnswer(HttpStatusCode.OK, "", client.post("/observatory/subscribeModel?envKey=$ENV&clientId=ide"))
+        assertTrue(sessions.isSubscribedToModel(ENV, "ide"))
+
+        assertAnswer(HttpStatusCode.OK, "", client.post("/observatory/unsubscribeModel?envKey=$ENV&clientId=ide"))
+        assertFalse(sessions.isSubscribedToModel(ENV, "ide"))
+        assertAnswer(HttpStatusCode.OK, "", client.post("/observatory/unsubscribeModel?envKey=$ENV&clientId=ide"))
+    }
+
     /** Runs [test] against a test application with the observation routes over [environments]. */
     private fun observationApplication(test: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
         application {
-            ModelObservationRoutes(ModelSnapshotService(environments, TICK_WAIT_MS)).install(this)
+            ModelObservationRoutes(
+                ModelSnapshotService(environments, TICK_WAIT_MS),
+                ModelSubscriptionService(environments, sessions)
+            ).install(this)
         }
         test()
     }

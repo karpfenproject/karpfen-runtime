@@ -42,6 +42,13 @@ class ClientSessionManager {
     // Map of environmentKey -> clientId -> observed modelElementId
     private val observatorySubscriptions = mutableMapOf<String, MutableMap<String, String>>()
 
+    /**
+     * The clients subscribed to the whole model, per environment: they receive every object change and deletion and
+     * every active-stack change of the environment. Guarded by the subscriptions lock; never evicted by the
+     * broadcaster.
+     */
+    private val modelSubscriptions = mutableMapOf<String, MutableSet<String>>()
+
     // Queue for outgoing messages to be broadcasted asynchronously
     private val outgoingMessageQueue = LinkedBlockingQueue<OutgoingMessage>()
 
@@ -171,8 +178,49 @@ class ClientSessionManager {
     }
 
     /**
+     * Subscribes [clientId] to the whole model of [environmentKey]: from now on it receives `objectChanged` and
+     * `objectDeleted` for every object, run-time objects included, and `stateChange` for every state machine.
+     * Idempotent; unlike object observers, it works in every phase and takes effect immediately.
+     */
+    fun subscribeToModel(environmentKey: String, clientId: String) {
+        subscriptionsLock.writeLock().lock()
+        try {
+            modelSubscriptions.getOrPut(environmentKey) { LinkedHashSet() }.add(clientId)
+        } finally {
+            subscriptionsLock.writeLock().unlock()
+        }
+    }
+
+    /**
+     * Ends the model subscription of [clientId] in [environmentKey]: no new object or stack push is enqueued for the
+     * client because of it. Its object observations and its observatory registration stay. Idempotent.
+     */
+    fun unsubscribeFromModel(environmentKey: String, clientId: String) {
+        subscriptionsLock.writeLock().lock()
+        try {
+            modelSubscriptions[environmentKey]?.remove(clientId)
+            if (modelSubscriptions[environmentKey]?.isEmpty() == true) {
+                modelSubscriptions.remove(environmentKey)
+            }
+        } finally {
+            subscriptionsLock.writeLock().unlock()
+        }
+    }
+
+    /** True while [clientId] is subscribed to the whole model of [environmentKey]. */
+    fun isSubscribedToModel(environmentKey: String, clientId: String): Boolean {
+        subscriptionsLock.readLock().lock()
+        try {
+            return modelSubscriptions[environmentKey]?.contains(clientId) == true
+        } finally {
+            subscriptionsLock.readLock().unlock()
+        }
+    }
+
+    /**
      * Notifies the clients interested in a data change of [objectId]: every client whose object subscriptions contain
-     * exactly the id. Each recipient gets one `objectChanged` message.
+     * exactly the id, and every model subscriber of the environment. Each recipient gets one `objectChanged` message,
+     * also when it is interested in both ways.
      *
      * The payload has the members `objectId`, `revision` and `value` in this order. The object id is quoted with
      * [ModelJsonWriter.quote]; [newValue] is the object's JSON and is spliced in as it is. Without a [revision] the
@@ -196,7 +244,7 @@ class ClientSessionManager {
 
     /**
      * Notifies the clients interested in [objectId] that it has been removed from the model, the same recipients as
-     * for a change. Each recipient gets one `objectDeleted` message.
+     * for a change: its object observers and the model subscribers. Each recipient gets one `objectDeleted` message.
      *
      * The payload has the members `objectId` and `revision` in this order; the object id is quoted with
      * [ModelJsonWriter.quote]. Without a [revision] the member is left out, as before revisions existed.
@@ -344,9 +392,9 @@ class ClientSessionManager {
 
     /**
      * Notifies the clients interested in the active stack of the machine attached to [modelElementId]: the
-     * observatory subscribers of `*` or of exactly that element. Each recipient gets one `stateChange` message with
-     * [payload], so a client is never notified twice about one stack change. [notifyObservatory] stays for other
-     * callers.
+     * observatory subscribers of `*` or of exactly that element, and every model subscriber of the environment. Each
+     * recipient gets one `stateChange` message with [payload], so a client is never notified twice about one stack
+     * change. [notifyObservatory] stays for other callers.
      */
     fun notifyActiveStack(environmentKey: String, modelElementId: String, payload: String) {
         subscriptionsLock.readLock().lock()
@@ -359,25 +407,29 @@ class ClientSessionManager {
 
     /**
      * The clients to notify about a change or deletion of [objectId], each once and in subscription order: those whose
-     * object subscriptions contain exactly the id. Called with the subscriptions read lock held.
+     * object subscriptions contain exactly the id, then the model subscribers. Called with the subscriptions read lock
+     * held.
      */
     private fun objectRecipients(environmentKey: String, objectId: String): Set<String> {
         val recipients = LinkedHashSet<String>()
         objectSubscriptions[environmentKey]?.forEach { (clientId, objectIds) ->
             if (objectIds.contains(objectId)) recipients.add(clientId)
         }
+        modelSubscriptions[environmentKey]?.let { recipients.addAll(it) }
         return recipients
     }
 
     /**
      * The clients to notify about a stack change of the machine attached to [modelElementId], each once: the
-     * observatory subscribers of `*` or of exactly that element. Called with the subscriptions read lock held.
+     * observatory subscribers of `*` or of exactly that element, then the model subscribers. Called with the
+     * subscriptions read lock held.
      */
     private fun stackRecipients(environmentKey: String, modelElementId: String): Set<String> {
         val recipients = LinkedHashSet<String>()
         observatorySubscriptions[environmentKey]?.forEach { (clientId, subscribedElement) ->
             if (subscribedElement == "*" || subscribedElement == modelElementId) recipients.add(clientId)
         }
+        modelSubscriptions[environmentKey]?.let { recipients.addAll(it) }
         return recipients
     }
 

@@ -21,6 +21,7 @@ import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.PayloadFormat
 import io.karpfen.observation.ModelObservationRoutes
 import io.karpfen.observation.ModelSnapshotService
+import io.karpfen.observation.ModelSubscriptionService
 import io.karpfen.websocket.ClientSessionManager
 import io.karpfen.websocket.WebSocketMessage
 import io.ktor.server.application.*
@@ -39,11 +40,12 @@ class KtorServer(
     private val host: String = "127.0.0.1",
     private val sessionManager: ClientSessionManager = EnvironmentHandler.clientSessionManager,
     /**
-     * The model observation routes installed next to [HTTPRoutes]; by default over the runtime's environment registry
-     * with the default wait for a tick boundary.
+     * The model observation routes installed next to [HTTPRoutes]; by default over the runtime's environment registry,
+     * with the default wait for a tick boundary and the injected [sessionManager] for model subscriptions.
      */
     private val observationRoutes: ModelObservationRoutes = ModelObservationRoutes(
-        ModelSnapshotService(RegistryEnvironmentLookup, ModelSnapshotService.DEFAULT_TICK_WAIT_MS)
+        ModelSnapshotService(RegistryEnvironmentLookup, ModelSnapshotService.DEFAULT_TICK_WAIT_MS),
+        ModelSubscriptionService(RegistryEnvironmentLookup, sessionManager)
     )
 ) {
     private var engine: ApplicationEngine? = null

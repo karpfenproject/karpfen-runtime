@@ -24,6 +24,7 @@ import io.karpfen.websocket.OutgoingMessage
 import org.json.JSONObject
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -62,6 +63,73 @@ class ObservationRelayTest {
         )
         assertEquals(listOf(1L, 2L, 3L, 4L), messages.map { JSONObject(it.payload).getLong("revision") })
         assertEquals(4L, revisions.current())
+    }
+
+    @Test
+    fun `a client subscribed to the model and to an object gets one message per change`() {
+        sessions.subscribeToModel(ENV, "ide")
+        sessions.subscribeToObject(ENV, "ide", "turtle")
+
+        relay.onObjectChanged("turtle", TURTLE_JSON)
+        relay.onObjectDeleted("turtle")
+
+        val messages = drain()
+        assertEquals(
+            listOf("ide" to "objectChanged", "ide" to "objectDeleted"),
+            messages.map { it.clientId to it.messageType }
+        )
+    }
+
+    @Test
+    fun `stack changes reach model subscribers and observatory subscribers once each`() {
+        sessions.subscribeToModel(ENV, "both")
+        sessions.subscribeToObservatory(ENV, "both", "*")
+        sessions.subscribeToModel(ENV, "model")
+        sessions.subscribeToObservatory(ENV, "watcher", "turtle")
+
+        relay.onActiveStackChanged("turtle", listOf("observe"))
+        relay.onActiveStackChanged("lamp", listOf("off"))
+
+        val messages = drain()
+        assertEquals(
+            listOf("both" to "turtle", "watcher" to "turtle", "model" to "turtle", "both" to "lamp", "model" to "lamp"),
+            messages.map { it.clientId to JSONObject(it.payload).getString("modelElementId") }
+        )
+        assertEquals(listOf(1L, 1L, 1L, 2L, 2L), messages.map { JSONObject(it.payload).getLong("revision") })
+        assertTrue(messages.all { it.messageType == "stateChange" })
+    }
+
+    @Test
+    fun `objects unknown at subscription time reach model subscribers`() {
+        sessions.subscribeToModel(ENV, "ide")
+
+        relay.onObjectChanged("gen_Vector_0", """{"__id__": "gen_Vector_0", "__type__": "Vector", "x": 1, "y": 0}""")
+        relay.onObjectDeleted("gen_Vector_0")
+
+        assertEquals(
+            listOf("objectChanged" to "gen_Vector_0", "objectDeleted" to "gen_Vector_0"),
+            drain().map { it.messageType to JSONObject(it.payload).getString("objectId") }
+        )
+    }
+
+    @Test
+    fun `unsubscribing stops new object and stack pushes but keeps per-object observations and the observatory registration`() {
+        sessions.subscribeToModel(ENV, "ide")
+        sessions.subscribeToObject(ENV, "ide", "turtle")
+        sessions.subscribeToObservatory(ENV, "ide", "turtle")
+
+        sessions.unsubscribeFromModel(ENV, "ide")
+        relay.onObjectChanged("turtle", TURTLE_JSON)
+        relay.onObjectChanged("turtleDirection", TURTLE_JSON)
+        relay.onObjectDeleted("turtleDirection")
+        relay.onActiveStackChanged("turtle", listOf("observe"))
+        relay.onActiveStackChanged("lamp", listOf("off"))
+
+        assertFalse(sessions.isSubscribedToModel(ENV, "ide"))
+        assertEquals(
+            listOf("objectChanged" to 1L, "stateChange" to 4L),
+            drain().map { it.messageType to JSONObject(it.payload).getLong("revision") }
+        )
     }
 
     @Test
