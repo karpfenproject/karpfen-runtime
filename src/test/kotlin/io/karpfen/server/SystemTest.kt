@@ -27,6 +27,7 @@ import io.karpfen.io.karpfen.messages.EventBus
 import io.karpfen.io.karpfen.messages.EventSource
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import java.io.File
 import kotlin.test.assertEquals
@@ -51,6 +52,7 @@ import kotlin.test.assertFalse
  *    that exercises all engine phases: ENTRY, DO, transitions with EVENT/EVAL
  *    conditions, unconditional transitions, and NOT LOOPING semantics.
  */
+@Tag("python")
 class SystemTest {
 
     // ---- Valid states and transitions as defined by the example ----

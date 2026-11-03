@@ -29,6 +29,7 @@ import states.macros.TakesDirective
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 /**
@@ -41,6 +42,7 @@ import org.junit.jupiter.api.Test
  * - COMPLEX tier: code with imports (math, numpy) and function definitions
  * - Cross-tier equivalence: same code produces identical results regardless of execution tier
  */
+@Tag("python")
 class MacroProcessorOptimizedTest {
 
     private lateinit var mqp: ModelQueryProcessor

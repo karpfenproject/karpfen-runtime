@@ -25,8 +25,10 @@ import states.macros.ReturnsDirective
 import states.macros.TakesDirective
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
+@Tag("python")
 class MacroProcessorTest {
 
     private lateinit var mqp: ModelQueryProcessor

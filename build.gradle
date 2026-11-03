@@ -50,5 +50,9 @@ kotlin {
 }
 
 test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        if (project.hasProperty('skipPythonTests')) {
+            excludeTags 'python'
+        }
+    }
 }

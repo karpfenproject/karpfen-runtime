@@ -18,8 +18,10 @@ package io.karpfen.exec
 import io.karpfen.io.karpfen.exec.PersistentPythonSession
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
+@Tag("python")
 class PersistentPythonSessionTest {
 
     private var session: PersistentPythonSession? = null

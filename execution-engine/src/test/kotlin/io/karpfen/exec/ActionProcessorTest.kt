@@ -26,6 +26,7 @@ import states.macros.ReturnsDirective
 import states.macros.TakesDirective
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 /**
@@ -180,6 +181,7 @@ class ActionProcessorTest {
     // ---- SET with EVAL -----------------------------------------------
 
     @Test
+    @Tag("python")
     fun `SET with EVAL computes new x from position and direction`() {
         val ap = makeActionProcessor()
         // turtle x=5.0, direction x=0.0 → new x = 5.0 + 0.3*0.0 = 5.0
@@ -194,6 +196,7 @@ class ActionProcessorTest {
     }
 
     @Test
+    @Tag("python")
     fun `SET with EVAL computes new y from position and direction`() {
         val ap = makeActionProcessor()
         // turtle y=5.0, direction y=1.0 → new y = 5.0 + 0.3*1.0 = 5.3
@@ -208,6 +211,7 @@ class ActionProcessorTest {
     }
 
     @Test
+    @Tag("python")
     fun `SETOBJ direction with EVAL returning new Vector replaces the has-relation`() {
         val ap = makeActionProcessor()
         // EVAL returns a new Vector dict; SETOBJ embeds it into the `has` relation "direction".
@@ -228,6 +232,7 @@ class ActionProcessorTest {
     // ---- SETOBJ with MACRO --------------------------------------------
 
     @Test
+    @Tag("python")
     fun `SETOBJ direction with MACRO add_vectors`() {
         val ap = makeActionProcessor()
         // add_vectors(position(5,5), direction(0,1)) = (5,6)
@@ -246,6 +251,7 @@ class ActionProcessorTest {
     }
 
     @Test
+    @Tag("python")
     fun `SET number property with MACRO scale_number`() {
         val ap = makeActionProcessor()
         // scale_number(100.0) = 200.0
@@ -292,6 +298,7 @@ class ActionProcessorTest {
     // ---- APPEND with EVAL -------------------------------------------
 
     @Test
+    @Tag("python")
     fun `APPEND with EVAL result string`() {
         val ap = makeActionProcessor()
         // Inline macro returns a string that gets appended to the log
@@ -309,6 +316,7 @@ class ActionProcessorTest {
     // ---- APPEND with MACRO ------------------------------------------
 
     @Test
+    @Tag("python")
     fun `APPEND with MACRO returns string and appends`() {
         val ap = makeActionProcessor()
         // make_log_entry returns "Robot at x=5.0 y=5.0"
@@ -438,6 +446,7 @@ class ActionProcessorTest {
     }
 
     @Test
+    @Tag("python")
     fun `resolveRightSide EVAL returns number from python`() {
         val ap = makeActionProcessor()
         val result = ap.resolveRightSide(
@@ -448,6 +457,7 @@ class ActionProcessorTest {
     }
 
     @Test
+    @Tag("python")
     fun `resolveRightSide MACRO returns DataObject`() {
         val ap = makeActionProcessor()
         val result = ap.resolveRightSide(
@@ -462,6 +472,7 @@ class ActionProcessorTest {
     // ---- SETLIST / DROPLIST ------------------------------------------
 
     @Test
+    @Tag("python")
     fun `SETLIST overwrites a simple list property`() {
         val ap = makeActionProcessor()
         ap.executeRule(ActionRule(ActionOperationType.APPEND, "log", ValueActionRightSide("old entry")))
@@ -507,6 +518,7 @@ class ActionProcessorTest {
     // ---- SETOBJ (knows / has) ----------------------------------------
 
     @Test
+    @Tag("python")
     fun `SETOBJ repoints a knows relation to an existing object`() {
         val ap = makeActionProcessor()
         // closest_obstacle starts as "chair"; repoint it to the existing "table".
@@ -536,6 +548,7 @@ class ActionProcessorTest {
     // ---- APPENDOBJ (knows / has) -------------------------------------
 
     @Test
+    @Tag("python")
     fun `APPENDOBJ adds an existing object to a knows list`() {
         val ap = makeActionProcessor()
         val before = mqp.getDataObjectById("turtle").getRel("obstacles").size
@@ -548,6 +561,7 @@ class ActionProcessorTest {
     }
 
     @Test
+    @Tag("python")
     fun `APPENDOBJ embeds a new object into a has list and registers it`() {
         val ap = makeRoomActionProcessor()
         val before = mqp.getDataObjectById("APB 2101").getRel("obstacles").size
@@ -565,6 +579,7 @@ class ActionProcessorTest {
     }
 
     @Test
+    @Tag("python")
     fun `APPENDOBJ into a knows list rejects a brand-new object`() {
         val ap = makeActionProcessor()
         // make_obstacle builds a new object; a `knows` list must reference existing objects only.
@@ -609,6 +624,7 @@ class ActionProcessorTest {
     // ---- WITH ... AS binding block -----------------------------------
 
     @Test
+    @Tag("python")
     fun `WITH binds a macro result once for value-wise updates preserving object id`() {
         val ap = makeActionProcessor()
         // add_vectors(position(5,5), direction(0,1)) = (5,6); scatter into the existing direction Vector.
