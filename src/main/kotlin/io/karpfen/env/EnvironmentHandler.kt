@@ -109,13 +109,18 @@ object EnvironmentHandler {
         return clientSessionManager.registerClientAccess(clientId, envKey)
     }
 
+    /**
+     * Starts the activated environment [envKey] through [EnvironmentThread.launch], which owns the environment's one
+     * runner: starting a running environment changes nothing, starting a stopped one runs it again.
+     */
     fun startEnvironmentThread(envKey: String) {
         val envThread = executionThreads[envKey]
             ?: throw IllegalStateException("Environment with key '$envKey' has no execution thread")
-        val thread = Thread(envThread, "EnvironmentThread-$envKey")
-        thread.isDaemon = false
-        thread.start()
-        println("[EnvironmentHandler] Started execution thread for environment $envKey")
+        if (envThread.launch()) {
+            println("[EnvironmentHandler] Started execution thread for environment $envKey")
+        } else {
+            println("[EnvironmentHandler] Environment $envKey is already running")
+        }
     }
 
     fun stopEnvironmentThread(envKey: String) {

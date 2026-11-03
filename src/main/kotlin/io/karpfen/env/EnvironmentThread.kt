@@ -51,6 +51,14 @@ class EnvironmentThread(
     @Volatile
     private var isRunning = false
 
+    /** Where this environment is in its start and stop cycle; changed only by [launch] and [stop]. */
+    @Volatile
+    private var runState = RunState.READY
+
+    /** The thread running this environment's event loop since the latest [launch], or `null` before the first. */
+    @Volatile
+    private var runner: Thread? = null
+
     val engine = Engine(
         environment.metamodel!!,
         environment.model!!,
@@ -117,19 +125,59 @@ class EnvironmentThread(
         engine.forceActiveState(modelElement, leaf)
     }
 
-    fun stop() {
-        isRunning = false
-        engine.stop()
+    /**
+     * Starts this environment: its engine and the one runner thread of its event loop.
+     *
+     * The environment owns its runner, so starting never adds a second event loop:
+     * - running with a live runner and a ticking engine: nothing happens;
+     * - running with a live runner but an engine whose thread ended on its own: the engine is started again;
+     * - ready, stopped, or running without a live runner: the recorded active stacks are cleared, the loop flag is
+     *   set before the runner exists (so a stop can no longer be overwritten by the runner's first line), the engine
+     *   is started from its initial stacks over the current model, and a new non-daemon runner named
+     *   `EnvironmentThread-<key>` is started.
+     *
+     * @return `true` when something was started, `false` when the environment was already running.
+     */
+    @Synchronized
+    fun launch(): Boolean {
+        if (runState == RunState.RUNNING && runner?.isAlive == true) {
+            if (engine.isTicking) {
+                return false
+            }
+            engine.start()
+            return true
+        }
+        activeStacks.clear()
+        runState = RunState.RUNNING
+        isRunning = true
+        engine.start()
+        runner = Thread(this, "EnvironmentThread-${environment.key}").apply {
+            isDaemon = false
+            start()
+        }
+        return true
     }
 
+    /**
+     * Stops this environment: marks it stopped, ends the event loop, stops the engine (joining its thread), and then
+     * waits at most [RUNNER_JOIN_MS] milliseconds for the runner to finish. The model stays as the engine left it.
+     */
+    @Synchronized
+    fun stop() {
+        runState = RunState.STOPPED
+        isRunning = false
+        engine.stop()
+        runner?.join(RUNNER_JOIN_MS)
+    }
+
+    /**
+     * The event loop of the runner thread that [launch] starts: drains external events onto the shared bus and purges
+     * expired events until [stop]. The engine ticks on its own thread.
+     */
     override fun run() {
-        isRunning = true
         println("[EnvironmentThread] Running for environment ${environment.key}")
 
         try {
-            // Start the engine (it runs in its own thread)
-            engine.start()
-
             while (isRunning) {
                 // Drain all queued external events into the shared bus
                 val batch = mutableListOf<Event>()
@@ -153,5 +201,13 @@ class EnvironmentThread(
             engine.stop()
             println("[EnvironmentThread] Stopped for environment ${environment.key}")
         }
+    }
+
+    /** The start and stop cycle of an environment: built, started by [launch], stopped by [stop]. */
+    private enum class RunState { READY, RUNNING, STOPPED }
+
+    private companion object {
+        /** How long [stop] waits for the runner thread to finish its loop. */
+        const val RUNNER_JOIN_MS = 1_000L
     }
 }
