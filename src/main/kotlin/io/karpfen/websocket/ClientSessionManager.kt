@@ -168,46 +168,47 @@ class ClientSessionManager {
     }
 
     /**
-     * Notifies all clients subscribed to a specific object of a data change. The object id is quoted with
-     * [ModelJsonWriter.quote]; [newValue] is the object's JSON and is spliced in as it is.
+     * Notifies the clients interested in a data change of [objectId]: every client whose object subscriptions contain
+     * exactly the id. Each recipient gets one `objectChanged` message.
+     *
+     * The payload has the members `objectId`, `revision` and `value` in this order. The object id is quoted with
+     * [ModelJsonWriter.quote]; [newValue] is the object's JSON and is spliced in as it is. Without a [revision] the
+     * member is left out and the payload is written exactly as before revisions existed.
+     *
+     * @param revision the revision the environment assigned to this change, or `null` for a change without one.
      */
-    fun notifyObjectChange(environmentKey: String, objectId: String, newValue: String) {
+    fun notifyObjectChange(environmentKey: String, objectId: String, newValue: String, revision: Long? = null) {
+        val payload = if (revision == null) {
+            """{"objectId":${ModelJsonWriter.quote(objectId)},"value":$newValue}"""
+        } else {
+            """{"objectId":${ModelJsonWriter.quote(objectId)},"revision":$revision,"value":$newValue}"""
+        }
         subscriptionsLock.readLock().lock()
         try {
-            objectSubscriptions[environmentKey]?.forEach { (clientId, objectIds) ->
-                if (objectIds.contains(objectId)) {
-                    val message = OutgoingMessage(
-                        environmentKey,
-                        clientId,
-                        "objectChanged",
-                        """{"objectId":${ModelJsonWriter.quote(objectId)},"value":$newValue}"""
-                    )
-                    outgoingMessageQueue.offer(message)
-                }
-            }
+            enqueue(environmentKey, objectRecipients(environmentKey, objectId), "objectChanged", payload)
         } finally {
             subscriptionsLock.readLock().unlock()
         }
     }
 
     /**
-     * Notifies all clients subscribed to a specific object that it has been removed from the model. The object id is
-     * quoted with [ModelJsonWriter.quote].
+     * Notifies the clients interested in [objectId] that it has been removed from the model, the same recipients as
+     * for a change. Each recipient gets one `objectDeleted` message.
+     *
+     * The payload has the members `objectId` and `revision` in this order; the object id is quoted with
+     * [ModelJsonWriter.quote]. Without a [revision] the member is left out, as before revisions existed.
+     *
+     * @param revision the revision the environment assigned to this deletion, or `null` for one without.
      */
-    fun notifyObjectDeleted(environmentKey: String, objectId: String) {
+    fun notifyObjectDeleted(environmentKey: String, objectId: String, revision: Long? = null) {
+        val payload = if (revision == null) {
+            """{"objectId":${ModelJsonWriter.quote(objectId)}}"""
+        } else {
+            """{"objectId":${ModelJsonWriter.quote(objectId)},"revision":$revision}"""
+        }
         subscriptionsLock.readLock().lock()
         try {
-            objectSubscriptions[environmentKey]?.forEach { (clientId, objectIds) ->
-                if (objectIds.contains(objectId)) {
-                    val message = OutgoingMessage(
-                        environmentKey,
-                        clientId,
-                        "objectDeleted",
-                        """{"objectId":${ModelJsonWriter.quote(objectId)}}"""
-                    )
-                    outgoingMessageQueue.offer(message)
-                }
-            }
+            enqueue(environmentKey, objectRecipients(environmentKey, objectId), "objectDeleted", payload)
         } finally {
             subscriptionsLock.readLock().unlock()
         }
@@ -314,6 +315,52 @@ class ClientSessionManager {
             }
         } finally {
             subscriptionsLock.readLock().unlock()
+        }
+    }
+
+    /**
+     * Notifies the clients interested in the active stack of the machine attached to [modelElementId]: the
+     * observatory subscribers of `*` or of exactly that element. Each recipient gets one `stateChange` message with
+     * [payload], so a client is never notified twice about one stack change. [notifyObservatory] stays for other
+     * callers.
+     */
+    fun notifyActiveStack(environmentKey: String, modelElementId: String, payload: String) {
+        subscriptionsLock.readLock().lock()
+        try {
+            enqueue(environmentKey, stackRecipients(environmentKey, modelElementId), "stateChange", payload)
+        } finally {
+            subscriptionsLock.readLock().unlock()
+        }
+    }
+
+    /**
+     * The clients to notify about a change or deletion of [objectId], each once and in subscription order: those whose
+     * object subscriptions contain exactly the id. Called with the subscriptions read lock held.
+     */
+    private fun objectRecipients(environmentKey: String, objectId: String): Set<String> {
+        val recipients = LinkedHashSet<String>()
+        objectSubscriptions[environmentKey]?.forEach { (clientId, objectIds) ->
+            if (objectIds.contains(objectId)) recipients.add(clientId)
+        }
+        return recipients
+    }
+
+    /**
+     * The clients to notify about a stack change of the machine attached to [modelElementId], each once: the
+     * observatory subscribers of `*` or of exactly that element. Called with the subscriptions read lock held.
+     */
+    private fun stackRecipients(environmentKey: String, modelElementId: String): Set<String> {
+        val recipients = LinkedHashSet<String>()
+        observatorySubscriptions[environmentKey]?.forEach { (clientId, subscribedElement) ->
+            if (subscribedElement == "*" || subscribedElement == modelElementId) recipients.add(clientId)
+        }
+        return recipients
+    }
+
+    /** Enqueues one message of [messageType] with [payload] for every client in [recipients]. */
+    private fun enqueue(environmentKey: String, recipients: Set<String>, messageType: String, payload: String) {
+        for (clientId in recipients) {
+            outgoingMessageQueue.offer(OutgoingMessage(environmentKey, clientId, messageType, payload))
         }
     }
 

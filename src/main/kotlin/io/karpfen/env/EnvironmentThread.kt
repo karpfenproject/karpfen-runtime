@@ -20,6 +20,9 @@ import io.karpfen.Engine
 import io.karpfen.EngineTraceLogger
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
+import io.karpfen.observation.ActiveStackRecord
+import io.karpfen.observation.ChangeRevision
+import io.karpfen.observation.ObservationRelay
 import java.util.concurrent.LinkedBlockingQueue
 
 class EnvironmentThread(
@@ -34,6 +37,15 @@ class EnvironmentThread(
     val sharedEventBus: EventBus = EventBus(
         defaultTtlMs = environment.eventTtlMs
     )
+
+    /**
+     * Counts the observations of this environment's engine for push messages and snapshots. It lives as long as the
+     * activation, so a restart after a stop continues counting.
+     */
+    val revisions = ChangeRevision()
+
+    /** The last reported active stack of every state machine of this environment, read by snapshots. */
+    val activeStacks = ActiveStackRecord()
 
     private val incomingExternalEvents = LinkedBlockingQueue<Event>()
     @Volatile
@@ -50,19 +62,19 @@ class EnvironmentThread(
         eventMetamodel = environment.eventMetamodel
     )
 
+    /**
+     * Wires the engine to the environment's WebSocket clients before the first start.
+     *
+     * One [ObservationRelay] receives every object change and deletion of the model and every active-stack change of
+     * the engine, assigns each one the next of [revisions], records the stacks in [activeStacks], and hands the push
+     * to the session manager. The object observers and domain listeners registered before activation are subscribed
+     * here.
+     */
     fun setup() {
         val clientSessionManager = EnvironmentHandler.clientSessionManager
 
-        // Register a ModelChangePublisher that pushes JSON updates to subscribed WebSocket clients.
-        engine.modelQueryProcessor.addChangePublisher(object : io.karpfen.io.karpfen.exec.ModelChangePublisher {
-            override fun onObjectChanged(objectId: String, jsonValue: String) {
-                clientSessionManager.notifyObjectChange(environment.key, objectId, jsonValue)
-            }
-
-            override fun onObjectDeleted(objectId: String) {
-                clientSessionManager.notifyObjectDeleted(environment.key, objectId)
-            }
-        })
+        val relay = ObservationRelay(environment.key, clientSessionManager, revisions, activeStacks)
+        engine.modelQueryProcessor.addChangePublisher(relay)
 
         // Register DataObservation listeners (from the Environment configuration).
         for (observation in environment.objectObservations) {
@@ -83,16 +95,7 @@ class EnvironmentThread(
             clientSessionManager.subscribeToDomain(environment.key, dl.clientId, dl.domain)
         }
 
-        // Push ONLY active-state changes to observatory-subscribed WebSocket clients (the per-tick
-        // trace stream is intentionally not forwarded — it was pure overhead). The engine fires this
-        // exactly once per real state change (initial / transition / split / join / forced resync).
-        engine.onActiveStackChanged = { modelElementId, stack ->
-            val payload = org.json.JSONObject()
-                .put("modelElementId", modelElementId)
-                .put("stack", org.json.JSONArray(stack))
-                .toString()
-            clientSessionManager.notifyObservatory(environment.key, modelElementId, "stateChange", payload)
-        }
+        engine.onActiveStackChanged = relay::onActiveStackChanged
 
         println("[EnvironmentThread] Setup complete for environment ${environment.key}")
     }
