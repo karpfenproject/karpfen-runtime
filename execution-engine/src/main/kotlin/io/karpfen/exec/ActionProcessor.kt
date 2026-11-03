@@ -65,11 +65,19 @@ class ActionProcessor(
      *
      * [eventContext] is the payload of the event in scope, if any. It seeds the resolution scope so that
      * `$(event->...)` is resolvable inside this block and an `IF IN SCOPE` block can check its availability.
+     *
+     * The block is one notification batch of the [modelQueryProcessor]: each changed object is published once when
+     * the block ends. The batch is committed in a `finally`, so when an action fails, the changes made before the
+     * failure are still published with this block and no batch stays open for later writes; the failure then
+     * propagates to the caller.
      */
     fun executeBlock(block: ActionBlock, eventContext: DataObject? = null) {
         modelQueryProcessor.beginBatch()
-        executeItems(block.items, ModelQueryProcessor.eventScope(eventContext))
-        modelQueryProcessor.commitBatch()
+        try {
+            executeItems(block.items, ModelQueryProcessor.eventScope(eventContext))
+        } finally {
+            modelQueryProcessor.commitBatch()
+        }
     }
 
     /**
