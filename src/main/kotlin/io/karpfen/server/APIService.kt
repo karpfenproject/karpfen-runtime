@@ -124,10 +124,26 @@ object APIService {
         EnvironmentHandler.getEnv(envKey)!!.domainListeners.add(DomainListener(clientId, domain))
     }
 
+    /**
+     * Activates the environment [envKey] once it has a metamodel and a model.
+     *
+     * Every state machine must be attached to an object of the model, nested objects included; otherwise the engine
+     * thread would die at its start while every call had answered 200. Missing attachments are refused with an
+     * [IllegalStateException] naming the keys, comma-separated, and the environment stays configurable. Activation
+     * itself happens at most once (see [EnvironmentHandler.activeEnv]).
+     */
     fun runEnvironment(envKey: String) {
         val env = EnvironmentHandler.getEnv(envKey) ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
         if (env.model == null || env.metamodel == null) {
             throw IllegalStateException("Environment with key $envKey must have both a metamodel and a model before it can be run")
+        }
+        val modelIds = KmodelDSLConverter.collectAllObjects(env.model!!.objects).map { it.id }.toSet()
+        val missingAttachments = env.stateMachines.keys.filter { it !in modelIds }
+        if (missingAttachments.isNotEmpty()) {
+            throw IllegalStateException(
+                "Environment with key $envKey has state machines attached to objects missing from its model: " +
+                    missingAttachments.joinToString(", ")
+            )
         }
         EnvironmentHandler.activeEnv(envKey)
     }

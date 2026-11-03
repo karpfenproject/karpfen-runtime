@@ -64,6 +64,24 @@ class EnvironmentActivationTest {
     }
 
     @Test
+    fun `runEnvironment refuses state machines attached to objects missing from the model`() {
+        val envKey = CleaningRobotExample.createEnvironment()
+        APIService.receiveStateMachine(envKey, "ghost", CleaningRobotExample.idleStepMachine)
+        APIService.receiveStateMachine(envKey, "turtlePosition", CleaningRobotExample.idleStepMachine)
+        APIService.receiveStateMachine(envKey, "phantom", CleaningRobotExample.idleStepMachine)
+
+        val refusal = assertFailsWith<IllegalStateException> { APIService.runEnvironment(envKey) }
+
+        assertEquals(
+            "Environment with key $envKey has state machines attached to objects missing from its model: ghost, phantom",
+            refusal.message
+        )
+        assertFalse(EnvironmentHandler.isActiveEnv(envKey))
+        assertNull(EnvironmentHandler.executionThreads[envKey])
+        APIService.updateTickDelay(envKey, 50)
+    }
+
+    @Test
     fun `a refused activation leaves the environment configurable`() {
         val envKey = APIService.createEnvironment()
         APIService.receiveMetamodel(envKey, CleaningRobotExample.metamodel)
