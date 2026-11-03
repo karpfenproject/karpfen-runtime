@@ -18,17 +18,21 @@ package io.karpfen.env
 import io.karpfen.DataObservationListener
 import io.karpfen.Engine
 import io.karpfen.EngineTraceLogger
+import io.karpfen.io.karpfen.exec.ModelJsonWriter
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
 import io.karpfen.observation.ActiveStackRecord
 import io.karpfen.observation.ChangeRevision
+import io.karpfen.observation.EnvironmentPhase
+import io.karpfen.observation.ModelSnapshot
 import io.karpfen.observation.ObservationRelay
+import io.karpfen.observation.ObservedEnvironment
 import java.util.concurrent.LinkedBlockingQueue
 
 class EnvironmentThread(
     val environment: Environment,
     val traceLogger: EngineTraceLogger? = null
-) : Runnable {
+) : Runnable, ObservedEnvironment {
 
     /**
      * One shared [EventBus] per environment so that all Engine instances within it
@@ -69,6 +73,32 @@ class EnvironmentThread(
         eventConsumptionOnFire = environment.eventConsumptionOnFire,
         eventMetamodel = environment.eventMetamodel
     )
+
+    /**
+     * The phase derived from the run state: activated until the first [launch], stopped after [stop], and in between
+     * running while the engine thread is alive or halted once it ended on its own.
+     */
+    override val phase: EnvironmentPhase
+        get() = when (runState) {
+            RunState.READY -> EnvironmentPhase.ACTIVATED
+            RunState.STOPPED -> EnvironmentPhase.STOPPED
+            RunState.RUNNING -> if (engine.isTicking) EnvironmentPhase.RUNNING else EnvironmentPhase.HALTED
+        }
+
+    /**
+     * Reads the snapshot through the engine's tick gate: the phase, the revision of the last observation, the recorded
+     * active stacks and every root object written like an `objectChanged` value, all between two ticks.
+     */
+    override fun snapshotBetweenTicks(timeoutMs: Long): ModelSnapshot? =
+        engine.readBetweenTicks(timeoutMs) {
+            ModelSnapshot(
+                environment.key,
+                phase,
+                revisions.current(),
+                activeStacks.current(),
+                engine.model.objects.map(ModelJsonWriter::write)
+            )
+        }
 
     /**
      * Wires the engine to the environment's WebSocket clients before the first start.

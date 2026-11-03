@@ -277,7 +277,12 @@ object HTTPRoutes {
         }
     }
 
-    private suspend fun respondWithError(call: ApplicationCall, e: Exception) {
+    /**
+     * Answers [call] with the error [e]: [IllegalArgumentException] as 400, [IllegalStateException] as 409 and any other
+     * exception as 500, the body being the exception's message or `Unexpected error`. The model observation routes
+     * answer their errors the same way.
+     */
+    internal suspend fun respondWithError(call: ApplicationCall, e: Exception) {
         val status = when (e) {
             is IllegalArgumentException -> HttpStatusCode.BadRequest
             is IllegalStateException -> HttpStatusCode.Conflict

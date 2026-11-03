@@ -16,8 +16,11 @@
 package io.karpfen.server
 
 import io.karpfen.env.EnvironmentHandler
+import io.karpfen.env.RegistryEnvironmentLookup
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.PayloadFormat
+import io.karpfen.observation.ModelObservationRoutes
+import io.karpfen.observation.ModelSnapshotService
 import io.karpfen.websocket.ClientSessionManager
 import io.karpfen.websocket.WebSocketMessage
 import io.ktor.server.application.*
@@ -34,13 +37,22 @@ import java.time.Duration
 class KtorServer(
     private val port: Int = 8080,
     private val host: String = "127.0.0.1",
-    private val sessionManager: ClientSessionManager = EnvironmentHandler.clientSessionManager
+    private val sessionManager: ClientSessionManager = EnvironmentHandler.clientSessionManager,
+    /**
+     * The model observation routes installed next to [HTTPRoutes]; by default over the runtime's environment registry
+     * with the default wait for a tick boundary.
+     */
+    private val observationRoutes: ModelObservationRoutes = ModelObservationRoutes(
+        ModelSnapshotService(RegistryEnvironmentLookup, ModelSnapshotService.DEFAULT_TICK_WAIT_MS)
+    )
 ) {
     private var engine: ApplicationEngine? = null
 
+    /** Starts the server without waiting: the HTTP routes, then the model observation routes, then the WebSocket. */
     fun start() {
         engine = embeddedServer(Netty, port = port, host = host) {
             HTTPRoutes.configure(this)
+            observationRoutes.install(this)
             configureWebSocket()
         }.start(wait = false)
         println("[KtorServer] Started on http://$host:$port")
