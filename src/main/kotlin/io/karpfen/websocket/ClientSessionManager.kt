@@ -15,6 +15,7 @@
  */
 package io.karpfen.websocket
 
+import io.karpfen.io.karpfen.exec.ModelJsonWriter
 import io.ktor.websocket.WebSocketSession
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.locks.ReentrantReadWriteLock
@@ -167,7 +168,8 @@ class ClientSessionManager {
     }
 
     /**
-     * Notifies all clients subscribed to a specific object of a data change.
+     * Notifies all clients subscribed to a specific object of a data change. The object id is quoted with
+     * [ModelJsonWriter.quote]; [newValue] is the object's JSON and is spliced in as it is.
      */
     fun notifyObjectChange(environmentKey: String, objectId: String, newValue: String) {
         subscriptionsLock.readLock().lock()
@@ -178,7 +180,7 @@ class ClientSessionManager {
                         environmentKey,
                         clientId,
                         "objectChanged",
-                        """{"objectId":"$objectId","value":$newValue}"""
+                        """{"objectId":${ModelJsonWriter.quote(objectId)},"value":$newValue}"""
                     )
                     outgoingMessageQueue.offer(message)
                 }
@@ -189,7 +191,8 @@ class ClientSessionManager {
     }
 
     /**
-     * Notifies all clients subscribed to a specific object that it has been removed from the model.
+     * Notifies all clients subscribed to a specific object that it has been removed from the model. The object id is
+     * quoted with [ModelJsonWriter.quote].
      */
     fun notifyObjectDeleted(environmentKey: String, objectId: String) {
         subscriptionsLock.readLock().lock()
@@ -200,7 +203,7 @@ class ClientSessionManager {
                         environmentKey,
                         clientId,
                         "objectDeleted",
-                        """{"objectId":"$objectId"}"""
+                        """{"objectId":${ModelJsonWriter.quote(objectId)}}"""
                     )
                     outgoingMessageQueue.offer(message)
                 }
@@ -211,7 +214,8 @@ class ClientSessionManager {
     }
 
     /**
-     * Notifies all clients subscribed to a specific domain of an event.
+     * Notifies all clients subscribed to a specific domain of an event. The domain is quoted with
+     * [ModelJsonWriter.quote]; [payload] is already JSON and is spliced in as it is.
      */
     fun notifyDomainEvent(environmentKey: String, domain: String, payload: String) {
         subscriptionsLock.readLock().lock()
@@ -222,7 +226,7 @@ class ClientSessionManager {
                         environmentKey,
                         clientId,
                         "domainEvent",
-                        """{"domain":"$domain","payload":$payload}"""
+                        """{"domain":${ModelJsonWriter.quote(domain)},"payload":$payload}"""
                     )
                     outgoingMessageQueue.offer(message)
                 }

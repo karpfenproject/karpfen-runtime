@@ -15,6 +15,7 @@
  */
 package io.karpfen.websocket
 
+import io.karpfen.io.karpfen.exec.ModelJsonWriter
 import io.ktor.websocket.WebSocketSession
 
 /**
@@ -46,10 +47,11 @@ data class OutgoingMessage(
     val messageType: String,
     val payload: String
 ) {
-    fun toJson(): String {
-        val escapedEnvKey = environmentKey.replace("\"", "\\\"")
-        val escapedClientId = clientId.replace("\"", "\\\"")
-        val escapedMsgType = messageType.replace("\"", "\\\"")
-        return """{"environmentKey":"$escapedEnvKey","clientId":"$escapedClientId","messageType":"$escapedMsgType","payload":$payload}"""
-    }
+    /**
+     * Writes the envelope sent as one text frame: the members `environmentKey`, `clientId`, `messageType` and
+     * `payload` in this order, without whitespace. The three strings are quoted with [ModelJsonWriter.quote]; the
+     * [payload] is already JSON and is spliced in as it is.
+     */
+    fun toJson(): String =
+        """{"environmentKey":${ModelJsonWriter.quote(environmentKey)},"clientId":${ModelJsonWriter.quote(clientId)},"messageType":${ModelJsonWriter.quote(messageType)},"payload":$payload}"""
 }

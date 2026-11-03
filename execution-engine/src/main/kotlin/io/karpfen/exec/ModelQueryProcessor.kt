@@ -455,61 +455,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     // ---- JSON serialisation -----------------------------------------------
 
     /**
-     * Serialises a [DataObject] to a JSON string (using the same structure as [dataObjectToPythonDict]
-     * but with proper JSON syntax). Suitable for WebSocket push notifications.
+     * Serialises a [DataObject] to a JSON string for WebSocket push notifications; [ModelJsonWriter.write] does the
+     * writing, so pushes and model snapshots share one format.
      */
-    fun dataObjectToJson(obj: DataObject): String {
-        return buildJsonObject(obj)
-    }
-
-    private fun buildJsonObject(obj: DataObject): String {
-        val entries = mutableListOf<String>()
-        entries.add("\"__id__\": \"${obj.id}\"")
-        entries.add("\"__type__\": \"${obj.ofType.name}\"")
-
-        for (prop in obj.properties) {
-            if (prop.isList()) {
-                val listProp = prop as instance.SimpleListPropertyObject
-                val values = listProp.getValues().joinToString(", ") { valueToJsonLiteral(it, prop.getValueType()) }
-                entries.add("\"${prop.key}\": [$values]")
-            } else {
-                val atomicProp = prop as instance.SimpleAtomicPropertyObject
-                entries.add("\"${prop.key}\": ${valueToJsonLiteral(atomicProp.getValue(), prop.getValueType())}")
-            }
-        }
-
-        for (rel in obj.relations) {
-            if (rel.isList()) {
-                val listRel = rel as instance.ClassTypeListPropertyObject
-                // getValueRefs() is used to safely check for null obj before calling getValues()
-                val values = listRel.getValueRefs().joinToString(", ") { ref ->
-                    if (ref.obj != null) buildJsonObject(ref.obj!!) else "null"
-                }
-                entries.add("\"${rel.key}\": [$values]")
-            } else {
-                val atomicRel = rel as instance.ClassTypeAtomicPropertyObject
-                val value = atomicRel.getValue()
-                if (value != null) {
-                    entries.add("\"${rel.key}\": ${buildJsonObject(value)}")
-                } else {
-                    entries.add("\"${rel.key}\": null")
-                }
-            }
-        }
-
-        return "{${entries.joinToString(", ")}}"
-    }
-
-    private fun valueToJsonLiteral(value: Any, type: meta.SimplePropertyType): String {
-        return when (type) {
-            meta.SimplePropertyType.STRING -> "\"${value.toString().replace("\"", "\\\"")}\""
-            meta.SimplePropertyType.NUMBER -> {
-                val d = value as Double
-                if (d == d.toLong().toDouble()) d.toLong().toString() else d.toString()
-            }
-            meta.SimplePropertyType.BOOLEAN -> if (value as Boolean) "true" else "false"
-        }
-    }
+    fun dataObjectToJson(obj: DataObject): String = ModelJsonWriter.write(obj)
 
     /**
      * Finds a DataObject by its unique id across all objects (including nested/embedded).
