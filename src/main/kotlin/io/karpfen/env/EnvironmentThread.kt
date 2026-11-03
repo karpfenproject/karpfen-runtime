@@ -67,7 +67,8 @@ class EnvironmentThread(
      *
      * One [ObservationRelay] receives every object change and deletion of the model and every active-stack change of
      * the engine, assigns each one the next of [revisions], records the stacks in [activeStacks], and hands the push
-     * to the session manager. The object observers and domain listeners registered before activation are subscribed
+     * to the session manager. As the publication listener of [sharedEventBus] it also turns every published event into
+     * a `domainEvent` push. The object observers and domain listeners registered before activation are subscribed
      * here.
      */
     fun setup() {
@@ -75,6 +76,7 @@ class EnvironmentThread(
 
         val relay = ObservationRelay(environment.key, clientSessionManager, revisions, activeStacks)
         engine.modelQueryProcessor.addChangePublisher(relay)
+        sharedEventBus.addPublicationListener(relay)
 
         // Register DataObservation listeners (from the Environment configuration).
         for (observation in environment.objectObservations) {

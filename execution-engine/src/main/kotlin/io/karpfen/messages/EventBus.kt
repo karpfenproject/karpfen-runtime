@@ -44,6 +44,9 @@ class EventBus(
     //  In the current demo cases, not much event action is going on so its okay for now.
     private val buckets: ConcurrentHashMap<String, CopyOnWriteArrayList<Event>> = ConcurrentHashMap()
 
+    /** Listeners told about every published event; copy-on-write, so publishing never blocks on registration. */
+    private val publicationListeners = CopyOnWriteArrayList<EventPublicationListener>()
+
     // ---- Publishing -------------------------------------------------------
 
     /**
@@ -52,6 +55,10 @@ class EventBus(
      *
      * If the event's own [Event.ttlMs] is 0 and [defaultTtlMs] > 0, the default TTL is used by
      * creating a new Event wrapper with the default TTL applied. Otherwise the event is stored as-is.
+     *
+     * After the effective event entered its bucket, every publication listener is called with it once, on the
+     * publishing thread. A listener that throws an [Exception] is reported on stderr; the event stays published and
+     * the other listeners are still called.
      */
     fun publish(event: Event) {
         val effectiveEvent = if (event.ttlMs <= 0 && defaultTtlMs > 0) {
@@ -68,6 +75,31 @@ class EventBus(
             event
         }
         getOrCreateBucket(effectiveEvent.domain).add(effectiveEvent)
+        announce(effectiveEvent)
+    }
+
+    /** Registers [listener] for every event published from now on. */
+    fun addPublicationListener(listener: EventPublicationListener) {
+        publicationListeners.add(listener)
+    }
+
+    /** Stops telling [listener] about published events. */
+    fun removePublicationListener(listener: EventPublicationListener) {
+        publicationListeners.remove(listener)
+    }
+
+    /** Calls every publication listener with [event], reporting a failing listener on stderr without stopping. */
+    private fun announce(event: Event) {
+        for (listener in publicationListeners) {
+            try {
+                listener.onPublished(event)
+            } catch (e: Exception) {
+                System.err.println(
+                    "[EventBus] Publication listener failed for event '${event.name}' in domain '${event.domain}': " +
+                        "${e.message}"
+                )
+            }
+        }
     }
 
     // ---- Querying ---------------------------------------------------------

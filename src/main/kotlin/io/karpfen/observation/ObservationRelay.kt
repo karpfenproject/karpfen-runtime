@@ -16,6 +16,9 @@
 package io.karpfen.observation
 
 import io.karpfen.io.karpfen.exec.ModelChangePublisher
+import io.karpfen.io.karpfen.messages.Event
+import io.karpfen.io.karpfen.messages.EventPublicationListener
+import io.karpfen.io.karpfen.messages.PayloadFormat
 import io.karpfen.websocket.ClientSessionManager
 import org.json.JSONArray
 import org.json.JSONObject
@@ -29,6 +32,10 @@ import org.json.JSONObject
  * same call. Every recipient of one observation therefore gets the same revision, and the revisions of an
  * environment increase in enqueue order.
  *
+ * As the [EventPublicationListener] of the environment's event bus, the relay also announces every published event to
+ * the domain listeners of its domain. Domain events carry no revision: they are not model state, and external events
+ * are published on the environment thread outside any tick, so they cannot be ordered against a snapshot.
+ *
  * @property environmentKey the environment whose engine this relay listens to.
  * @property sessions the session manager that selects the recipients and enqueues the messages.
  * @property revision the environment's observation counter.
@@ -39,7 +46,7 @@ class ObservationRelay(
     private val sessions: ClientSessionManager,
     private val revision: ChangeRevision,
     private val activeStacks: ActiveStackRecord
-) : ModelChangePublisher {
+) : ModelChangePublisher, EventPublicationListener {
 
     /** Pushes `objectChanged` for [objectId] with its JSON as the engine committed it, under the next revision. */
     override fun onObjectChanged(objectId: String, jsonValue: String) {
@@ -63,5 +70,30 @@ class ObservationRelay(
             .put("revision", revision.next())
             .toString()
         sessions.notifyActiveStack(environmentKey, modelElementId, payload)
+    }
+
+    /**
+     * Pushes `domainEvent` for a published [event] to the listeners of its domain. The inner payload is an org.json
+     * object with the event name as `event`, the raw payload text as `payload` (never spliced as JSON), the
+     * `payloadFormat` (`none`, `json` or `kmodel`), the `source` (the engine's event source name), the receipt or raise
+     * `timestamp` in epoch milliseconds and the effective `ttlMs`.
+     */
+    override fun onPublished(event: Event) {
+        val payload = JSONObject()
+            .put("event", event.name)
+            .put("payload", event.payload)
+            .put("payloadFormat", formatName(event.payloadFormat))
+            .put("source", event.source.name)
+            .put("timestamp", event.timestamp)
+            .put("ttlMs", event.ttlMs)
+            .toString()
+        sessions.notifyDomainEvent(environmentKey, event.domain, payload)
+    }
+
+    /** The wire name of a payload format, as clients name it in their event frames. */
+    private fun formatName(format: PayloadFormat): String = when (format) {
+        PayloadFormat.NONE -> "none"
+        PayloadFormat.JSON -> "json"
+        PayloadFormat.KMODEL -> "kmodel"
     }
 }

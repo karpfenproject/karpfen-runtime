@@ -15,15 +15,20 @@
  */
 package io.karpfen.observation
 
+import io.karpfen.io.karpfen.messages.Event
+import io.karpfen.io.karpfen.messages.EventBus
+import io.karpfen.io.karpfen.messages.EventSource
+import io.karpfen.io.karpfen.messages.PayloadFormat
 import io.karpfen.websocket.ClientSessionManager
 import io.karpfen.websocket.OutgoingMessage
 import org.json.JSONObject
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * Covers [ObservationRelay] with a fresh [ClientSessionManager] and no engine: the revisions of object, deletion and
- * stack pushes, their recipients, and the record of active stacks.
+ * stack pushes, their recipients, the record of active stacks, domain events, and the escaping of pushed strings.
  */
 class ObservationRelayTest {
 
@@ -87,6 +92,67 @@ class ObservationRelayTest {
         assertEquals(listOf("observe", "react to obstacle"), activeStacks.current()["turtle"])
         assertEquals(listOf("observe"), beforeLastChange["turtle"])
         assertEquals(3L, revisions.current())
+    }
+
+    @Test
+    fun `published events become domainEvent messages for listeners of their domain`() {
+        sessions.subscribeToDomain(ENV, "listener", "public")
+        sessions.subscribeToDomain(ENV, "other", "control")
+        val bus = EventBus(defaultTtlMs = 3000L)
+        bus.addPublicationListener(relay)
+
+        bus.publish(
+            Event(
+                domain = "public",
+                name = "setSpeed",
+                payload = """{"factor": 2}""",
+                timestamp = 1761560130123L,
+                source = EventSource.EXTERNAL_MESSAGE,
+                payloadFormat = PayloadFormat.JSON
+            )
+        )
+
+        val message = drain().single()
+        assertEquals(listOf("listener", "domainEvent"), listOf(message.clientId, message.messageType))
+        assertTrue(message.payload.startsWith("""{"domain":"public","payload":{"""))
+        val payload = JSONObject(message.payload)
+        assertEquals(setOf("domain", "payload"), payload.keySet())
+        val inner = payload.getJSONObject("payload")
+        assertEquals(setOf("event", "payload", "payloadFormat", "source", "timestamp", "ttlMs"), inner.keySet())
+        assertEquals("setSpeed", inner.getString("event"))
+        assertEquals("""{"factor": 2}""", inner.getString("payload"))
+        assertEquals("json", inner.getString("payloadFormat"))
+        assertEquals("EXTERNAL_MESSAGE", inner.getString("source"))
+        assertEquals(1761560130123L, inner.getLong("timestamp"))
+        assertEquals(3000L, inner.getLong("ttlMs"))
+        assertEquals(0L, revisions.current())
+    }
+
+    @Test
+    fun `object ids and domain names are escaped in pushed messages`() {
+        val oddId = "odd \"id\" with \\ and \n"
+        val oddDomain = "dom\"ain\\"
+        val oddClient = "client \"one\""
+        sessions.subscribeToObject(ENV, oddClient, oddId)
+        sessions.subscribeToDomain(ENV, oddClient, oddDomain)
+
+        relay.onObjectChanged(oddId, TURTLE_JSON)
+        relay.onObjectDeleted(oddId)
+        relay.onPublished(Event(oddDomain, "start", timestamp = 1761560130123L))
+
+        val messages = drain()
+        assertEquals(
+            listOf(
+                """{"objectId":"odd \"id\" with \\ and \n","revision":1,"value":$TURTLE_JSON}""",
+                """{"objectId":"odd \"id\" with \\ and \n","revision":2}"""
+            ),
+            messages.take(2).map { it.payload }
+        )
+        assertTrue(messages[2].payload.startsWith("""{"domain":"dom\"ain\\","payload":{"""))
+        val envelopes = messages.map { JSONObject(it.toJson()) }
+        assertEquals(listOf(oddClient), envelopes.map { it.getString("clientId") }.distinct())
+        assertEquals(listOf(oddId, oddId), envelopes.take(2).map { it.getJSONObject("payload").getString("objectId") })
+        assertEquals(oddDomain, envelopes[2].getJSONObject("payload").getString("domain"))
     }
 
     /** Takes every message the relay enqueued so far; the relay enqueues synchronously, so nothing is awaited. */
