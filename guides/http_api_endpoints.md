@@ -280,8 +280,9 @@ environment, also while it runs, and are implemented in the package `io.karpfen.
     tick after a start
   - `roots`: every root object of the model, each written exactly like the `value` of an `objectChanged` message
 - **Description**: A running environment is read between two engine ticks, so the snapshot at revision R contains
-  exactly the changes up to R. The runtime waits at most 10 seconds for a tick to end. A configuring environment
-  answers its uploaded model at revision 0; a stopped one answers its final model.
+  exactly the changes up to R. The runtime waits at most 10 seconds for a tick to end, on a thread for blocking calls
+  rather than the server's event loop, so a long tick holds up no other request. A configuring environment answers its
+  uploaded model at revision 0; a stopped one answers its final model.
 - **Errors**: `400` for a missing `envKey` or an unknown environment; `409` with
   `Environment with key <envKey> has no model` (configuring, no model uploaded yet),
   `Environment with key <envKey> did not reach a tick boundary within 10000 ms`, or

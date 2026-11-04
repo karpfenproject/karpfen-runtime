@@ -19,12 +19,17 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.withCharset
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * The HTTP routes of model observation, added next to the runtime's other routes.
@@ -33,14 +38,21 @@ import io.ktor.server.routing.routing
  * `Missing required parameter: <name>`. Errors are answered by the [errors] responder that the server hands in, so they
  * are answered like on every other route.
  *
+ * The service calls block: a snapshot waits up to its tick wait for a tick boundary, and subscribing and unsubscribing
+ * take the locks of the session manager. The server runs route handlers on the event loop of their connection, which
+ * other connections share, so every service call runs on [blockingCalls] instead, and a hung tick holds up only the
+ * requests that wait for it.
+ *
  * @property snapshots answers `GET /observatory/model`.
  * @property subscriptions serves `POST /observatory/subscribeModel` and `POST /observatory/unsubscribeModel`.
  * @property errors answers the requests that failed.
+ * @property blockingCalls runs the service calls; by default the dispatcher made for blocking calls.
  */
 class ModelObservationRoutes(
     private val snapshots: ModelSnapshotService,
     private val subscriptions: ModelSubscriptionService,
-    private val errors: ErrorResponder
+    private val errors: ErrorResponder,
+    private val blockingCalls: CoroutineDispatcher = Dispatchers.IO
 ) {
 
     /**
@@ -53,41 +65,49 @@ class ModelObservationRoutes(
     fun install(application: Application) {
         application.routing {
             get("/observatory/model") {
-                try {
+                answer(call) {
                     val envKey = call.request.queryParameters["envKey"]
                         ?: throw IllegalArgumentException("Missing required parameter: envKey")
-                    val snapshot = snapshots.snapshot(envKey)
+                    val snapshot = withContext(blockingCalls) { snapshots.snapshot(envKey) }
                     call.respondText(snapshot.toJson(), ContentType.Application.Json.withCharset(Charsets.UTF_8))
-                } catch (e: Exception) {
-                    errors.respond(call, e)
                 }
             }
 
             post("/observatory/subscribeModel") {
-                try {
+                answer(call) {
                     val envKey = call.request.queryParameters["envKey"]
                         ?: throw IllegalArgumentException("Missing required parameter: envKey")
                     val clientId = call.request.queryParameters["clientId"]
                         ?: throw IllegalArgumentException("Missing required parameter: clientId")
-                    subscriptions.subscribe(envKey, clientId)
+                    withContext(blockingCalls) { subscriptions.subscribe(envKey, clientId) }
                     call.respond(HttpStatusCode.OK, "")
-                } catch (e: Exception) {
-                    errors.respond(call, e)
                 }
             }
 
             post("/observatory/unsubscribeModel") {
-                try {
+                answer(call) {
                     val envKey = call.request.queryParameters["envKey"]
                         ?: throw IllegalArgumentException("Missing required parameter: envKey")
                     val clientId = call.request.queryParameters["clientId"]
                         ?: throw IllegalArgumentException("Missing required parameter: clientId")
-                    subscriptions.unsubscribe(envKey, clientId)
+                    withContext(blockingCalls) { subscriptions.unsubscribe(envKey, clientId) }
                     call.respond(HttpStatusCode.OK, "")
-                } catch (e: Exception) {
-                    errors.respond(call, e)
                 }
             }
+        }
+    }
+
+    /**
+     * Runs [handle] for [call] and answers an exception it throws through [errors]. A cancellation is rethrown: the
+     * call has ended, and nobody waits for an answer.
+     */
+    private suspend fun answer(call: ApplicationCall, handle: suspend () -> Unit) {
+        try {
+            handle()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            errors.respond(call, e)
         }
     }
 }
