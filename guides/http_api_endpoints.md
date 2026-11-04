@@ -271,8 +271,9 @@ environment, also while it runs, and are implemented in the package `io.karpfen.
 - **Response**: `200 OK` with `Content-Type: application/json; charset=UTF-8` and one JSON object with the members in
   this order:
   - `environmentKey`: the environment
-  - `phase`: `configuring` (not yet run), `activated` (run, never started), `running`, `halted` (started, not
-    stopped, but the engine thread ended on its own after an error) or `stopped`
+  - `phase`: `configuring` (not yet run), `activated` (run, never started), `running` (the engine thread is alive,
+    also while a start or a stop is under way), `halted` (started, not stopped, but the engine thread ended on its own
+    after an error) or `stopped` (stopped, and the engine's last tick has ended)
   - `revision`: the revision of the last change the snapshot contains, `0` before anything happened
   - `activeStates`: per state machine (keyed by `attachedTo`) the last reported active stack, `{}` before the first
     tick after a start

@@ -18,13 +18,20 @@ package io.karpfen.env
 import io.karpfen.fixtures.CleaningRobotExample
 import io.karpfen.fixtures.Eventually
 import io.karpfen.fixtures.RuntimeRegistry
+import io.karpfen.io.karpfen.exec.ModelChangePublisher
 import io.karpfen.io.karpfen.messages.Event
+import io.karpfen.observation.EnvironmentPhase
 import io.karpfen.server.APIService
 import io.karpfen.server.MockWebSocketSession
 import io.ktor.websocket.CloseReason
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -32,8 +39,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Covers starting and stopping an activated environment: one runner loop per environment, restarts after a stop, and
- * what a stop does to the environment's WebSocket sessions.
+ * Covers starting and stopping an activated environment: one runner loop per environment, restarts after a stop, the
+ * phase reported while a start or a stop is under way, and what a stop does to the environment's WebSocket sessions.
  */
 class EnvironmentRunnerTest {
 
@@ -83,6 +90,63 @@ class EnvironmentRunnerTest {
     }
 
     @Test
+    fun `a start or restart under way is never reported as halted`() {
+        val envKey = CleaningRobotExample.createEnvironment()
+        APIService.runEnvironment(envKey)
+        val environment = executionThread(envKey)
+        val polling = AtomicBoolean(true)
+        val phases = ConcurrentHashMap.newKeySet<EnvironmentPhase>()
+        val poller = thread(name = "phase-poller") {
+            while (polling.get()) {
+                phases.add(environment.phase)
+            }
+        }
+
+        try {
+            repeat(RESTARTS) {
+                APIService.startEnvironment(envKey)
+                APIService.stopEnvironment(envKey)
+            }
+        } finally {
+            polling.set(false)
+            poller.join()
+        }
+
+        assertTrue(EnvironmentPhase.STOPPED in phases, "Phases seen: $phases")
+        assertFalse(EnvironmentPhase.HALTED in phases, "Phases seen: $phases")
+    }
+
+    @Test
+    fun `a stop is reported as stopped only once the engine's last tick has ended`() {
+        val envKey = CleaningRobotExample.createEnvironment()
+        APIService.runEnvironment(envKey)
+        APIService.startEnvironment(envKey)
+        val environment = executionThread(envKey)
+        Eventually.awaitUntil("the engine ticked") { distanceToObstacle(environment) == 1.0 }
+        val tickEntered = CountDownLatch(1)
+        val tickReleased = CountDownLatch(1)
+        environment.engine.modelQueryProcessor.addChangePublisher(ModelChangePublisher { _, _ ->
+            tickEntered.countDown()
+            tickReleased.await(Eventually.DEADLINE_MS, TimeUnit.MILLISECONDS)
+        })
+        environment.acceptExternalEvent(Event("public", "go"))
+        assertTrue(tickEntered.await(Eventually.DEADLINE_MS, TimeUnit.MILLISECONDS), "The step's tick never began")
+
+        val stopper = thread(name = "stopper") { environment.stop() }
+        try {
+            Eventually.awaitUntil("the stop waits for the engine's last tick") {
+                stopper.state == Thread.State.TIMED_WAITING
+            }
+            assertEquals(EnvironmentPhase.RUNNING, environment.phase)
+        } finally {
+            tickReleased.countDown()
+            stopper.join()
+        }
+
+        assertEquals(EnvironmentPhase.STOPPED, environment.phase)
+    }
+
+    @Test
     fun `stopping closes the environment's WebSocket sessions with a normal close`() {
         val envKey = CleaningRobotExample.createEnvironment()
         val sessions = EnvironmentHandler.clientSessionManager
@@ -113,4 +177,9 @@ class EnvironmentRunnerTest {
             environment.engine.modelQueryProcessor.getDataObjectById("turtle").getProp("d_closest_obstacle").first()
                 as Double
         }
+
+    private companion object {
+        /** How many start and stop cycles the phase poller watches. */
+        const val RESTARTS = 30
+    }
 }

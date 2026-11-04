@@ -72,6 +72,15 @@ class Engine(
         get() = executionThread?.isAlive == true
 
     /**
+     * True when the engine thread of the latest [start] ended on its own, because an exception or error escaped the
+     * tick loop while the engine was not being stopped. [start] resets it before the new thread exists, and a thread
+     * that ends because of [stop] does not set it.
+     */
+    @Volatile
+    var hasHalted: Boolean = false
+        private set
+
+    /**
      * Called whenever a state machine's active state stack changes (initial state, transition,
      * split, join, or a forced resync). Carries (modelElementId, full active stack). The environment
      * uses this to push lightweight "stateChange" updates to the observatory instead of per-tick
@@ -153,9 +162,14 @@ class Engine(
         })
     }
 
+    /**
+     * Starts the tick loop on a new engine thread unless the engine is running. [hasHalted] is reset before the thread
+     * exists; the thread sets it when it ends while the engine was still meant to run.
+     */
     fun start() {
         if (isRunning) return
         isRunning = true
+        hasHalted = false
 
         executionThread = thread(name = "Engine-$engineId", start = true) {
             try {
@@ -167,6 +181,7 @@ class Engine(
                 println("[Engine $engineId] Error: ${e.message}")
                 e.printStackTrace()
             } finally {
+                hasHalted = isRunning
                 isRunning = false
                 println("[Engine $engineId] Stopped")
             }

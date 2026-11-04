@@ -28,7 +28,7 @@ import kotlin.test.fail
 
 /**
  * Covers the tick gate of [Engine] over the cleaning-robot fixture: reads between ticks see whole action blocks, and
- * [Engine.isTicking] follows the engine thread.
+ * [Engine.isTicking] and [Engine.hasHalted] follow the engine thread.
  */
 class EngineTickBoundaryTest {
 
@@ -84,6 +84,21 @@ class EngineTickBoundaryTest {
 
         assertEquals("at rest", engine.readBetweenTicks(WAIT_MS) { "at rest" })
         assertEquals(100.0, distanceToObstacle(engine))
+    }
+
+    @Test
+    fun `the engine reports halted only when its thread ended on its own`() {
+        val healthy = startEngine("turtle", ALTERNATING_MACHINE)
+        awaitCondition("the first tick changed the model") {
+            healthy.readBetweenTicks(WAIT_MS) { distanceToObstacle(healthy) } != 100.0
+        }
+        assertFalse(healthy.hasHalted)
+        healthy.stop()
+        assertFalse(healthy.hasHalted)
+
+        val ghost = startEngine("ghost", ALTERNATING_MACHINE)
+        awaitCondition("the engine thread ended") { !ghost.isTicking }
+        assertTrue(ghost.hasHalted)
     }
 
     /** Builds an engine with tick delay 0 over a fresh fixture model, the machine attached to [attachedTo]. */

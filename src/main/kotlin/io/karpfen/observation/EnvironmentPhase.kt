@@ -29,12 +29,12 @@ enum class EnvironmentPhase(val wireName: String) {
     /** Activated: the execution thread is built and set up but was never started. */
     ACTIVATED("activated"),
 
-    /** Started and not stopped, with the engine thread alive. */
+    /** The engine thread is alive: started and not stopped, or a start or a stop is still under way. */
     RUNNING("running"),
 
     /** Started and not stopped, but the engine thread ended on its own, through an exception or error. */
     HALTED("halted"),
 
-    /** Stopped through the stop route; the model stays as the engine left it. */
+    /** Stopped through the stop route and the engine thread has ended; the model stays as the engine left it. */
     STOPPED("stopped")
 }
