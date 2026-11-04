@@ -19,6 +19,7 @@ import dsl.textual.KmetaDSLConverter
 import dsl.textual.KmodelDSLConverter
 import io.karpfen.fixtures.CleaningRobotExample
 import io.karpfen.io.karpfen.exec.ModelJsonWriter
+import io.karpfen.server.HTTPRoutes
 import io.karpfen.server.MockWebSocketSession
 import io.karpfen.websocket.ClientSessionManager
 import io.ktor.client.request.get
@@ -160,7 +161,8 @@ class ModelObservationRoutesTest {
         application {
             ModelObservationRoutes(
                 ModelSnapshotService(environments, TICK_WAIT_MS),
-                ModelSubscriptionService(environments, sessions)
+                ModelSubscriptionService(environments, sessions),
+                HTTPRoutes::respondWithError
             ).install(this)
         }
         test()

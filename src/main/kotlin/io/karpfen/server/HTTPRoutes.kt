@@ -279,8 +279,8 @@ object HTTPRoutes {
 
     /**
      * Answers [call] with the error [e]: [IllegalArgumentException] as 400, [IllegalStateException] as 409 and any other
-     * exception as 500, the body being the exception's message or `Unexpected error`. The model observation routes
-     * answer their errors the same way.
+     * exception as 500, the body being the exception's message or `Unexpected error`. [KtorServer] hands it to the
+     * model observation routes, so they answer their errors the same way.
      */
     internal suspend fun respondWithError(call: ApplicationCall, e: Exception) {
         val status = when (e) {

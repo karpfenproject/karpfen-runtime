@@ -41,11 +41,13 @@ class KtorServer(
     private val sessionManager: ClientSessionManager = EnvironmentHandler.clientSessionManager,
     /**
      * The model observation routes installed next to [HTTPRoutes]; by default over the runtime's environment registry,
-     * with the default wait for a tick boundary and the injected [sessionManager] for model subscriptions.
+     * with the default wait for a tick boundary, the injected [sessionManager] for model subscriptions, and the error
+     * answers of [HTTPRoutes].
      */
     private val observationRoutes: ModelObservationRoutes = ModelObservationRoutes(
         ModelSnapshotService(RegistryEnvironmentLookup, ModelSnapshotService.DEFAULT_TICK_WAIT_MS),
-        ModelSubscriptionService(RegistryEnvironmentLookup, sessionManager)
+        ModelSubscriptionService(RegistryEnvironmentLookup, sessionManager),
+        HTTPRoutes::respondWithError
     )
 ) {
     private var engine: ApplicationEngine? = null

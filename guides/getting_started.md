@@ -52,6 +52,7 @@ karpfen-runtime/
 │       │   ├── ModelSnapshotService.kt   # Snapshots in every phase, read between ticks
 │       │   ├── ModelSubscriptionService.kt   # Model subscription with the session check
 │       │   ├── ModelObservationRoutes.kt # The three model observation routes
+│       │   ├── ErrorResponder.kt         # Error answers of the routes, supplied by the server
 │       │   └── EnvironmentLookup.kt, ObservedEnvironment.kt, EnvironmentPhase.kt
 │       └── websocket/
 │           ├── WebSocketMessage.kt       # Incoming message data model

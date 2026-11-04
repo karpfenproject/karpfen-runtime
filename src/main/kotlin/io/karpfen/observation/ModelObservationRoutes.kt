@@ -15,7 +15,6 @@
  */
 package io.karpfen.observation
 
-import io.karpfen.server.HTTPRoutes
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.withCharset
@@ -31,15 +30,17 @@ import io.ktor.server.routing.routing
  * The HTTP routes of model observation, added next to the runtime's other routes.
  *
  * Parameters are read in the order `envKey`, then `clientId`, and a missing one is refused with the runtime's text
- * `Missing required parameter: <name>`. Errors are answered by [HTTPRoutes.respondWithError] like on every other
- * route.
+ * `Missing required parameter: <name>`. Errors are answered by the [errors] responder that the server hands in, so they
+ * are answered like on every other route.
  *
  * @property snapshots answers `GET /observatory/model`.
  * @property subscriptions serves `POST /observatory/subscribeModel` and `POST /observatory/unsubscribeModel`.
+ * @property errors answers the requests that failed.
  */
 class ModelObservationRoutes(
     private val snapshots: ModelSnapshotService,
-    private val subscriptions: ModelSubscriptionService
+    private val subscriptions: ModelSubscriptionService,
+    private val errors: ErrorResponder
 ) {
 
     /**
@@ -58,7 +59,7 @@ class ModelObservationRoutes(
                     val snapshot = snapshots.snapshot(envKey)
                     call.respondText(snapshot.toJson(), ContentType.Application.Json.withCharset(Charsets.UTF_8))
                 } catch (e: Exception) {
-                    HTTPRoutes.respondWithError(call, e)
+                    errors.respond(call, e)
                 }
             }
 
@@ -71,7 +72,7 @@ class ModelObservationRoutes(
                     subscriptions.subscribe(envKey, clientId)
                     call.respond(HttpStatusCode.OK, "")
                 } catch (e: Exception) {
-                    HTTPRoutes.respondWithError(call, e)
+                    errors.respond(call, e)
                 }
             }
 
@@ -84,7 +85,7 @@ class ModelObservationRoutes(
                     subscriptions.unsubscribe(envKey, clientId)
                     call.respond(HttpStatusCode.OK, "")
                 } catch (e: Exception) {
-                    HTTPRoutes.respondWithError(call, e)
+                    errors.respond(call, e)
                 }
             }
         }
