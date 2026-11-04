@@ -30,13 +30,19 @@ import meta.Metamodel
  *
  * Parsing is best-effort: if there is no event metamodel, no payload, or the payload does not match
  * its declared type, the event simply ends up with a null payload object. It can still trigger
- * transitions by name; only payload access (`$(event->...)`) will then find nothing.
+ * transitions by name; only payload access (`$(event->...)`) will then find nothing. A payload nested
+ * too deeply for the recursive parsers overflows the parsing thread's stack; that [StackOverflowError]
+ * is treated like any other unparsable payload, so a client's event can never end the thread that
+ * hands it to the bus.
  *
  * @property eventMetamodel The environment's event metamodel, or null when no payloads are defined.
  */
 class EventPayloadParser(private val eventMetamodel: Metamodel?) {
 
-    /** Parses [event]'s payload and stores the result on [Event.payloadObject]. */
+    /**
+     * Parses [event]'s payload and stores the result on [Event.payloadObject], or `null` when the payload cannot be
+     * parsed, also when it is nested too deeply to parse.
+     */
     fun parseInto(event: Event) {
         val metamodel = eventMetamodel ?: return
 
@@ -55,6 +61,11 @@ class EventPayloadParser(private val eventMetamodel: Metamodel?) {
         } catch (e: Exception) {
             System.err.println(
                 "[EventPayloadParser] Could not parse $format payload for event '${event.name}': ${e.message}"
+            )
+            null
+        } catch (e: StackOverflowError) {
+            System.err.println(
+                "[EventPayloadParser] Could not parse $format payload for event '${event.name}': nested too deeply"
             )
             null
         }

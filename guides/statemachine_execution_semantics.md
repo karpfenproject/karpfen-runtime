@@ -340,6 +340,10 @@ All engines within the same environment share a single `EventBus`. Events publis
 - If a transition target state cannot be found, the transition is skipped and an error is logged.
 - If an EVAL or MACRO Python subprocess fails (non-zero exit code), a `RuntimeException` is thrown, caught by the action block error handler, and logged.
 - If a VALUE condition path cannot be resolved, the condition evaluates to `false`.
+- If a client event's payload cannot be parsed against its type, also when it is nested too deeply to parse, the event
+  has no payload object and still fires by name (`EventPayloadParser`).
+- If an exception or error ends the environment's event loop, which hands client events to the bus, the engine is
+  stopped too and the model snapshot reports the phase `halted` (`EnvironmentThread.phase`).
 
 ---
 

@@ -87,22 +87,30 @@ class EnvironmentThread(
     )
 
     /**
-     * The phase derived from the run state and the engine, read without a lock while [launch] or [stop] may be under
-     * way.
+     * The phase derived from the run state, the engine and the runner, read without a lock while [launch] or [stop]
+     * may be under way.
      *
      * Before the first [launch] the environment is activated and after [stop] it is stopped, but in both run states a
      * live engine thread still counts as running: the engine has already started while [launch] has not yet set the
      * run state, and its last tick may still run while [stop] waits for it. Once launched, the environment is halted
-     * only when the engine thread of the latest start ended on its own, and running otherwise. [launch] sets the run
-     * state only after the engine has started, so a reader that sees it running never sees the thread of an earlier
-     * start or none at all.
+     * when it ended on its own: the engine thread of the latest start ended on its own, or an exception or error ended
+     * the runner's event loop without a [stop], and the runner's end stopped the engine. It is running otherwise.
+     * [launch] sets the run state only after the engine and the runner have started, so a reader that sees it running
+     * never sees the threads of an earlier start or none at all.
      */
     override val phase: EnvironmentPhase
         get() = when (runState) {
             RunState.READY -> if (engine.isTicking) EnvironmentPhase.RUNNING else EnvironmentPhase.ACTIVATED
-            RunState.RUNNING -> if (engine.hasHalted) EnvironmentPhase.HALTED else EnvironmentPhase.RUNNING
+            RunState.RUNNING -> if (hasEndedOnItsOwn) EnvironmentPhase.HALTED else EnvironmentPhase.RUNNING
             RunState.STOPPED -> if (engine.isTicking) EnvironmentPhase.RUNNING else EnvironmentPhase.STOPPED
         }
+
+    /**
+     * True when the launched environment ended without a [stop]: the engine thread of the latest start ended on its
+     * own, or the runner of the latest [launch] is no longer alive.
+     */
+    private val hasEndedOnItsOwn: Boolean
+        get() = engine.hasHalted || runner?.isAlive != true
 
     /**
      * Reads the snapshot through the engine's tick gate: the phase, the revision of the last observation, the recorded
@@ -182,8 +190,8 @@ class EnvironmentThread(
      * - running with a live runner but an engine whose thread ended on its own: the engine is started again;
      * - ready, stopped, or running without a live runner: the recorded active stacks are cleared, the loop flag is
      *   set before the runner exists (so a stop can no longer be overwritten by the runner's first line), the engine
-     *   is started from its initial stacks over the current model, the run state becomes running once the engine has
-     *   started (see [phase]), and a new non-daemon runner named `EnvironmentThread-<key>` is started.
+     *   is started from its initial stacks over the current model, a new non-daemon runner named
+     *   `EnvironmentThread-<key>` is started, and the run state becomes running once both have started (see [phase]).
      *
      * @return `true` when something was started, `false` when the environment was already running.
      */
@@ -199,11 +207,11 @@ class EnvironmentThread(
         activeStacks.clear()
         isRunning = true
         engine.start()
-        runState = RunState.RUNNING
         runner = Thread(this, "EnvironmentThread-${environment.key}").apply {
             isDaemon = false
             start()
         }
+        runState = RunState.RUNNING
         return true
     }
 
@@ -221,7 +229,8 @@ class EnvironmentThread(
 
     /**
      * The event loop of the runner thread that [launch] starts: drains external events onto the shared bus and purges
-     * expired events until [stop]. The engine ticks on its own thread.
+     * expired events until [stop]. The engine ticks on its own thread. However the loop ends, also through an
+     * exception or an error, the engine is stopped; without a [stop] the environment is then halted (see [phase]).
      */
     override fun run() {
         println("[EnvironmentThread] Running for environment ${environment.key}")

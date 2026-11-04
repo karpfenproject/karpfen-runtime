@@ -32,7 +32,10 @@ enum class EnvironmentPhase(val wireName: String) {
     /** The engine thread is alive: started and not stopped, or a start or a stop is still under way. */
     RUNNING("running"),
 
-    /** Started and not stopped, but the engine thread ended on its own, through an exception or error. */
+    /**
+     * Started and not stopped, but ended on its own: an exception or error ended the engine thread, or it ended the
+     * event loop that hands client events to the bus, which stops the engine.
+     */
     HALTED("halted"),
 
     /** Stopped through the stop route and the engine thread has ended; the model stays as the engine left it. */

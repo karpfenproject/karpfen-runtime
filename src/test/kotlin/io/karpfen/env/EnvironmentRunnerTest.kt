@@ -20,6 +20,8 @@ import io.karpfen.fixtures.Eventually
 import io.karpfen.fixtures.RuntimeRegistry
 import io.karpfen.io.karpfen.exec.ModelChangePublisher
 import io.karpfen.io.karpfen.messages.Event
+import io.karpfen.io.karpfen.messages.EventPublicationListener
+import io.karpfen.io.karpfen.messages.PayloadFormat
 import io.karpfen.observation.EnvironmentPhase
 import io.karpfen.server.APIService
 import io.karpfen.server.MockWebSocketSession
@@ -40,7 +42,8 @@ import kotlin.test.assertTrue
 
 /**
  * Covers starting and stopping an activated environment: one runner loop per environment, restarts after a stop, the
- * phase reported while a start or a stop is under way, and what a stop does to the environment's WebSocket sessions.
+ * phase reported while a start or a stop is under way, a runner loop that ends on its own or survives a payload it
+ * cannot parse, and what a stop does to the environment's WebSocket sessions.
  */
 class EnvironmentRunnerTest {
 
@@ -147,6 +150,46 @@ class EnvironmentRunnerTest {
     }
 
     @Test
+    fun `an environment whose runner loop ended through an error is reported as halted and starts again`() {
+        val envKey = CleaningRobotExample.createEnvironment()
+        APIService.runEnvironment(envKey)
+        APIService.startEnvironment(envKey)
+        val environment = executionThread(envKey)
+        Eventually.awaitUntil("the engine ticked") { distanceToObstacle(environment) == 1.0 }
+        val fatal = EventPublicationListener { throw Error("No handler of the runner loop catches this") }
+        environment.sharedEventBus.addPublicationListener(fatal)
+
+        environment.acceptExternalEvent(Event("public", "go"))
+
+        Eventually.awaitUntil("the runner loop ended") { liveRunners(envKey) == 0 }
+        assertFalse(environment.engine.isTicking)
+        assertEquals(EnvironmentPhase.HALTED, environment.phase)
+
+        environment.sharedEventBus.removePublicationListener(fatal)
+        APIService.startEnvironment(envKey)
+
+        assertEquals(EnvironmentPhase.RUNNING, environment.phase)
+        assertEquals(1, liveRunners(envKey))
+        assertTrue(environment.engine.isTicking)
+    }
+
+    @Test
+    fun `a client event nested too deeply to parse still fires and the environment keeps running`() {
+        val envKey = CleaningRobotExample.createEnvironment()
+        APIService.receiveEventDefinitions(envKey, NESTING_EVENTS)
+        APIService.runEnvironment(envKey)
+        APIService.startEnvironment(envKey)
+        val environment = executionThread(envKey)
+        Eventually.awaitUntil("the engine ticked") { distanceToObstacle(environment) == 1.0 }
+
+        environment.acceptExternalEvent(Event("public", "go", deeplyNestedGo(), payloadFormat = PayloadFormat.KMODEL))
+
+        Eventually.awaitUntil("the event fired by name") { distanceToObstacle(environment) == 2.0 }
+        assertEquals(EnvironmentPhase.RUNNING, environment.phase)
+        assertEquals(1, liveRunners(envKey))
+    }
+
+    @Test
     fun `stopping closes the environment's WebSocket sessions with a normal close`() {
         val envKey = CleaningRobotExample.createEnvironment()
         val sessions = EnvironmentHandler.clientSessionManager
@@ -178,8 +221,29 @@ class EnvironmentRunnerTest {
                 as Double
         }
 
+    /** A kmodel payload of the event `go` that nests [TOO_DEEP] objects, each inside the one before. */
+    private fun deeplyNestedGo(): String {
+        val payload = StringBuilder()
+        repeat(TOO_DEEP) { level ->
+            if (level > 0) payload.append("has(\"inner\") -> ")
+            payload.append("make object \"go-").append(level).append("\":\"go\" { ")
+        }
+        repeat(TOO_DEEP) { payload.append("} ") }
+        return payload.toString()
+    }
+
     private companion object {
         /** How many start and stop cycles the phase poller watches. */
         const val RESTARTS = 30
+
+        /** Event definitions whose one event type `go` may hold another `go`. */
+        val NESTING_EVENTS = """
+            type "go" "a step whose payload nests itself" {
+                has("inner", "go")
+            }
+        """.trimIndent()
+
+        /** A nesting far deeper than the payload parser's recursion reaches on a thread's default stack. */
+        const val TOO_DEEP = 20_000
     }
 }

@@ -272,8 +272,9 @@ environment, also while it runs, and are implemented in the package `io.karpfen.
   this order:
   - `environmentKey`: the environment
   - `phase`: `configuring` (not yet run), `activated` (run, never started), `running` (the engine thread is alive,
-    also while a start or a stop is under way), `halted` (started, not stopped, but the engine thread ended on its own
-    after an error) or `stopped` (stopped, and the engine's last tick has ended)
+    also while a start or a stop is under way), `halted` (started, not stopped, but the engine thread, or the event
+    loop that hands client events to the engine, ended on its own after an error) or `stopped` (stopped, and the
+    engine's last tick has ended)
   - `revision`: the revision of the last change the snapshot contains, `0` before anything happened
   - `activeStates`: per state machine (keyed by `attachedTo`) the last reported active stack, `{}` before the first
     tick after a start
@@ -365,7 +366,9 @@ After authentication, clients can send and receive messages as JSON:
 
 - `environmentKey` is used as the event **domain** (the routing bucket a `EVENT("domain", ...)` condition listens on).
 - `messageType` is the event **name**, and also the **payload type** it is parsed against (see Set Event Definitions).
-- `payload` is the (optional) content. It may be empty, a JSON object, or a kmodel `make object` block.
+- `payload` is the (optional) content. It may be empty, a JSON object, or a kmodel `make object` block. A payload
+  that cannot be parsed against its type, also one nested too deeply to parse, leaves the event without a payload
+  object; the event still fires by name.
 - `payloadFormat` is optional and may be `"none"`, `"json"`, or `"kmodel"`. When omitted, the runtime guesses: empty → none, starts with `{` → json, starts with `make object` → kmodel.
 
 #### Outgoing Messages
