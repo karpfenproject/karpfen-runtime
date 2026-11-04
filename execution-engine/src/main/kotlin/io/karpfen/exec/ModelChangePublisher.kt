@@ -42,5 +42,15 @@ fun interface ModelChangePublisher {
      * @param objectId The id of the DataObject that was deleted.
      */
     fun onObjectDeleted(objectId: String) {}
+
+    /**
+     * Called in place of [onObjectChanged] after a property or relation on the given [objectId] has been changed but
+     * the object cannot be written as JSON, because an object is reachable from itself through its relations. There is
+     * no value to publish, yet publishers that number changes can still count this one. The default implementation
+     * does nothing.
+     *
+     * @param objectId The id of the DataObject that changed.
+     */
+    fun onObjectUnwritable(objectId: String) {}
 }
 

@@ -333,7 +333,10 @@ All engines within the same environment share a single `EventBus`. Events publis
 
 - If an `onEntry` or `onDo` action block throws an exception, the error is logged (via the trace logger and stderr) but the engine continues. The tick proceeds normally.
 - If a change reaches an object whose `knows` relations lead back to it, the object has no JSON: the block's commit
-  fails with `Reference loop through object '<id>' cannot be written as JSON`, which is logged like an action error.
+  still publishes its other changes and its deletions, then fails with
+  `Reference loop through object '<id>' cannot be written as JSON`, which is logged like an action error. The change
+  that cannot be written uses up its revision without a message, so model subscribers see a gap. When an action of the
+  block failed as well, the action's error is logged and carries the commit's error as a suppressed exception.
 - If a transition target state cannot be found, the transition is skipped and an error is logged.
 - If an EVAL or MACRO Python subprocess fails (non-zero exit code), a `RuntimeException` is thrown, caught by the action block error handler, and logged.
 - If a VALUE condition path cannot be resolved, the condition evaluates to `false`.

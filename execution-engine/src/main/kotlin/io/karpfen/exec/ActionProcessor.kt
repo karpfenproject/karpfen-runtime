@@ -67,16 +67,28 @@ class ActionProcessor(
      * `$(event->...)` is resolvable inside this block and an `IF IN SCOPE` block can check its availability.
      *
      * The block is one notification batch of the [modelQueryProcessor]: each changed object is published once when
-     * the block ends. The batch is committed in a `finally`, so when an action fails, the changes made before the
-     * failure are still published with this block and no batch stays open for later writes; the failure then
-     * propagates to the caller.
+     * the block ends. The batch is committed also when an action fails, so the changes made before the failure are
+     * still published with this block and no batch stays open for later writes; the action's failure then propagates
+     * to the caller, carrying a failure of that commit as a suppressed exception. When only the commit fails, its
+     * failure propagates.
      */
     fun executeBlock(block: ActionBlock, eventContext: DataObject? = null) {
         modelQueryProcessor.beginBatch()
         try {
             executeItems(block.items, ModelQueryProcessor.eventScope(eventContext))
-        } finally {
+        } catch (actionFailure: Throwable) {
+            commitAfter(actionFailure)
+            throw actionFailure
+        }
+        modelQueryProcessor.commitBatch()
+    }
+
+    /** Commits the batch of a block that [actionFailure] ended, attaching a failing commit to it as suppressed. */
+    private fun commitAfter(actionFailure: Throwable) {
+        try {
             modelQueryProcessor.commitBatch()
+        } catch (commitFailure: Exception) {
+            actionFailure.addSuppressed(commitFailure)
         }
     }
 

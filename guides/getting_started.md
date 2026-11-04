@@ -346,8 +346,8 @@ Observatory clients and model subscribers receive `stateChange` with a machine's
 
 **Revisions.** Each environment numbers the object changes, object deletions and stack changes of its engine,
 starting at 1. Every recipient of one change gets the same revision, and a model subscriber receives every revision in
-order, so a jump in the numbers shows that messages were lost. A model snapshot (`GET /observatory/model`) carries the
-revision of the last change it contains.
+order, so a jump in the numbers shows that messages were lost or that a change could not be written as JSON (a
+reference loop). A model snapshot (`GET /observatory/model`) carries the revision of the last change it contains.
 
 **The model subscription.** `POST /observatory/subscribeModel` subscribes a client with an open WebSocket session to
 every object change, deletion and stack change of the environment, objects created at run time included, at any time.

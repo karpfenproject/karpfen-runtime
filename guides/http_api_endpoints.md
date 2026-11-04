@@ -382,7 +382,9 @@ The runtime sends every notification as one text frame:
 
 Each environment numbers the object changes, object deletions and stack changes of its engine: the first one has
 revision 1, every recipient of one change gets the same revision, and a client subscribed to the model receives them
-in order without gaps. Domain events carry no revision. A client never gets the same change twice, even when it is
+in order without gaps. The one exception is a change to an object that cannot be written as JSON because of a
+reference loop: it uses up its revision without a message, so the gap tells the client to take a snapshot, which
+answers `409` while the loop exists. Domain events carry no revision. A client never gets the same change twice, even when it is
 both an observer and a subscriber. All strings in a message are escaped as JSON.
 
 ## Error Handling

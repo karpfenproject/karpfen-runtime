@@ -71,18 +71,39 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
         batchMode = true
     }
 
-    /** Commit the batch: fire one notification per changed object, then exit batch mode. */
+    /**
+     * Commits the batch and leaves batch mode: publishes one change per changed object that was not deleted in the
+     * batch, then one deletion per deleted id.
+     *
+     * Each change and each deletion is published on its own, so one that fails never keeps the others of the batch
+     * from being published. A changed object that cannot be written as JSON, because an object is reachable from
+     * itself through its relations, is reported through [ModelChangePublisher.onObjectUnwritable] in place of its
+     * change. Once everything was published, the first failure is thrown with the later ones attached as suppressed
+     * exceptions.
+     */
     fun commitBatch() {
         batchMode = false
         val changed = pendingNotifications.toList()
         val deleted = pendingDeletions.toSet()
         pendingNotifications.clear()
         pendingDeletions.clear()
-        // Fire change notifications for survivors only, then deletions.
+        val failures = mutableListOf<Exception>()
         for (obj in changed) {
-            if (obj.id !in deleted) fireNotification(obj)
+            if (obj.id !in deleted) publishIsolated(failures) { fireNotification(obj) }
         }
-        for (id in deleted) fireDeletion(id)
+        for (id in deleted) publishIsolated(failures) { fireDeletion(id) }
+        val first = failures.firstOrNull() ?: return
+        failures.drop(1).forEach(first::addSuppressed)
+        throw first
+    }
+
+    /** Runs one [publication] of a commit and adds its exception to [failures] instead of ending the commit. */
+    private inline fun publishIsolated(failures: MutableList<Exception>, publication: () -> Unit) {
+        try {
+            publication()
+        } catch (e: Exception) {
+            failures.add(e)
+        }
     }
 
     private fun notifyChange(obj: DataObject) {
@@ -101,9 +122,21 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
         fireDeletion(objectId)
     }
 
+    /**
+     * Publishes the change of [obj] with its JSON to every publisher. When [obj] cannot be written, every publisher
+     * learns through [ModelChangePublisher.onObjectUnwritable] that the change happened, and the writer's exception is
+     * rethrown.
+     */
     private fun fireNotification(obj: DataObject) {
         if (changePublishers.isEmpty()) return
-        val json = dataObjectToJson(obj)
+        val json = try {
+            dataObjectToJson(obj)
+        } catch (e: Exception) {
+            for (publisher in changePublishers) {
+                publisher.onObjectUnwritable(obj.id)
+            }
+            throw e
+        }
         for (publisher in changePublishers) {
             publisher.onObjectChanged(obj.id, json)
         }

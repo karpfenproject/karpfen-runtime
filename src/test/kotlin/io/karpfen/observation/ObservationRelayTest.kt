@@ -15,6 +15,9 @@
  */
 package io.karpfen.observation
 
+import dsl.textual.KmetaDSLConverter
+import dsl.textual.KmodelDSLConverter
+import io.karpfen.io.karpfen.exec.ModelQueryProcessor
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
 import io.karpfen.io.karpfen.messages.EventSource
@@ -24,12 +27,14 @@ import io.karpfen.websocket.OutgoingMessage
 import org.json.JSONObject
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
  * Covers [ObservationRelay] with a fresh [ClientSessionManager] and no engine: the revisions of object, deletion and
- * stack pushes, their recipients, the record of active stacks, domain events, and the escaping of pushed strings.
+ * stack pushes, the revision gap of a change that cannot be written, their recipients, the record of active stacks,
+ * domain events, and the escaping of pushed strings.
  */
 class ObservationRelayTest {
 
@@ -62,6 +67,44 @@ class ObservationRelayTest {
             messages.map { it.messageType }
         )
         assertEquals(listOf(1L, 2L, 3L, 4L), messages.map { JSONObject(it.payload).getLong("revision") })
+        assertEquals(4L, revisions.current())
+    }
+
+    @Test
+    fun `a change that cannot be written uses up a revision without a message`() {
+        sessions.subscribeToModel(ENV, "ide")
+
+        relay.onObjectChanged("turtle", TURTLE_JSON)
+        relay.onObjectUnwritable("ring")
+        relay.onObjectDeleted("gone")
+
+        assertEquals(
+            listOf("objectChanged" to 1L, "objectDeleted" to 3L),
+            drain().map { it.messageType to JSONObject(it.payload).getLong("revision") }
+        )
+        assertEquals(3L, revisions.current())
+    }
+
+    @Test
+    fun `a block reaching a reference loop pushes its other changes and deletions behind a revision gap`() {
+        val metamodel = KmetaDSLConverter.parseKmetaString(CHAIN_METAMODEL)
+        val model = ModelQueryProcessor(metamodel, KmodelDSLConverter.parseKmodelString(CHAIN_MODEL, metamodel))
+        model.addChangePublisher(relay)
+        sessions.subscribeToModel(ENV, "ide")
+
+        model.beginBatch()
+        model.setObjectRelation("b", "next", model.getDataObjectById("a"))
+        model.setScalar("d", "v", 9.0)
+        model.dropObject("c")
+        assertFailsWith<IllegalStateException> { model.commitBatch() }
+
+        assertEquals(
+            listOf(Triple("objectChanged", "d", 2L), Triple("objectDeleted", "c", 4L)),
+            drain().map {
+                val payload = JSONObject(it.payload)
+                Triple(it.messageType, payload.getString("objectId"), payload.getLong("revision"))
+            }
+        )
         assertEquals(4L, revisions.current())
     }
 
@@ -232,5 +275,36 @@ class ObservationRelayTest {
 
         /** A changed object's JSON as the engine hands it to the relay. */
         const val TURTLE_JSON = """{"__id__": "turtle", "__type__": "Robot", "d_closest_obstacle": 0.2}"""
+
+        /** Nodes that know the next node, embedded in a holder. */
+        val CHAIN_METAMODEL = """
+            type "Node" "A node that knows the next node" {
+                prop("v", "number")
+                knows("next", "Node")
+            }
+            type "Holder" "Embeds the nodes" {
+                has("nodes", list("Node"))
+            }
+        """.trimIndent()
+
+        /** The holder `h` with the chain `a` to `b` to `c` and the unrelated node `d`. */
+        val CHAIN_MODEL = """
+            make object "h":"Holder" {
+                has("nodes") -> make object "a":"Node" {
+                    prop("v") -> "0"
+                    knows("next") -> "b"
+                }
+                has("nodes") -> make object "b":"Node" {
+                    prop("v") -> "0"
+                    knows("next") -> "c"
+                }
+                has("nodes") -> make object "c":"Node" {
+                    prop("v") -> "0"
+                }
+                has("nodes") -> make object "d":"Node" {
+                    prop("v") -> "0"
+                }
+            }
+        """.trimIndent()
     }
 }

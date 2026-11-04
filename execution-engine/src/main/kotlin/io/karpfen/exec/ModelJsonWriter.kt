@@ -38,7 +38,8 @@ import java.util.IdentityHashMap
  * Because `knows` relations are inlined like `has` relations, an object reachable from itself has no finite JSON. The
  * writer tracks the objects on the current path by identity and refuses such a loop with an [IllegalStateException]
  * instead of recursing until the stack overflows, which as an [Error] would end the engine thread. Inside the engine
- * the exception leaves the commit of the action block, is reported as an action error, and the engine keeps ticking.
+ * the exception leaves the commit of the action block once the block's other changes and deletions are published, is
+ * reported as an action error, and the engine keeps ticking.
  */
 object ModelJsonWriter {
 

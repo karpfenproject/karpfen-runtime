@@ -30,7 +30,8 @@ import org.json.JSONObject
  * active-stack change through [onActiveStackChanged]. All of them arrive on the engine thread inside a tick; the relay
  * assigns each one the next [revision] and hands it to the [sessions], which enqueue one message per recipient in the
  * same call. Every recipient of one observation therefore gets the same revision, and the revisions of an
- * environment increase in enqueue order.
+ * environment increase in enqueue order. A change whose object cannot be written uses up its revision without a
+ * message, so that the gap reveals it.
  *
  * As the [EventPublicationListener] of the environment's event bus, the relay also announces every published event to
  * the domain listeners of its domain. Domain events carry no revision: they are not model state, and external events
@@ -56,6 +57,15 @@ class ObservationRelay(
     /** Pushes `objectDeleted` for [objectId] under the next revision. */
     override fun onObjectDeleted(objectId: String) {
         sessions.notifyObjectDeleted(environmentKey, objectId, revision.next())
+    }
+
+    /**
+     * Uses up the next revision for a change of [objectId] that has no JSON, because an object is reachable from itself
+     * through its relations, and pushes nothing. A model subscriber therefore sees a gap in the revisions and takes a
+     * snapshot, which is refused while the loop exists, instead of keeping a value that silently went stale.
+     */
+    override fun onObjectUnwritable(objectId: String) {
+        revision.next()
     }
 
     /**
