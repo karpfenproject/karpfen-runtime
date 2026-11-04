@@ -262,8 +262,19 @@ class EnvironmentThread(
     }
 
     /** The start and stop cycle of an environment: built, started by [launch], stopped by [stop]. */
-    private enum class RunState { READY, RUNNING, STOPPED }
+    private enum class RunState {
 
+        /** Built and set up, never launched. */
+        READY,
+
+        /** Launched by the latest [launch], with no [stop] since. */
+        RUNNING,
+
+        /** Stopped by [stop]; a later [launch] runs it again. */
+        STOPPED
+    }
+
+    /** The timing of the start and stop cycle. */
     private companion object {
         /** How long [stop] waits for the runner thread to finish its loop. */
         const val RUNNER_JOIN_MS = 1_000L

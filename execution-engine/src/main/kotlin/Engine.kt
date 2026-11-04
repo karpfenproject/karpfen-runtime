@@ -33,8 +33,10 @@ import kotlin.concurrent.thread
  * purge of expired events, and for each state machine its tick (its `ENTRY` and `DO` blocks, each one notification
  * batch of the [modelQueryProcessor] published when the block ends, and its transitions) followed by its active-stack
  * notification. Between ticks the engine sleeps for the rest of [tickDelayMS] outside the gate. Every model write and
- * every push happens on the engine thread inside a tick, so [readBetweenTicks] sees the model at rest with every push
- * of the finished ticks enqueued.
+ * every object and active-stack push happens on the engine thread inside a tick, so [readBetweenTicks] sees the model
+ * at rest with every such push of the finished ticks enqueued. Events from outside arrive through
+ * [receiveExternalEvent] on the caller's thread outside any tick; their payloads are new objects that never touch the
+ * model, and the listeners of the bus learn about them on that thread.
  *
  * @property metamodel the metamodel of [model].
  * @property model the model the state machines read and change.
