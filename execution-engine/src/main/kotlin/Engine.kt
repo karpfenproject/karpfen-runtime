@@ -26,6 +26,21 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.concurrent.thread
 
+/**
+ * Executes the state machines attached to the objects of one model, on an engine thread of its own.
+ *
+ * [start] runs the tick loop. One tick holds the [tickGate] and runs, in this order, the queued engine commands, the
+ * purge of expired events, and for each state machine its tick (its `ENTRY` and `DO` blocks, each one notification
+ * batch of the [modelQueryProcessor] published when the block ends, and its transitions) followed by its active-stack
+ * notification. Between ticks the engine sleeps for the rest of [tickDelayMS] outside the gate. Every model write and
+ * every push happens on the engine thread inside a tick, so [readBetweenTicks] sees the model at rest with every push
+ * of the finished ticks enqueued.
+ *
+ * @property metamodel the metamodel of [model].
+ * @property model the model the state machines read and change.
+ * @property statemachineMap the state machines by the id of the object each one is attached to.
+ * @property tickDelayMS the least time from the start of one tick to the start of the next one, in milliseconds.
+ */
 class Engine(
     val metamodel: Metamodel,
     val model: Model,
@@ -188,6 +203,11 @@ class Engine(
         }
     }
 
+    /**
+     * The body of the engine thread: builds one execution context per attached state machine at its initial stack, then
+     * runs one tick inside the [tickGate] after the other, sleeping for the rest of [tickDelayMS] outside the gate,
+     * until [stop]. An exception escaping the contexts or a tick ends the thread.
+     */
     private fun runEngine() {
         // Initialize execution contexts for each attached state machine
         val contexts = statemachineMap.map { (modelElementId, stateMachine) ->

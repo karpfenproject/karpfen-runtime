@@ -108,10 +108,11 @@ object EnvironmentHandler {
         }
     }
 
-    /** Builds the trace logger of the environment [key], writing to the trace directory when one is configured. */
+    /**
+     * Builds the trace logger of the environment [key], writing to the trace directory when one is configured. The
+     * logger is built even when file and console tracing are disabled, so that observatory WebSocket listeners work.
+     */
     private fun createTraceLogger(key: String): EngineTraceLogger {
-        // Always create the trace logger so that observatory WebSocket listeners work
-        // even when file/console tracing is disabled.
         val logFile = traceLogDirectory?.let { "$it/engine-trace-$key.log" }
         val traceLogger = EngineTraceLogger(
             engineId = key,

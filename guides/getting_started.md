@@ -234,7 +234,7 @@ Then start with a custom log location:
 - **APIService** - Business logic behind the HTTP endpoints (parameter validation, environment lifecycle).
 - **EnvironmentHandler** - Global singleton that owns all environments, their execution threads, and client sessions.
 - **ClientSessionManager** - Keeps track of which WebSocket clients are subscribed to which objects/domains and queues outgoing notifications for them.
-- **EnvironmentThread** - Runs the execution engine loop for one environment: polls the event queue, ticks the engine, and fires data-change callbacks. It owns the environment's one runner thread, its revision counter and its record of active stacks.
+- **EnvironmentThread** - Runs one activated environment: it starts the execution engine, which ticks on its own thread, while its runner thread drains the external event queue onto the environment's event bus. It owns that one runner thread, its revision counter and its record of active stacks.
 - **Model observation** (package `io.karpfen.observation`) - `ObservationRelay` numbers every model and stack change of an environment and announces published events; `ModelSnapshotService` and `ModelSubscriptionService` serve the snapshot and the model subscription routes.
 - **WebSocketBroadcaster** - Separate thread that drains the outgoing message queue and pushes messages to connected WebSocket sessions without blocking the engine.
 

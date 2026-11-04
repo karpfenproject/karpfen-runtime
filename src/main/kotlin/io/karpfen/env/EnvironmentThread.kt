@@ -29,6 +29,18 @@ import io.karpfen.observation.ObservationRelay
 import io.karpfen.observation.ObservedEnvironment
 import java.util.concurrent.LinkedBlockingQueue
 
+/**
+ * One activated environment at run time: its [engine], the [sharedEventBus], the runner thread of its event loop and
+ * what model observation reads.
+ *
+ * [setup] wires the engine to the environment's WebSocket clients, [launch] starts the engine and the runner whose
+ * event loop ([run]) drains external events onto the bus while the engine ticks on its own thread, and [stop] ends
+ * both. The environment owns its one runner, its run state, the [revisions] that pushes and snapshots share and the
+ * record of [activeStacks]; it answers the [phase] and the snapshots of model observation.
+ *
+ * @property environment the configured environment this thread runs.
+ * @property traceLogger the engine's trace logger, or `null` for no tracing.
+ */
 class EnvironmentThread(
     val environment: Environment,
     val traceLogger: EngineTraceLogger? = null
