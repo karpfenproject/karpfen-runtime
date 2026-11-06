@@ -133,7 +133,8 @@ STATEMACHINE ATTACHED TO "Robot" {
                     p = np.array([$(line_point->x), $(line_point->y)])
                     u = np.array([$(line_dir->x), $(line_dir->y)])
                     u = u / np.linalg.norm(u)
-                    return np.linalg.norm(np.cross(q - p, u))
+                    d = q - p
+                    return abs(d[0] * u[1] - d[1] * u[0])
                 }
             }
         }
