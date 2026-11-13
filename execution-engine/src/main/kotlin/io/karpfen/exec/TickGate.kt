@@ -26,7 +26,7 @@ import kotlin.concurrent.withLock
  * expired events, and for each state machine its `ENTRY` and `DO` blocks (each a notification batch published when
  * the block ends) followed by its active-stack notification. The engine runs each tick inside [duringTick] and sleeps
  * outside it. A read inside [betweenTicks] therefore sees the model after a whole number of ticks, and every push of
- * those ticks has already been enqueued.
+ * those ticks has already been enqueued. The one exception is a tick that is halted at a breakpoint, see [outsideTick].
  *
  * The gate is a fair [ReentrantLock]: a waiting reader gets the lock before the engine's next tick, so it cannot
  * starve even with a tick delay of 0. The gate is free whenever no tick runs, so the same read works before the engine
@@ -41,6 +41,22 @@ class TickGate {
      * Runs one [tick] while holding the gate. An exception thrown by the tick releases the gate and propagates.
      */
     fun <T> duringTick(tick: () -> T): T = lock.withLock(tick)
+
+    /**
+     * Runs [wait] with the gate left open and takes the gate again afterwards, also when [wait] throws. The engine
+     * thread calls it while it is halted inside a tick, at a breakpoint, so that readers do not wait for the halt to
+     * end. A reader then sees the model as the halted tick has left it so far: every `ENTRY` or `DO` block that ran is
+     * complete, the rest of the tick is still to come. Outside a tick the call only runs [wait].
+     */
+    fun outsideTick(wait: () -> Unit) {
+        val held = lock.holdCount
+        repeat(held) { lock.unlock() }
+        try {
+            wait()
+        } finally {
+            repeat(held) { lock.lock() }
+        }
+    }
 
     /**
      * Runs [read] at the next tick boundary, waiting at most [timeoutMs] milliseconds for the running tick to leave

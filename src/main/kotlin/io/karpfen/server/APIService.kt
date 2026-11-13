@@ -23,6 +23,7 @@ import io.karpfen.env.DomainListener
 import io.karpfen.env.EnvironmentHandler
 import io.karpfen.env.Observation
 import io.karpfen.io.karpfen.exec.StateMachineQueryHelper
+import io.karpfen.io.karpfen.features.FeatureRegistry
 import meta.Metamodel
 
 object APIService {
@@ -193,4 +194,43 @@ object APIService {
         return accessKey
     }
 
+    fun getRegisteredFeatures(): Set<String> {
+        return FeatureRegistry.getFeatureNames()
+    }
+
+    fun activateFeature(envKey: String, featureName: String) {
+        val env = EnvironmentHandler.getEnv(envKey)
+            ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        val featureClass = FeatureRegistry.getClassByName(featureName)
+            ?: throw IllegalArgumentException("Feature '$featureName' is not registered")
+        if (!env.featureManager.requestFeatureActivation(featureClass))
+            throw IllegalArgumentException("Feature '$featureName' is already active in environment $envKey")
+    }
+
+    fun getActiveFeatures(envKey: String): Set<String> {
+        val env = EnvironmentHandler.getEnv(envKey)
+            ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        val set = mutableSetOf<String>()
+        for (featureClass in env.featureManager.getActiveFeatureClasses()) {
+            FeatureRegistry.getNameByClass(featureClass)?.let { set.add(it) }
+        }
+        return set
+    }
+
+    fun deactivateFeature(envKey: String, featureName: String) {
+        val env = EnvironmentHandler.getEnv(envKey)
+            ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        val featureClass = FeatureRegistry.getClassByName(featureName)
+            ?: throw IllegalArgumentException("Feature '$featureName' is not registered")
+        if (!env.featureManager.requestFeatureDeactivation(featureClass))
+            throw IllegalArgumentException("Feature '$featureName' is not active in environment $envKey")
+    }
+
+    fun sendMessage(envKey: String, featureName: String, message: String): String {
+        val env = EnvironmentHandler.getEnv(envKey)
+            ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        val featureClass = FeatureRegistry.getClassByName(featureName)
+            ?: throw IllegalArgumentException("Feature '$featureName' is not registered")
+        return env.featureManager.onMessage(featureClass, message) ?: throw IllegalArgumentException("${FeatureRegistry.getNameByClass(featureClass)} has not been activated in environment $envKey")
+    }
 }

@@ -48,6 +48,11 @@ Default URLs:
 | GET | `/observatory/model?envKey=...` | Snapshot: phase, revision, active stacks and every root object as JSON |
 | POST | `/observatory/subscribeModel?envKey=...&clientId=...` | Every object and stack change; needs an open WebSocket session |
 | POST | `/observatory/unsubscribeModel?envKey=...&clientId=...` | Ends the model subscription |
+| GET | `/getRegisteredFeatures` | Names of all features, separated by commas |
+| GET | `/getActiveFeatures?envKey=...` | Names of the features that are on |
+| POST | `/activateFeature?envKey=...&featureName=...` | Any time after `/createEnvironment`; see [features.md](features.md) |
+| POST | `/deactivateFeature?envKey=...&featureName=...` | |
+| POST | `/sendMessageToFeature?envKey=...&featureName=...` | Message in the body, the feature's answer in the response |
 
 > Order matters: **`/runEnvironment` must be called before `/startEnvironment`**, and the setup endpoints
 > (`/set*`) only work *before* `/runEnvironment` — an active environment is immutable.

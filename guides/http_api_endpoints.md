@@ -337,6 +337,61 @@ environment, also while it runs, and are implemented in the package `io.karpfen.
 5. Apply the kept and all later messages in arrival order, skipping those with a revision of R or less. A revision
    larger than the last applied one plus 1 means messages were lost: take a new snapshot.
 
+## Features
+
+Histories, tick limits, breakpoints, stepping and event replay are features that each environment switches on and
+off. The [features guide](features.md) describes them and their messages.
+
+### List Registered Features
+- **Endpoint**: `GET /getRegisteredFeatures`
+- **Parameters**: None
+- **Response**: String, the names of all features separated by commas
+- **Description**: Lists the features the runtime knows.
+
+### Activate Feature
+- **Endpoint**: `POST /activateFeature`
+- **Parameters**:
+  - `envKey` (string): The environment key
+  - `featureName` (string): The name of the feature
+- **Request Body**: Empty
+- **Response**: Empty (200 OK on success)
+- **Description**: Switches the feature on in the environment, together with the features it needs. Works from the
+  creation of the environment on, also while it runs. Answers `400` for an unknown environment or feature and for a
+  feature that is on already.
+
+### List Active Features
+- **Endpoint**: `GET /getActiveFeatures`
+- **Parameters**:
+  - `envKey` (string): The environment key
+- **Response**: String, the names of the features that are on, separated by commas
+- **Description**: Lists the features of the environment, also those that were switched on because another one needs
+  them.
+
+### Deactivate Feature
+- **Endpoint**: `POST /deactivateFeature`
+- **Parameters**:
+  - `envKey` (string): The environment key
+  - `featureName` (string): The name of the feature
+- **Request Body**: Empty
+- **Response**: Empty (200 OK on success)
+- **Description**: Switches the feature off, together with every feature that needs it. Answers `400` for an unknown
+  environment or feature and for a feature that is not on.
+
+### Send Message to Feature
+- **Endpoint**: `POST /sendMessageToFeature`
+- **Parameters**:
+  - `envKey` (string): The environment key
+  - `featureName` (string): The name of the feature
+- **Request Body**: The message, as the features guide lists them for each feature
+- **Response**: String, the answer of the feature
+- **Description**: Hands the message to the feature. Answers `400` for an unknown environment or feature, for a
+  feature that is not on, and for a message `TickByTick` does not know.
+- **Example**:
+  ```bash
+  curl -X POST "http://localhost:8080/sendMessageToFeature?envKey=env-123&featureName=TickByTick" -d "tick:1"
+  # Returns: execution is advancing 1 tick
+  ```
+
 ## WebSocket Connection
 
 ### WebSocket Endpoint

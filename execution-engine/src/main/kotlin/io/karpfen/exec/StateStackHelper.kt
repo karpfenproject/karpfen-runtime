@@ -59,4 +59,18 @@ object StateStackHelper {
         return if (targetIdx >= 0) newStack.subList(maxOf(0, targetIdx - 1), newStack.size) else newStack
     }
 
+    /**
+     * Computes which states are left when moving from [oldStack] to [newStack] with target state [target], innermost
+     * first.
+     *
+     * Normally these are the states of [oldStack] below its common prefix with [newStack]. For a self-transition or a
+     * transition to an ancestor, the states that [computeEntrySequence] enters again are left as well, together with
+     * everything nested in them.
+     */
+    fun computeExitSequence(oldStack: List<String>, newStack: List<String>, target: String): List<String> {
+        val entered = computeEntrySequence(oldStack, newStack, target)
+        val keptLength = newStack.size - entered.size
+        return oldStack.drop(minOf(keptLength, oldStack.size)).reversed()
+    }
+
 }

@@ -22,6 +22,7 @@ import io.karpfen.Engine
 import io.karpfen.EngineTraceLogger
 import io.karpfen.EngineTraceLogger.TraceEventType
 import io.karpfen.env.EnvironmentHandler
+import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
 import io.karpfen.io.karpfen.messages.EventSource
@@ -347,7 +348,8 @@ class SystemTest {
             statemachineMap = mapOf("turtle" to sm),
             tickDelayMS = tickDelay,
             eventBus = EventBus(defaultTtlMs = 30_000),
-            traceLogger = traceLogger
+            traceLogger = traceLogger,
+            featureManager = FeatureManager()
         )
     }
 

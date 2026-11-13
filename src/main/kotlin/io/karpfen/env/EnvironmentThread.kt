@@ -83,7 +83,8 @@ class EnvironmentThread(
         sharedEventBus,
         traceLogger = traceLogger,
         eventConsumptionOnFire = environment.eventConsumptionOnFire,
-        eventMetamodel = environment.eventMetamodel
+        eventMetamodel = environment.eventMetamodel,
+        featureManager = environment.featureManager
     )
 
     /**

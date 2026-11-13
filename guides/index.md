@@ -9,4 +9,5 @@ Welcome to the Karpfen Runtime documentation.
 3. [getting_started.md](getting_started.md) - End-to-end setup and workflow
 4. [http_api_endpoints.md](http_api_endpoints.md) - Full API contract
 5. [statemachine_execution_semantics.md](statemachine_execution_semantics.md) - Engine execution model and non-trivial behavior
-6. [../examples/README.md](../examples/README.md) - Runnable example scenarios
+6. [features.md](features.md) - Histories, tick limits, breakpoints, stepping and event replay as switchable features
+7. [../examples/README.md](../examples/README.md) - Runnable example scenarios

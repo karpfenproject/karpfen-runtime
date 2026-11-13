@@ -30,6 +30,21 @@ Example: stack = [drive, drive fast]
 
 At startup, the engine resolves the initial stack by recursively following states marked `INITIAL`. If no state is marked initial at a given level, the first defined state is used.
 
+### Transitions into nested states
+
+The target of a transition decides the new stack: it is the path from the outermost state down to the target, and
+nothing below it.
+
+- A transition into a state that has nested states stops at that state. The state is then the innermost one, so its
+  `DO` block runs, and none of its nested states is active. Only the stack at startup follows `INITIAL` downwards.
+- The `ENTRY` blocks that run are those of the states on the new stack below the part it shares with the old stack.
+  A state that stays active is not entered again.
+- A transition to the state itself, or to one of its outer states, enters the target again and with it the state
+  directly around the target. For a top-level target only the target is entered again.
+- There are no exit blocks. Leaving a state runs nothing.
+- After an `ENTRY` block with actions, the transitions of every state on the stack are checked, also those of
+  nested states whose own `ENTRY` has not run yet. If one fires, the remaining `ENTRY` blocks do not run.
+
 ---
 
 ## Transition Evaluation
@@ -97,6 +112,8 @@ TRANSITION "drive" -> "drive fast" NOT LOOPING { ... }
 - NOT LOOPING compares the transition object identity, not just from/to names.
 - When a NOT LOOPING transition is skipped, the engine continues evaluating the next transition in definition order. This is how fallback transitions (e.g., `drive → observe`) get a chance to fire.
 - Once a *different* transition fires, the NOT LOOPING block is reset - the previously blocked transition can fire again on the next evaluation.
+- NOT LOOPING only has an effect on a `TRANSITION`. A `SPLIT` is never held back by it, because the transition fired
+  last before a split can fire again is the join in between. A `JOIN` is not checked against it at all.
 
 **Example cycle:**
 ```
@@ -138,9 +155,87 @@ Each tick, for a parallel context:
 
 A join fires only when its source states correspond **exactly** to the set of branches: there must be as many branches as source states, and each source state must be active (anywhere in that branch's stack, not only the innermost state) in a *distinct* branch. So every branch has to be accounted for — a join is "all regions have reached their join points", not "some of them have".
 
+### What a split and a join enter
+
+Each branch of a split gets the stack of its target. The `ENTRY` blocks that run in a branch are those below the part
+its stack shares with the stack that was split, as for a normal transition. A join enters its whole target stack
+afresh, the outer states included, because all branches are discarded.
+
 ### Events and scoped events across branches
 
 Each branch reacts to events independently: an event consumed by one branch can still be consumed by another (broadcast). A branch created by a split inherits its parent's event history, and a branch created by a join inherits the union of the joined branches' histories, so a fresh branch never re-handles events its ancestors already handled. Scoped events ([see above](#reading-event-payloads)) and the NOT LOOPING memory are tracked per branch.
+
+An event that fires a split becomes the scoped event of every target, so each branch can read its payload. An event
+that fires a join is different in three ways. The guard clauses of the join can read its payload, but it does not
+become the scoped event of the target. The join looks at the events of the bus on its own, so it also sees events
+that its branches already handled. And the event is marked as handled only for the branch the join creates, so the
+same event can fire the same join again if the state machine splits again while the event lives.
+
+---
+
+## Histories, tick limits and breakpoints
+
+A state can carry a history, a tick limit and breakpoints, and a transition can carry breakpoints. They are always
+read from the `.kstates` file, but each of them only has an effect in an environment whose feature is switched on:
+`History`, `TickLimit` and `Breakpoint`. The [features guide](features.md) tells how to switch a feature on and
+describes breakpoints. Without the feature the state machine runs as if the words were not there.
+
+### Histories
+
+```
+DEEP HISTORY STATE "operating" {
+    STATE "cars go" { }
+    STATE "cars wait" { }
+}
+```
+
+A state with a history is entered again where it was left.
+
+- **Remembering.** At the start of every tick, each active state that has a history and is not the innermost state
+  remembers a state. With `SHALLOW HISTORY` it is the state directly nested in it that is active. With `DEEP HISTORY`
+  it is the innermost active state.
+- **Leading on.** When the state with the history is the innermost state and remembers a state, the state machine
+  goes on to the remembered state. This happens after the `ENTRY` blocks of the tick and after the timeout check,
+  and it ends the tick. The `ENTRY` blocks on the way to the remembered state run in the next tick.
+- A state that was never active with a nested state remembers nothing. Entering it stops at the state itself, as
+  described under [Transitions into nested states](#transitions-into-nested-states).
+- What a state remembers is kept until the engine starts again. It is not forgotten when the remembered state is
+  left in the normal way.
+
+Two consequences are easy to miss. A state that remembers a state never rests as the innermost state, so its `DO`
+block does not run any more. And a transition from a nested state back to the state with the history leads straight
+on to the remembered state again.
+
+### Tick limits
+
+```
+STATE "cars wait" {
+    TICK LIMIT {
+        DELAY: 2 TICKS
+        TIMEOUT: AFTER 10 TICKS TRANSITION TO "cars go"
+    }
+}
+```
+
+The engine counts for every active state the ticks it has been active. The tick in which a transition enters the
+state does not count; the next tick is its first. A state that is entered again, also by a transition to itself,
+starts counting anew. The initial states count from the first tick.
+
+- **`DELAY: n TICKS`** holds back every transition that would leave the state until the state has been active for
+  more than `n` ticks. A transition between states nested in it is not held back, because it does not leave the
+  state. A transition that is held back is not replaced by another one: nothing fires in that tick, the event of the
+  transition stays unhandled, and the transition is tried again in the next tick. A join is held back by the delay
+  of any state in any of its branches.
+- **`TIMEOUT: AFTER n TICKS TRANSITION TO "state"`** takes the state machine to the named state once the state has
+  been active for more than `n` ticks. The engine checks the timeouts after the `ENTRY` blocks of a tick, before the
+  histories and the `DO` block, the innermost state first. A timeout ends the tick like any transition. It is
+  applied like a `TRANSITION` without a condition, so a delay of a state it leaves holds it back as well.
+
+With `DELAY: 5 TICKS` the state can be left in its sixth tick at the earliest. With `TIMEOUT: AFTER 5 TICKS` it is
+left in its sixth tick at the latest.
+
+In a parallel context every branch checks the timeouts of its own stack, after the joins. The ticks are counted per
+state name, so a state that is active in two branches at once has one count.
 
 ---
 
@@ -358,7 +453,10 @@ When an `EngineTraceLogger` is configured, the engine writes structured trace en
 | `TICK_START / TICK_END` | Tick boundaries with current state and stack. |
 | `STATE_ENTRY_EXEC / STATE_ENTRY_SKIP` | ENTRY block execution or skip (empty block). |
 | `STATE_DO_EXEC / STATE_DO_SKIP` | DO block execution or skip. |
+| `TRANSITION_START` | A transition is about to be applied. A breakpoint at its start halts after this entry. |
 | `TRANSITION_FIRED` | A transition was applied (includes from, to, condition type, stacks). |
+| `SPLIT_START / SPLIT_FIRED` | The same two entries for a split. |
+| `JOIN_START / JOIN_FIRED` | The same two entries for a join. |
 | `TRANSITION_SKIPPED_LOOP` | A NOT LOOPING transition was blocked. |
 | `ACTION_ERROR / ENGINE_ERROR` | Errors during execution. |
 

@@ -19,6 +19,7 @@ import dsl.textual.KmetaDSLConverter
 import dsl.textual.KmodelDSLConverter
 import dsl.textual.KstatesDSLConverter
 import io.karpfen.Engine
+import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.messages.EventBus
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -65,7 +66,7 @@ class ParallelStatesEngineTest {
         val model = KmodelDSLConverter.parseKmodelString(kmodel, metamodel)
         val sm = KstatesDSLConverter.parseKstatesString(kstates)
 
-        val engine = Engine(metamodel, model, mapOf("t" to sm), tickDelayMS = 10, eventBus = EventBus())
+        val engine = Engine(metamodel, model, mapOf("t" to sm), tickDelayMS = 10, eventBus = EventBus(), featureManager = FeatureManager())
         engine.start()
         Thread.sleep(600)
         engine.stop()

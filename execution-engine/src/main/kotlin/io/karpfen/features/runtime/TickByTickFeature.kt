@@ -1,0 +1,85 @@
+package io.karpfen.io.karpfen.features.runtime
+
+import com.google.auto.service.AutoService
+import io.karpfen.io.karpfen.features.DefaultFeature
+import io.karpfen.io.karpfen.features.Feature
+import io.karpfen.io.karpfen.features.FeatureManager
+import io.karpfen.io.karpfen.features.FeatureProvider
+import java.util.concurrent.Semaphore
+import kotlin.reflect.KClass
+
+class TickByTickFeature : DefaultFeature() {
+
+    private val semaphore = Semaphore(0)
+
+    @Volatile
+    private var isPaused: Boolean = false
+
+    private fun pause(): String {
+        isPaused = true
+        semaphore.drainPermits()
+        return "execution paused"
+    }
+
+    private fun resume(): String {
+        isPaused = false
+        semaphore.release()
+        return "execution resumed"
+    }
+
+    private fun tick(amount: Int): String {
+        if (amount < 1) return "amount of ticks must not be less than one"
+        if (isPaused && semaphore.availablePermits() == 0) {
+            semaphore.release(amount)
+        } else {
+            return "execution is currently not paused, ticks will not be applied"
+        }
+        return "execution is advancing $amount tick${if (amount > 1) "s" else ""}"
+    }
+
+    /**
+     * How the engine thread waits while it is paused: it is handed the wait and runs it. The engine sets it so that a
+     * pause inside a tick, at a breakpoint, leaves the tick gate open for readers.
+     */
+    @Volatile
+    var waiting: (wait: () -> Unit) -> Unit = { wait -> wait() }
+
+    fun evalPausedState() {
+        if (isPaused) {
+            waiting { semaphore.acquire() }
+        }
+    }
+
+    override fun onDeactivate() {
+        resume()
+    }
+
+    //Supported Messages: pause, resume, tick:{Int}
+    override fun onMessage(message: String): String {
+        return when (message) {
+            "pause" -> pause()
+            "resume" -> resume()
+            else -> {
+                val list = message.split(':')
+                if (list.size == 2 && list[0] == "tick" && list[1].toIntOrNull() != null) {
+                    tick(list[1].toInt())
+                } else {
+                    throw IllegalArgumentException("Invalid message: $message")
+                }
+            }
+        }
+    }
+}
+
+@AutoService(FeatureProvider::class)
+class TickByTickProvider : FeatureProvider {
+    override val registryName = "TickByTick"
+
+    override val registryClass = TickByTickFeature::class
+
+    override val featureDependencies: Set<KClass<out Feature>> = emptySet()
+
+    override fun createFeature(manager: FeatureManager): Feature {
+        return TickByTickFeature()
+    }
+}

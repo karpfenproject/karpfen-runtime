@@ -17,6 +17,13 @@ package io.karpfen
 
 import instance.Model
 import io.karpfen.io.karpfen.exec.*
+import io.karpfen.io.karpfen.features.FeatureManager
+import io.karpfen.io.karpfen.features.language.HistoryFeature
+import io.karpfen.io.karpfen.features.language.TickLimitFeature
+import io.karpfen.io.karpfen.features.runtime.BreakpointFeature
+import io.karpfen.io.karpfen.features.runtime.TickByTickFeature
+import io.karpfen.io.karpfen.features.runtime.event.EventInjectionFeature
+import io.karpfen.io.karpfen.features.runtime.event.EventRecordingFeature
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
 import meta.Metamodel
@@ -62,7 +69,12 @@ class Engine(
      * Gate the engine holds for the whole of each tick; [readBetweenTicks] waits on it, so readers on other threads
      * see the model only between ticks.
      */
-    private val tickGate: TickGate = TickGate()
+    private val tickGate: TickGate = TickGate(),
+    /**
+     * The features of the environment this engine runs in. The engine asks it at fixed points of a tick for the
+     * features that are switched on; without any, the engine runs as it does without a feature system.
+     */
+    val featureManager: FeatureManager = FeatureManager(),
 ) {
 
     /** Parses incoming event payloads into the runtime object model against [eventMetamodel]. */
@@ -119,7 +131,7 @@ class Engine(
     val modelQueryProcessor = ModelQueryProcessor(metamodel, model)
 
     /** Runs the per-branch mechanics (ENTRY/DO + a branch's own transitions). Shared across branches. */
-    private val branchRunner = BranchRunner(traceLogger, eventConsumptionOnFire)
+    private val branchRunner = BranchRunner(traceLogger, eventConsumptionOnFire, featureManager)
 
     /**
      * Accepts an event from an external source (e.g., WebSocket), parses its payload into the runtime
@@ -127,6 +139,10 @@ class Engine(
      */
     fun receiveExternalEvent(event: Event) {
         eventPayloadParser.parseInto(event)
+        //Event recording
+        featureManager.executeIfPresent<EventRecordingFeature> { feature ->
+            if (feature.addEventToQueue(event, eventProcessor)) return
+        }
         eventProcessor.publishExternalEvent(event)
     }
 
@@ -261,6 +277,18 @@ class Engine(
             ctx
         }
 
+        //Feature cleanup
+        //Unlock loop
+        featureManager.onMessage(TickByTickFeature::class, "resume")
+        //Reset tick counts
+        featureManager.executeIfPresent<TickLimitFeature> { feature ->
+            feature.incrementTick(emptyList())
+        }
+        //Reset History
+        featureManager.executeIfPresent<HistoryFeature> { feature ->
+            feature.resetHistory()
+        }
+
         traceLogger?.log(
             "*",
             EngineTraceLogger.TraceEventType.ENGINE_START,
@@ -275,6 +303,11 @@ class Engine(
 
         var tickCount = 0L
         while (isRunning) {
+            featureManager.executeIfPresent<TickByTickFeature> { feature ->
+                feature.waiting = tickGate::outsideTick
+                feature.evalPausedState()
+            }
+
             tickCount++
             val tickStart = System.currentTimeMillis()
 
@@ -302,6 +335,21 @@ class Engine(
         while (true) {
             val cmd = commandQueue.poll() ?: break
             cmd(contexts)
+        }
+
+        featureManager.executeIfPresent<EventRecordingFeature> { feature ->
+            //Record all events queued during this tick
+            feature.recordQueuedEvents(tickCount, eventProcessor)
+        }
+
+        featureManager.executeIfPresent<EventInjectionFeature> { feature ->
+            //Inject Events recorded for this tick (or earlier) and consume them
+            feature.evalEventInjection(tickCount, eventProcessor)
+        }
+
+        featureManager.executeIfPresent<TickLimitFeature> { feature ->
+            //Increment every currently visited state's tick counter
+            feature.incrementTick(contexts)
         }
 
         // Purge expired events once per tick
@@ -421,11 +469,46 @@ class Engine(
      * every region can read it.
      */
     private fun applySplit(ctx: SMContext, parent: Branch, split: states.SplitTransition, matchedEvent: Event?) {
+
+        val smQueryHelper = ctx.smQueryHelper
+
+        //Delay: only the states the split leaves can hold it back
+        featureManager.executeIfPresent<TickLimitFeature> { feature ->
+            val exited = split.toStates.flatMap { target ->
+                StateStackHelper.computeExitSequence(parent.stateStack, smQueryHelper.getStateStackForState(target), target)
+            }.distinct()
+            if (feature.isTransitionBlocked(ctx.modelElementId, exited.mapNotNull { smQueryHelper.findStateByName(it) })) return
+        }
+
+        //Multiple state exit breakpoints
+        featureManager.executeIfPresent<BreakpointFeature> { feature ->
+            feature.evalStateExitBreakpointSplit(
+                ctx.modelElementId,
+                parent.stateStack.mapNotNull { stateName -> smQueryHelper.findStateByName(stateName) },
+                split.toStates.map {
+                    smQueryHelper.getStateStackForState(it)
+                        .mapNotNull { stateName -> smQueryHelper.findStateByName(stateName) }
+                }
+            )
+        }
+
+        traceLogger?.log(
+            ctx.modelElementId,
+            EngineTraceLogger.TraceEventType.SPLIT_START,
+            "${split.fromState} -> ${split.toStates.joinToString(",")}",
+            mapOf("from" to split.fromState, "to" to split.toStates.joinToString(","))
+        )
+
+        //Split transition start breakpoint
+        featureManager.executeIfPresent<BreakpointFeature> { feature ->
+            feature.evalTransitionStartBreakpoint(ctx.modelElementId, split)
+        }
+
         if (eventConsumptionOnFire) matchedEvent?.let { parent.eventProcessor.consume(it) }
 
         val inherited = parent.eventProcessor.lineage()
         val newBranches = split.toStates.mapNotNull { target ->
-            val targetStack = ctx.smQueryHelper.getStateStackForState(target)
+            val targetStack = smQueryHelper.getStateStackForState(target)
             if (targetStack.isEmpty()) {
                 System.err.println("[Engine] Split target '$target' not found — skipping it")
                 return@mapNotNull null
@@ -439,12 +522,22 @@ class Engine(
         if (newBranches.isEmpty()) return // nothing valid to split into; leave the context unchanged
         ctx.branches = newBranches
 
+        //The states entered now count their ticks from this entry
+        featureManager.executeIfPresent<TickLimitFeature> { feature ->
+            feature.resetTicks(ctx.modelElementId, newBranches.flatMap { it.notEnteredSubstack })
+        }
+
         traceLogger?.log(
             ctx.modelElementId,
             EngineTraceLogger.TraceEventType.SPLIT_FIRED,
             "${split.fromState} -> ${split.toStates.joinToString(",")}",
             mapOf("from" to split.fromState, "to" to split.toStates.joinToString(","))
         )
+
+        //Split transition end breakpoint
+        featureManager.executeIfPresent<BreakpointFeature> { feature ->
+            feature.evalTransitionEndBreakpoint(ctx.modelElementId, split)
+        }
     }
 
     /**
@@ -453,8 +546,53 @@ class Engine(
      * does not re-handle events the parallel phase already handled.
      */
     private fun applyJoin(ctx: SMContext, fireable: Fireable) {
-        val join = fireable.transition as JoinTransition
-        val targetStack = ctx.smQueryHelper.getStateStackForState(join.toState)
+
+        val smQueryHelper = ctx.smQueryHelper
+        val join = (fireable.transition as JoinTransition)
+
+        //Delay
+        featureManager.executeIfPresent<TickLimitFeature> { feature ->
+            for (branch in ctx.branches) {
+                if (feature.isTransitionBlocked(ctx.modelElementId, branch.stateStack.mapNotNull { smQueryHelper.findStateByName(it) })) return
+            }
+        }
+
+        featureManager.executeIfPresent<BreakpointFeature> { feature ->
+            //Additional entry breakpoint check, since split bypasses branchRunner.tick
+            for (branch in ctx.branches) {
+                for (state in branch.notEnteredSubstack.mapNotNull { smQueryHelper.findStateByName(it) }) {
+                    feature.evalStateEntryBreakpoint(ctx.modelElementId, state)
+                }
+            }
+
+            //Multiple state exit breakpoints
+            feature.evalStateExitBreakpointJoin(
+                ctx.modelElementId,
+                ctx.branches.map { branch ->
+                    branch.stateStack.mapNotNull { stateName ->
+                        smQueryHelper.findStateByName(
+                            stateName
+                        )
+                    }
+                },
+                smQueryHelper.getStateStackForState(join.toState)
+                    .mapNotNull { stateName -> smQueryHelper.findStateByName(stateName) }
+            )
+        }
+
+        traceLogger?.log(
+            ctx.modelElementId,
+            EngineTraceLogger.TraceEventType.JOIN_START,
+            "${join.fromStates.joinToString(",")} -> ${join.toState}",
+            mapOf("from" to join.fromStates.joinToString(","), "to" to join.toState)
+        )
+
+        //Join transition start breakpoint
+        featureManager.executeIfPresent<BreakpointFeature> { feature ->
+            feature.evalTransitionStartBreakpoint(ctx.modelElementId, join)
+        }
+
+        val targetStack = smQueryHelper.getStateStackForState(join.toState)
         if (targetStack.isEmpty()) {
             System.err.println("[Engine] Join target '${join.toState}' not found — skipping join")
             return
@@ -466,16 +604,28 @@ class Engine(
         if (eventConsumptionOnFire) fireable.matchedEvent?.let { newBranch.eventProcessor.consume(it) }
         ctx.branches = mutableListOf(newBranch)
 
+        //The states entered now count their ticks from this entry
+        featureManager.executeIfPresent<TickLimitFeature> { feature ->
+            feature.resetTicks(ctx.modelElementId, entry)
+        }
+
         traceLogger?.log(
             ctx.modelElementId,
             EngineTraceLogger.TraceEventType.JOIN_FIRED,
             "${join.fromStates.joinToString(",")} -> ${join.toState}",
             mapOf("from" to join.fromStates.joinToString(","), "to" to join.toState)
         )
+
+        //Join transition end breakpoint
+        featureManager.executeIfPresent<BreakpointFeature> { feature ->
+            feature.evalTransitionEndBreakpoint(ctx.modelElementId, join)
+        }
     }
 
     fun stop() {
         isRunning = false
+        // A paused or halted engine thread waits for a resume; release it so that it can see the stop.
+        featureManager.onMessage(TickByTickFeature::class, "resume")
         executionThread?.let { t ->
             try {
                 t.join(5000)

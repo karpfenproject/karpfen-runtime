@@ -57,7 +57,7 @@ object ModelJsonWriter {
      * Writes [text] as a JSON string literal in double quotes.
      *
      * Exactly `"`, `\` and the control characters U+0000 to U+001F are escaped: `\b`, `\f`, `\n`, `\r` and `\t` by
-     * their short forms, the others as `\u00XX` with lower-case hex digits. Every other character is written as it
+     * their short forms, the others as a backslash, `u00` and two lower-case hex digits. Every other character is written as it
      * is.
      */
     fun quote(text: String): String {

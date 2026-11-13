@@ -274,6 +274,70 @@ object HTTPRoutes {
                     respondWithError(call, e)
                 }
             }
+
+            // Feature-related endpoints
+
+            get("/getRegisteredFeatures") {
+                try {
+                    val featureNames = APIService.getRegisteredFeatures()
+                    call.respond(HttpStatusCode.OK, featureNames.joinToString(separator = ","))
+                }
+                catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            post("/activateFeature") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                    ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val feature = call.request.queryParameters["featureName"]
+                    ?: throw IllegalArgumentException("Missing required parameter: featureName")
+                    APIService.activateFeature(envKey, feature)
+                    call.respond(HttpStatusCode.OK, "")
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            get("/getActiveFeatures") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                    ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val activeFeatureNames = APIService.getActiveFeatures(envKey)
+                    call.respond(HttpStatusCode.OK, activeFeatureNames.joinToString(separator = ","))
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            post("/deactivateFeature") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                    ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val feature = call.request.queryParameters["featureName"]
+                    ?: throw IllegalArgumentException("Missing required parameter: featureName")
+                    APIService.deactivateFeature(envKey, feature)
+                    call.respond(HttpStatusCode.OK, "")
+                }
+                catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            post("/sendMessageToFeature") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val feature = call.request.queryParameters["featureName"]
+                        ?: throw IllegalArgumentException("Missing required parameter: featureName")
+                    val message = call.receiveText()
+                    call.respond(HttpStatusCode.OK, APIService.sendMessage(envKey, feature, message))
+                }
+                catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
         }
     }
 

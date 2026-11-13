@@ -16,6 +16,7 @@
 package io.karpfen.env
 
 import instance.Model
+import io.karpfen.io.karpfen.features.FeatureManager
 import meta.Metamodel
 import states.StateMachine
 
@@ -35,5 +36,7 @@ data class Environment(
     /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
     var eventConsumptionOnFire: Boolean = true,
     val objectObservations: MutableList<Observation> = mutableListOf(),
-    val domainListeners: MutableList<DomainListener> = mutableListOf()
+    val domainListeners: MutableList<DomainListener> = mutableListOf(),
+    /** The features of this environment, switched on and off through the feature routes and asked by its engine. */
+    val featureManager: FeatureManager = FeatureManager()
 )

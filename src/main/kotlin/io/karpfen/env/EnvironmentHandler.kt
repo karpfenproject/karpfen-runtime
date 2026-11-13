@@ -16,6 +16,7 @@
 package io.karpfen.env
 
 import io.karpfen.EngineTraceLogger
+import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.websocket.ClientSessionManager
 import java.util.concurrent.ConcurrentHashMap
 
@@ -73,7 +74,13 @@ object EnvironmentHandler {
 
     /** A new environment under [key] with the configured default tick delay, event time to live and consumption. */
     private fun newEnvironment(key: String): Environment =
-        Environment(key, tickDelayMS = defaultTickDelayMs, eventTtlMs = defaultEventTtlMs, eventConsumptionOnFire = defaultEventConsumptionOnFire)
+        Environment(
+            key,
+            tickDelayMS = defaultTickDelayMs,
+            eventTtlMs = defaultEventTtlMs,
+            eventConsumptionOnFire = defaultEventConsumptionOnFire,
+            featureManager = FeatureManager()
+        )
 
     fun getEnv(key: String): Environment? {
         return envs[key]
