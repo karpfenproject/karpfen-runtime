@@ -15,16 +15,15 @@
  */
 package io.karpfen.server
 
-import dsl.textual.KmetaDSLConverter
-import dsl.textual.KmodelDSLConverter
-import dsl.textual.KstatesDSLConverter
-import instance.Model
+import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.reader.kmeta.KmetaReader
+import io.karpfen.dsl.reader.kmodel.KmodelReader
+import io.karpfen.dsl.reader.kstates.KstatesReader
 import io.karpfen.env.DomainListener
 import io.karpfen.env.EnvironmentHandler
 import io.karpfen.env.Observation
 import io.karpfen.io.karpfen.exec.StateMachineQueryHelper
 import io.karpfen.io.karpfen.features.FeatureRegistry
-import meta.Metamodel
 
 object APIService {
 
@@ -50,34 +49,62 @@ object APIService {
      */
     fun createEnvironment(): String = EnvironmentHandler.createUniqueEnv().key
 
+    /**
+     * Reads [metamodelData] with a `KmetaReader` and stores the metamodel in the environment [envKey].
+     *
+     * @throws UploadRejectedException if the text has errors; the environment then stays as it was.
+     */
     fun receiveMetamodel(envKey: String, metamodelData: String) {
         assertEnv(envKey)
-        val metamodel: Metamodel = KmetaDSLConverter.parseKmetaString(metamodelData)
+        val metamodel = UploadReading.acceptOrReject(envKey, "metamodel", KmetaReader().read(metamodelData))
         EnvironmentHandler.getEnv(envKey)!!.metamodel = metamodel
     }
 
+    /**
+     * Reads [modelData] with a `KmodelReader` against the metamodel of the environment [envKey] and stores the model.
+     *
+     * @throws IllegalStateException if the environment has no metamodel yet.
+     * @throws UploadRejectedException if the text has errors; the environment then stays as it was.
+     */
     fun receiveModel(envKey: String, modelData: String) {
         assertEnv(envKey)
         val metamodel = EnvironmentHandler.getEnv(envKey)!!.metamodel
             ?: throw IllegalStateException("Metamodel must be set before receiving a model for environment $envKey")
-        val model: Model = KmodelDSLConverter.parseKmodelString(modelData, metamodel)
+        val model = UploadReading.acceptOrReject(envKey, "model", KmodelReader(metamodel).read(modelData))
         EnvironmentHandler.getEnv(envKey)!!.model = model
     }
 
+    /**
+     * Reads [eventDefinitionData] with a `KmetaReader` and stores the event metamodel and its text in the environment
+     * [envKey].
+     *
+     * Event payloads may embed or link domain types, so the types of the domain metamodel, when there is one, are
+     * the base types of the read: the event types may refer to them without defining them.
+     *
+     * @throws UploadRejectedException if the text has errors; the environment then stays as it was.
+     */
     fun receiveEventDefinitions(envKey: String, eventDefinitionData: String) {
         assertEnv(envKey)
         val env = EnvironmentHandler.getEnv(envKey)!!
-        // Event payloads may embed or link domain types, so the domain metamodel's types (when present)
-        // are made available to the event metamodel as resolvable base types.
         val domainTypes = env.metamodel?.types ?: emptyList()
-        val eventMetamodel: Metamodel = KmetaDSLConverter.parseKmetaString(eventDefinitionData, domainTypes)
+        val eventMetamodel = UploadReading.acceptOrReject(
+            envKey, "event definitions", KmetaReader(domainTypes).read(eventDefinitionData)
+        )
         env.eventMetamodel = eventMetamodel
         env.eventDefinitionsSource = eventDefinitionData
     }
 
+    /**
+     * Reads [stateMachineData] with a `KstatesReader`, every optional language feature switched on, and stores the
+     * state machine and its text in the environment [envKey] for the model element [modelElement].
+     *
+     * @throws UploadRejectedException if the text has errors; the environment then stays as it was.
+     */
     fun receiveStateMachine(envKey: String, modelElement: String, stateMachineData: String) {
         assertEnv(envKey)
-        val stateMachine = KstatesDSLConverter.parseKstatesString(stateMachineData)
+        val stateMachine = UploadReading.acceptOrReject(
+            envKey, "state machine for '$modelElement'", KstatesReader().read(stateMachineData)
+        )
         val env = EnvironmentHandler.getEnv(envKey)!!
         env.stateMachines[modelElement] = stateMachine
         env.stateMachineSources[modelElement] = stateMachineData

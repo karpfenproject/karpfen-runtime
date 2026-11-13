@@ -6,10 +6,10 @@ import io.karpfen.io.karpfen.features.DefaultFeature
 import io.karpfen.io.karpfen.features.Feature
 import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.FeatureProvider
-import states.State
-import states.Transition
-import states.conditions.Condition
-import states.conditions.ConditionType
+import io.karpfen.dsl.states.State
+import io.karpfen.dsl.states.Transition
+import io.karpfen.dsl.states.conditions.Condition
+import io.karpfen.dsl.states.conditions.ConditionType
 import kotlin.reflect.KClass
 
 class TickLimitFeature: DefaultFeature() {

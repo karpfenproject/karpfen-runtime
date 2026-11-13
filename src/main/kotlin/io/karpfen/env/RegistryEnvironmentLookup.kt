@@ -15,7 +15,7 @@
  */
 package io.karpfen.env
 
-import instance.Model
+import io.karpfen.dsl.instance.Model
 import io.karpfen.observation.EnvironmentLookup
 import io.karpfen.observation.ObservedEnvironment
 

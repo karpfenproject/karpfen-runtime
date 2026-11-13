@@ -15,14 +15,14 @@
  */
 package io.karpfen.io.karpfen.exec
 
-import instance.*
-import meta.ClassType
-import meta.Metamodel
-import meta.SimpleProperty
-import meta.SimplePropertyType
+import io.karpfen.dsl.instance.*
+import io.karpfen.dsl.meta.ClassType
+import io.karpfen.dsl.meta.Metamodel
+import io.karpfen.dsl.meta.SimpleProperty
+import io.karpfen.dsl.meta.SimplePropertyType
 import org.json.JSONArray
 import org.json.JSONObject
-import states.Macro
+import io.karpfen.dsl.states.Macro
 import java.nio.file.Files
 
 class MacroProcessor(

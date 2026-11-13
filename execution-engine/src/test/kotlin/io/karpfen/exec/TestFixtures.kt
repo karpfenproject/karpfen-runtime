@@ -15,12 +15,12 @@
  */
 package io.karpfen.exec
 
-import dsl.textual.KmetaDSLConverter
-import dsl.textual.KmodelDSLConverter
-import dsl.textual.KstatesDSLConverter
-import instance.Model
-import meta.Metamodel
-import states.StateMachine
+import io.karpfen.dsl.dsl.textual.KmetaDSLConverter
+import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.dsl.textual.KstatesDSLConverter
+import io.karpfen.dsl.instance.Model
+import io.karpfen.dsl.meta.Metamodel
+import io.karpfen.dsl.states.StateMachine
 
 /**
  * Provides a shared test fixture based on the cleaning robot example.

@@ -15,20 +15,20 @@
  */
 package io.karpfen.exec
 
-import instance.ClassTypeAtomicPropertyObject
-import instance.ClassTypeListPropertyObject
-import instance.DataObject
-import instance.ObjectReference
-import instance.SimpleAtomicPropertyObject
-import instance.SimpleListPropertyObject
+import io.karpfen.dsl.instance.ClassTypeAtomicPropertyObject
+import io.karpfen.dsl.instance.ClassTypeListPropertyObject
+import io.karpfen.dsl.instance.DataObject
+import io.karpfen.dsl.instance.ObjectReference
+import io.karpfen.dsl.instance.SimpleAtomicPropertyObject
+import io.karpfen.dsl.instance.SimpleListPropertyObject
 import io.karpfen.io.karpfen.exec.ModelJsonWriter
 import io.karpfen.io.karpfen.exec.ModelQueryProcessor
-import meta.AssociationType
-import meta.ClassType
-import meta.ClassTypeProperty
-import meta.ClassTypeReference
-import meta.SimpleProperty
-import meta.SimplePropertyType
+import io.karpfen.dsl.meta.AssociationType
+import io.karpfen.dsl.meta.ClassType
+import io.karpfen.dsl.meta.ClassTypeProperty
+import io.karpfen.dsl.meta.ClassTypeReference
+import io.karpfen.dsl.meta.SimpleProperty
+import io.karpfen.dsl.meta.SimplePropertyType
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

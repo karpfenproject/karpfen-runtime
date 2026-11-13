@@ -15,8 +15,8 @@
  */
 package io.karpfen.observation
 
-import dsl.textual.KmetaDSLConverter
-import dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.dsl.textual.KmetaDSLConverter
+import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
 import io.karpfen.fixtures.CleaningRobotExample
 import io.karpfen.io.karpfen.exec.ModelJsonWriter
 import io.karpfen.server.HTTPRoutes

@@ -15,7 +15,7 @@
  */
 package io.karpfen.exec
 
-import instance.DataObject
+import io.karpfen.dsl.instance.DataObject
 import io.karpfen.io.karpfen.exec.ModelQueryProcessor
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -254,43 +254,43 @@ class ModelQueryProcessorDetailedTest {
 
     @Test
     fun `valueToPythonLiteral integer-like double`() {
-        val result = mqp.valueToPythonLiteral(5.0, meta.SimplePropertyType.NUMBER)
+        val result = mqp.valueToPythonLiteral(5.0, io.karpfen.dsl.meta.SimplePropertyType.NUMBER)
         assertEquals("5", result)
     }
 
     @Test
     fun `valueToPythonLiteral fractional double`() {
-        val result = mqp.valueToPythonLiteral(3.14, meta.SimplePropertyType.NUMBER)
+        val result = mqp.valueToPythonLiteral(3.14, io.karpfen.dsl.meta.SimplePropertyType.NUMBER)
         assertEquals("3.14", result)
     }
 
     @Test
     fun `valueToPythonLiteral zero`() {
-        val result = mqp.valueToPythonLiteral(0.0, meta.SimplePropertyType.NUMBER)
+        val result = mqp.valueToPythonLiteral(0.0, io.karpfen.dsl.meta.SimplePropertyType.NUMBER)
         assertEquals("0", result)
     }
 
     @Test
     fun `valueToPythonLiteral negative number`() {
-        val result = mqp.valueToPythonLiteral(-7.5, meta.SimplePropertyType.NUMBER)
+        val result = mqp.valueToPythonLiteral(-7.5, io.karpfen.dsl.meta.SimplePropertyType.NUMBER)
         assertEquals("-7.5", result)
     }
 
     @Test
     fun `valueToPythonLiteral string with spaces`() {
-        val result = mqp.valueToPythonLiteral("hello world", meta.SimplePropertyType.STRING)
+        val result = mqp.valueToPythonLiteral("hello world", io.karpfen.dsl.meta.SimplePropertyType.STRING)
         assertEquals("\"hello world\"", result)
     }
 
     @Test
     fun `valueToPythonLiteral boolean true`() {
-        val result = mqp.valueToPythonLiteral(true, meta.SimplePropertyType.BOOLEAN)
+        val result = mqp.valueToPythonLiteral(true, io.karpfen.dsl.meta.SimplePropertyType.BOOLEAN)
         assertEquals("True", result)
     }
 
     @Test
     fun `valueToPythonLiteral boolean false`() {
-        val result = mqp.valueToPythonLiteral(false, meta.SimplePropertyType.BOOLEAN)
+        val result = mqp.valueToPythonLiteral(false, io.karpfen.dsl.meta.SimplePropertyType.BOOLEAN)
         assertEquals("False", result)
     }
 

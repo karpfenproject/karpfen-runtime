@@ -15,12 +15,12 @@
  */
 package io.karpfen.io.karpfen.exec
 
-import instance.ClassTypeAtomicPropertyObject
-import instance.ClassTypeListPropertyObject
-import instance.DataObject
-import instance.SimpleAtomicPropertyObject
-import instance.SimpleListPropertyObject
-import meta.SimplePropertyType
+import io.karpfen.dsl.instance.ClassTypeAtomicPropertyObject
+import io.karpfen.dsl.instance.ClassTypeListPropertyObject
+import io.karpfen.dsl.instance.DataObject
+import io.karpfen.dsl.instance.SimpleAtomicPropertyObject
+import io.karpfen.dsl.instance.SimpleListPropertyObject
+import io.karpfen.dsl.meta.SimplePropertyType
 import java.util.Collections
 import java.util.IdentityHashMap
 

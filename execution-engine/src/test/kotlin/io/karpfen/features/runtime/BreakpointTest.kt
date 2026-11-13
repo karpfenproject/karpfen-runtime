@@ -11,11 +11,11 @@ import io.mockk.mockk
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertDoesNotThrow
-import states.State
-import states.Transition
-import states.actions.ActionBlock
-import states.conditions.Condition
-import states.conditions.ConditionType
+import io.karpfen.dsl.states.State
+import io.karpfen.dsl.states.Transition
+import io.karpfen.dsl.states.actions.ActionBlock
+import io.karpfen.dsl.states.conditions.Condition
+import io.karpfen.dsl.states.conditions.ConditionType
 import kotlin.test.*
 
 class BreakpointTest {
@@ -320,7 +320,7 @@ class BreakpointTest {
         replaceTickByTickFeature(breakpointFeature)
 
         //Check DSL Breakpoint off
-        var transition = Transition(stateIdentifier1, stateIdentifier2, true, false, false, Condition(ConditionType.EVAL))
+        var transition = Transition(stateIdentifier1, stateIdentifier2, true, Condition(ConditionType.EVAL), false, false)
         breakpointFeature.evalTransitionStartBreakpoint(globalModelElementId, transition)
         assertFalse(isPaused)
 
@@ -333,7 +333,7 @@ class BreakpointTest {
         breakpointFeature.onMessage("{action: \"removeTransitionOverride\", modelElementId: $globalModelElementId, transitionIdentifier: \"$transition\", timing: \"start\"}")
 
         //Check DSL breakpoint on
-        transition = Transition(stateIdentifier1, stateIdentifier2, true, true, false, Condition(ConditionType.EVAL))
+        transition = Transition(stateIdentifier1, stateIdentifier2, true, Condition(ConditionType.EVAL), true, false)
         breakpointFeature.evalTransitionStartBreakpoint(globalModelElementId, transition)
         assertTrue(isPaused)
         isPaused = false
@@ -351,7 +351,7 @@ class BreakpointTest {
 
 
         //Check DSL Breakpoint off
-        var transition = Transition(stateIdentifier1, stateIdentifier2, true, false, false, Condition(ConditionType.EVAL))
+        var transition = Transition(stateIdentifier1, stateIdentifier2, true, Condition(ConditionType.EVAL), false, false)
         breakpointFeature.evalTransitionEndBreakpoint(globalModelElementId, transition)
         assertFalse(isPaused)
 
@@ -364,7 +364,7 @@ class BreakpointTest {
         breakpointFeature.onMessage("{action: \"removeTransitionOverride\", modelElementId: $globalModelElementId, transitionIdentifier: \"$transition\", timing: \"end\"}")
 
         //Check DSL breakpoint on
-        transition = Transition(stateIdentifier1, stateIdentifier2, true, false, true, Condition(ConditionType.EVAL))
+        transition = Transition(stateIdentifier1, stateIdentifier2, true, Condition(ConditionType.EVAL), false, true)
         breakpointFeature.evalTransitionEndBreakpoint(globalModelElementId, transition)
         assertTrue(isPaused)
         isPaused = false

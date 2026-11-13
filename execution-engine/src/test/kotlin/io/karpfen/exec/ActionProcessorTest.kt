@@ -15,15 +15,15 @@
  */
 package io.karpfen.exec
 
-import instance.DataObject
+import io.karpfen.dsl.instance.DataObject
 import io.karpfen.io.karpfen.exec.*
 import io.karpfen.io.karpfen.messages.EventBus
-import states.Macro
-import states.actions.*
-import states.macros.CodeBlock
-import states.macros.Definition
-import states.macros.ReturnsDirective
-import states.macros.TakesDirective
+import io.karpfen.dsl.states.Macro
+import io.karpfen.dsl.states.actions.*
+import io.karpfen.dsl.states.macros.CodeBlock
+import io.karpfen.dsl.states.macros.Definition
+import io.karpfen.dsl.states.macros.ReturnsDirective
+import io.karpfen.dsl.states.macros.TakesDirective
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Tag

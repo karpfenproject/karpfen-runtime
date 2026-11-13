@@ -5,10 +5,10 @@ import io.karpfen.io.karpfen.features.DefaultFeature
 import io.karpfen.io.karpfen.features.Feature
 import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.FeatureProvider
-import states.History
-import states.Transition
-import states.conditions.Condition
-import states.conditions.ConditionType
+import io.karpfen.dsl.states.History
+import io.karpfen.dsl.states.Transition
+import io.karpfen.dsl.states.conditions.Condition
+import io.karpfen.dsl.states.conditions.ConditionType
 import kotlin.reflect.KClass
 
 class HistoryFeature: DefaultFeature() {
@@ -21,7 +21,7 @@ class HistoryFeature: DefaultFeature() {
      * one is an outer state of what is active now. One with a shallow history remembers its directly nested state on
      * the stack, one with a deep history the innermost state.
      */
-    fun updateHistory(modelElementId: String, currentStateStack: List<states.State>) {
+    fun updateHistory(modelElementId: String, currentStateStack: List<io.karpfen.dsl.states.State>) {
         if (currentStateStack.size < 2) return
 
         val currentStateName = currentStateStack.last().name
@@ -39,7 +39,7 @@ class HistoryFeature: DefaultFeature() {
         if (stateMap.isEmpty()) lastVisitedSubstates.remove(modelElementId)
     }
 
-    fun createTransitionOrNull(modelElementId: String, currentState: states.State): Transition? {
+    fun createTransitionOrNull(modelElementId: String, currentState: io.karpfen.dsl.states.State): Transition? {
 
         val lastVisitedSubstate = lastVisitedSubstates[modelElementId]?.get(currentState.name)
 

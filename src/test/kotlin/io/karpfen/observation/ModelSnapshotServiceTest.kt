@@ -15,9 +15,9 @@
  */
 package io.karpfen.observation
 
-import dsl.textual.KmetaDSLConverter
-import dsl.textual.KmodelDSLConverter
-import instance.Model
+import io.karpfen.dsl.dsl.textual.KmetaDSLConverter
+import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.instance.Model
 import io.karpfen.fixtures.CleaningRobotExample
 import io.karpfen.fixtures.RingExample
 import io.karpfen.io.karpfen.exec.ModelChangePublisher

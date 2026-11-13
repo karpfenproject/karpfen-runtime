@@ -15,11 +15,11 @@
  */
 package io.karpfen.io.karpfen.exec
 
-import states.JoinTransition
-import states.SplitTransition
-import states.State
-import states.StateMachine
-import states.Transition
+import io.karpfen.dsl.states.JoinTransition
+import io.karpfen.dsl.states.SplitTransition
+import io.karpfen.dsl.states.State
+import io.karpfen.dsl.states.StateMachine
+import io.karpfen.dsl.states.Transition
 
 class StateMachineQueryHelper(val stateMachine: StateMachine) {
 

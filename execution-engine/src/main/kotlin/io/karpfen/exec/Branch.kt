@@ -16,7 +16,7 @@
 package io.karpfen.io.karpfen.exec
 
 import io.karpfen.io.karpfen.messages.Event
-import states.TransitionLike
+import io.karpfen.dsl.states.TransitionLike
 
 /**
  * One independently advancing region of a state machine: a single current state stack with its own

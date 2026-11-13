@@ -15,7 +15,7 @@
  */
 package io.karpfen.observation
 
-import instance.Model
+import io.karpfen.dsl.instance.Model
 
 /**
  * Where the observation feature finds environments. It is the one seam between this package and the runtime's

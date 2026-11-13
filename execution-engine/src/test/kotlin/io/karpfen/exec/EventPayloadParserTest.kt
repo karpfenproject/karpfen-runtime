@@ -15,7 +15,7 @@
  */
 package io.karpfen.exec
 
-import dsl.textual.KmetaDSLConverter
+import io.karpfen.dsl.dsl.textual.KmetaDSLConverter
 import io.karpfen.io.karpfen.exec.EventPayloadParser
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.PayloadFormat

@@ -17,8 +17,8 @@ package io.karpfen.io.karpfen.exec
 
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
-import states.StateMachine
-import states.TransitionLike
+import io.karpfen.dsl.states.StateMachine
+import io.karpfen.dsl.states.TransitionLike
 
 /**
  * The execution context of one attached state machine.

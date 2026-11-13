@@ -15,7 +15,7 @@
  */
 package io.karpfen.observation
 
-import instance.Model
+import io.karpfen.dsl.instance.Model
 
 /**
  * An [EnvironmentLookup] over environments a test declares, without the runtime's registry.

@@ -15,11 +15,11 @@
  */
 package io.karpfen.io.karpfen.exec
 
-import dsl.textual.KmodelDSLConverter
-import instance.*
-import meta.AssociationType
-import meta.Metamodel
-import meta.SimplePropertyType
+import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.instance.*
+import io.karpfen.dsl.meta.AssociationType
+import io.karpfen.dsl.meta.Metamodel
+import io.karpfen.dsl.meta.SimplePropertyType
 
 class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
 
@@ -165,14 +165,14 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
         if (prop == null) {
             val metaProp = obj.ofType.simpleProperties.firstOrNull { it.key == key }
             if (metaProp != null && metaProp.isList) {
-                val newListProp = instance.SimpleListPropertyObject(metaProp, key, mutableListOf())
+                val newListProp = io.karpfen.dsl.instance.SimpleListPropertyObject(metaProp, key, mutableListOf())
                 obj.properties.add(newListProp)
                 prop = newListProp
             }
         }
 
         if (prop != null && prop.isList()) {
-            val listProp = prop as instance.SimpleListPropertyObject
+            val listProp = prop as io.karpfen.dsl.instance.SimpleListPropertyObject
             listProp.appendValue(value)
             notifyChange(obj)
         } else {
@@ -192,7 +192,7 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     fun inferReturnType(contextObj: DataObject, path: String): String {
         val segments = path.split("->").map { it.trim() }
         var currentObj = contextObj
-        var currentType: meta.ClassType? = contextObj.ofType
+        var currentType: io.karpfen.dsl.meta.ClassType? = contextObj.ofType
 
         for (i in segments.indices) {
             val seg = segments[i]
@@ -206,7 +206,7 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
                     return if (relProp.isList()) """list("$targetType")"""
                     else {
                         val assoc = relProp.getPropertyType().associationType
-                        if (assoc == meta.AssociationType.LINK) """reference("$targetType")"""
+                        if (assoc == io.karpfen.dsl.meta.AssociationType.LINK) """reference("$targetType")"""
                         else targetType
                     }
                 } else {
@@ -222,15 +222,15 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
                 val vt = simpleProp.getValueType()
                 return if (simpleProp.isList()) {
                     when (vt) {
-                        meta.SimplePropertyType.NUMBER -> """list("number")"""
-                        meta.SimplePropertyType.BOOLEAN -> """list("boolean")"""
-                        meta.SimplePropertyType.STRING -> """list("string")"""
+                        io.karpfen.dsl.meta.SimplePropertyType.NUMBER -> """list("number")"""
+                        io.karpfen.dsl.meta.SimplePropertyType.BOOLEAN -> """list("boolean")"""
+                        io.karpfen.dsl.meta.SimplePropertyType.STRING -> """list("string")"""
                     }
                 } else {
                     when (vt) {
-                        meta.SimplePropertyType.NUMBER -> "number"
-                        meta.SimplePropertyType.BOOLEAN -> "boolean"
-                        meta.SimplePropertyType.STRING -> "string"
+                        io.karpfen.dsl.meta.SimplePropertyType.NUMBER -> "number"
+                        io.karpfen.dsl.meta.SimplePropertyType.BOOLEAN -> "boolean"
+                        io.karpfen.dsl.meta.SimplePropertyType.STRING -> "string"
                     }
                 }
             }

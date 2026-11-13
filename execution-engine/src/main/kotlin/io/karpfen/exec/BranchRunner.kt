@@ -21,10 +21,10 @@ import io.karpfen.io.karpfen.features.language.HistoryFeature
 import io.karpfen.io.karpfen.features.language.TickLimitFeature
 import io.karpfen.io.karpfen.features.runtime.BreakpointFeature
 import io.karpfen.io.karpfen.messages.Event
-import states.SplitTransition
-import states.Transition
-import states.TransitionLike
-import states.conditions.EventCondition
+import io.karpfen.dsl.states.SplitTransition
+import io.karpfen.dsl.states.Transition
+import io.karpfen.dsl.states.TransitionLike
+import io.karpfen.dsl.states.conditions.EventCondition
 
 /**
  * Runs one tick of a single [Branch]: its ENTRY phase, its DO phase, and its transition check.

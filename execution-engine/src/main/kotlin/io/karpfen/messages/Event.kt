@@ -15,7 +15,7 @@
  */
 package io.karpfen.io.karpfen.messages
 
-import instance.DataObject
+import io.karpfen.dsl.instance.DataObject
 import java.util.concurrent.ConcurrentHashMap
 
 /**

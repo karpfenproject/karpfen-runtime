@@ -15,9 +15,9 @@
  */
 package io.karpfen.fixtures
 
-import dsl.textual.KmetaDSLConverter
-import dsl.textual.KmodelDSLConverter
-import instance.Model
+import io.karpfen.dsl.dsl.textual.KmetaDSLConverter
+import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.instance.Model
 
 /**
  * A model whose `knows` relations form a loop: the room-like `ring` holds the nodes `a` and `b`, and each node knows

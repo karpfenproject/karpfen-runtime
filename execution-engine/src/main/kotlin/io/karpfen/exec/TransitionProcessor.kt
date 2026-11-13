@@ -15,18 +15,18 @@
  */
 package io.karpfen.io.karpfen.exec
 
-import instance.DataObject
-import instance.Model
+import io.karpfen.dsl.instance.DataObject
+import io.karpfen.dsl.instance.Model
 import io.karpfen.io.karpfen.messages.Event
-import meta.Metamodel
-import states.StateMachine
-import states.SplitTransition
-import states.TransitionLike
-import states.conditions.CompositeCondition
-import states.conditions.Condition
-import states.conditions.EvalCondition
-import states.conditions.EventCondition
-import states.conditions.ValueCondition
+import io.karpfen.dsl.meta.Metamodel
+import io.karpfen.dsl.states.StateMachine
+import io.karpfen.dsl.states.SplitTransition
+import io.karpfen.dsl.states.TransitionLike
+import io.karpfen.dsl.states.conditions.CompositeCondition
+import io.karpfen.dsl.states.conditions.Condition
+import io.karpfen.dsl.states.conditions.EvalCondition
+import io.karpfen.dsl.states.conditions.EventCondition
+import io.karpfen.dsl.states.conditions.ValueCondition
 
 /**
  * A transition (of any kind) that is ready to fire, together with the event that enabled it (if any).
@@ -81,7 +81,7 @@ class TransitionProcessor(
      * Evaluates a join's condition (the source-state matching is done by the engine). Returns a
      * [Fireable] when the condition holds, or null otherwise.
      */
-    fun evaluateJoin(join: states.JoinTransition, eventProcessor: EventProcessor): Fireable? {
+    fun evaluateJoin(join: io.karpfen.dsl.states.JoinTransition, eventProcessor: EventProcessor): Fireable? {
         val match = evaluateCondition(join.condition, null, eventProcessor) ?: return null
         return Fireable(join, match.event)
     }

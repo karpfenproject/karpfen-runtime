@@ -15,11 +15,11 @@
  */
 package io.karpfen.io.karpfen.exec
 
-import instance.DataObject
-import meta.AssociationType
-import meta.ClassTypeProperty
-import meta.SimplePropertyType
-import states.actions.*
+import io.karpfen.dsl.instance.DataObject
+import io.karpfen.dsl.meta.AssociationType
+import io.karpfen.dsl.meta.ClassTypeProperty
+import io.karpfen.dsl.meta.SimplePropertyType
+import io.karpfen.dsl.states.actions.*
 
 /**
  * Executes [ActionBlock]s for a state machine context.

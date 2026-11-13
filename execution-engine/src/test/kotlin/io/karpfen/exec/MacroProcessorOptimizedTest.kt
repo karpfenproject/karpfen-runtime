@@ -15,17 +15,17 @@
  */
 package io.karpfen.exec
 
-import instance.DataObject
+import io.karpfen.dsl.instance.DataObject
 import io.karpfen.io.karpfen.exec.MacroProcessor
 import io.karpfen.io.karpfen.exec.ModelQueryProcessor
 import io.karpfen.io.karpfen.exec.MacroCodeTransformer
 import io.karpfen.io.karpfen.exec.ExpressionClassifier
 import io.karpfen.io.karpfen.exec.ExecutionTier
-import states.Macro
-import states.macros.CodeBlock
-import states.macros.Definition
-import states.macros.ReturnsDirective
-import states.macros.TakesDirective
+import io.karpfen.dsl.states.Macro
+import io.karpfen.dsl.states.macros.CodeBlock
+import io.karpfen.dsl.states.macros.Definition
+import io.karpfen.dsl.states.macros.ReturnsDirective
+import io.karpfen.dsl.states.macros.TakesDirective
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach

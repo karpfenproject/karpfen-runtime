@@ -24,12 +24,20 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
   - `envKey` (string): The environment key
 - **Request Body**: Large string containing the metamodel definition
 - **Response**: Empty (200 OK on success)
-- **Description**: Uploads the metamodel for an environment. Must be called before setting the model.
+- **Description**: Uploads the metamodel for an environment. Must be called before setting the model. The text is
+  read with the KMeta reader of karpfen-dsl-tools; see [Rejected uploads](#rejected-uploads).
 - **Example**:
   ```bash
   curl -X PUT "http://localhost:8080/setMetamodel?envKey=env-123" \
     -H "Content-Type: text/plain" \
-    -d @metamodel.kmeta
+    --data-binary @metamodel.kmeta
+  ```
+- **Rejection**: `400 Bad Request` for a text with errors, for example a property of an unknown type in line 2 and a
+  relation to a type that is not defined in line 6:
+  ```text
+  Upload of the metamodel rejected: 2 errors
+  2:16: Unknown type 'decimal' of prop 'x'; a prop is of type 'string', 'number', 'boolean' (kmeta.unknown-property-type)
+  6:22: Unknown class type 'Place' of has 'position' in type 'Robot' (kmeta.unknown-target-type)
   ```
 
 ### Set Model
@@ -38,12 +46,21 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
   - `envKey` (string): The environment key
 - **Request Body**: Large string containing the model definition
 - **Response**: Empty (200 OK on success)
-- **Description**: Uploads the model instance for an environment. The metamodel must be set first.
+- **Description**: Uploads the model instance for an environment. The metamodel must be set first; without it the
+  upload is answered with `409 Conflict`. The text is read with the KModel reader of karpfen-dsl-tools against the
+  metamodel of the environment; see [Rejected uploads](#rejected-uploads).
 - **Example**:
   ```bash
   curl -X PUT "http://localhost:8080/setModel?envKey=env-123" \
     -H "Content-Type: text/plain" \
-    -d @model.kmodel
+    --data-binary @model.kmodel
+  ```
+- **Rejection**: `400 Bad Request` for a text with errors, for example a number property given a word in line 2 and
+  a property the type does not define in line 3:
+  ```text
+  Upload of the model rejected: 2 errors
+  2:23: 'fast' is not a number, but prop 'speed' is of type 'number' (kmodel.invalid-number)
+  3:11: Class type 'Robot' has no property 'colour' (object 'turtle') (kmodel.unknown-property)
   ```
 
 ### Set Event Definitions
@@ -52,12 +69,19 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
   - `envKey` (string): The environment key
 - **Request Body**: A kmeta document (conventionally `EVENTS.kmeta`) describing the event payloads
 - **Response**: Empty (200 OK on success)
-- **Description**: Registers the event payload types for an environment. Each type in the document is an event name; an event named `setSpeed` is parsed against the `setSpeed` type. This is optional — events without payloads work without it. Set the metamodel first if your event payloads embed or link domain types (such as an event carrying a `Vector`); those types are then resolvable from the event definitions.
+- **Description**: Registers the event payload types for an environment. Each type in the document is an event name; an event named `setSpeed` is parsed against the `setSpeed` type. This is optional: events without payloads work without it. Set the metamodel first if your event payloads embed or link domain types (such as an event carrying a `Vector`); those types are then resolvable from the event definitions. The text is read with the KMeta reader of karpfen-dsl-tools, with the types of the metamodel as base types; see [Rejected uploads](#rejected-uploads).
 - **Example**:
   ```bash
   curl -X PUT "http://localhost:8080/setEventDefinitions?envKey=env-123" \
     -H "Content-Type: text/plain" \
-    -d @EVENTS.kmeta
+    --data-binary @EVENTS.kmeta
+  ```
+- **Rejection**: `400 Bad Request` for a text with errors, for example a property of an unknown type in line 2 and a
+  relation to a type that neither the event definitions nor the metamodel define in line 6:
+  ```text
+  Upload of the event definitions rejected: 2 errors
+  2:21: Unknown type 'fraction' of prop 'factor'; a prop is of type 'string', 'number', 'boolean' (kmeta.unknown-property-type)
+  6:22: Unknown class type 'Place' of has 'position' in type 'teleport' (kmeta.unknown-target-type)
   ```
 
 ### Set State Machine
@@ -67,13 +91,48 @@ This document describes all available HTTP API endpoints in the Karpfen Runtime 
   - `attachedTo` (string): The model element ID this state machine is attached to
 - **Request Body**: Large string containing the state machine definition
 - **Response**: Empty (200 OK on success)
-- **Description**: Uploads a state machine that is attached to a specific model element.
+- **Description**: Uploads a state machine that is attached to a specific model element. The text is read with the
+  KStates reader of karpfen-dsl-tools, with every optional language feature allowed; see
+  [Rejected uploads](#rejected-uploads).
 - **Example**:
   ```bash
   curl -X PUT "http://localhost:8080/setStateMachine?envKey=env-123&attachedTo=robot1" \
     -H "Content-Type: text/plain" \
-    -d @statemachine.kstates
+    --data-binary @statemachine.kstates
   ```
+- **Rejection**: `400 Bad Request` for a text with errors, for example a second state named `idle` in line 5 and a
+  transition to a state that does not exist in line 9, uploaded with `attachedTo=turtle`:
+  ```text
+  Upload of the state machine for 'turtle' rejected: 2 errors
+  5:16: There is already a state named 'idle' in line 3; every state needs a name of its own (kstates.duplicate-state)
+  9:31: No state is named 'stop'; check the spelling or define the state (kstates.unknown-state)
+  ```
+
+### Rejected uploads
+
+The four upload routes read their text with the readers of karpfen-dsl-tools, which report every problem of a text
+with its place instead of stopping at the first one. An upload whose text has at least one error is refused with
+`400 Bad Request`, and the environment stays as it was: a metamodel, model, set of event definitions or state machine
+uploaded before is kept. The body is plain text:
+
+- The first line names the upload and counts its errors: `Upload of the <upload> rejected: <n> errors`, with
+  `1 error` for a single one. The upload is `metamodel`, `model`, `event definitions` or
+  `state machine for '<attachedTo>'`.
+- Then one line per error, in the order of the text: `<line>:<column>: <message> (<code>)`. Line and column are
+  counted from 1 and give the start of the offending part; the column counts UTF-16 characters, so a character
+  outside the Basic Multilingual Plane counts twice. A line break inside a message is written as a space.
+- The lines are separated by a line feed, and the body does not end with one.
+
+The message is meant for a human reader and may change between versions of karpfen-dsl-tools; the code is stable.
+The [verification guide](https://github.com/karpfenproject/karpfen-dsl-tools/blob/main/guides/verification.md) of
+karpfen-dsl-tools lists every code. Warnings do not reject an upload; the runtime logs each one on its console with
+its place in the text.
+
+Send the file with `--data-binary`, as in the examples: `curl -d @file` drops the line breaks, which moves every
+error to line 1 and turns a `//` comment into the end of the whole text.
+
+A missing `envKey` or `attachedTo` and an unknown environment are answered with `400` and a one-line message, an
+environment that is already active with `409`, before the text is read.
 
 ### Set Tick Delay
 - **Endpoint**: `POST /setTickDelay`
@@ -457,7 +516,7 @@ connected WebSocket, whatever it registered or subscribed for, and each client o
 
 All endpoints return appropriate HTTP status codes:
 - **200 OK**: Request successful
-- **400 Bad Request**: Missing or invalid parameters
+- **400 Bad Request**: Missing or invalid parameters, and uploaded texts with errors (see [Rejected uploads](#rejected-uploads))
 - **409 Conflict**: Environment state conflict, for example:
   - modifying or running an environment that is already active
   - running an environment whose state machines are attached to objects missing from its model

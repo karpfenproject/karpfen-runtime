@@ -15,7 +15,7 @@
  */
 package io.karpfen.exec
 
-import instance.DataObject
+import io.karpfen.dsl.instance.DataObject
 import io.karpfen.io.karpfen.exec.ModelQueryProcessor
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach

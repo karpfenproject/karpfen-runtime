@@ -16,7 +16,7 @@
 package io.karpfen.io.karpfen.exec
 
 import io.karpfen.io.karpfen.messages.Event
-import states.SplitTransition
+import io.karpfen.dsl.states.SplitTransition
 
 /**
  * What ticking a single branch produced.

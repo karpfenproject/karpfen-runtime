@@ -15,11 +15,11 @@
  */
 package io.karpfen.io.karpfen.exec
 
-import dsl.textual.JsonToModelConverter
-import dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.dsl.textual.JsonToModelConverter
+import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.PayloadFormat
-import meta.Metamodel
+import io.karpfen.dsl.meta.Metamodel
 
 /**
  * Turns the raw payload string of an incoming [Event] into a runtime object ([Event.payloadObject]).

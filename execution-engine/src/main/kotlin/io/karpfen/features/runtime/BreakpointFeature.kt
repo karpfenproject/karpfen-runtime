@@ -7,11 +7,11 @@ import io.karpfen.io.karpfen.features.Feature
 import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.FeatureProvider
 import org.json.JSONObject
-import states.JoinTransition
-import states.SplitTransition
-import states.State
-import states.Transition
-import states.TransitionLike
+import io.karpfen.dsl.states.JoinTransition
+import io.karpfen.dsl.states.SplitTransition
+import io.karpfen.dsl.states.State
+import io.karpfen.dsl.states.Transition
+import io.karpfen.dsl.states.TransitionLike
 import kotlin.reflect.KClass
 
 /**

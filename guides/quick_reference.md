@@ -28,10 +28,10 @@ Default URLs:
 | Method | Endpoint | Notes |
 |--------|----------|-------|
 | POST | `/createEnvironment` | Returns the new env key; never the same key twice |
-| PUT | `/setMetamodel?envKey=...` | |
-| PUT | `/setModel?envKey=...` | |
-| PUT | `/setEventDefinitions?envKey=...` | Optional (events with payloads) |
-| PUT | `/setStateMachine?envKey=...&attachedTo=...` | |
+| PUT | `/setMetamodel?envKey=...` | A text with errors is a 400 listing each error as `line:column: message (code)` |
+| PUT | `/setModel?envKey=...` | As above; needs the metamodel first (409) |
+| PUT | `/setEventDefinitions?envKey=...` | Optional (events with payloads); as above |
+| PUT | `/setStateMachine?envKey=...&attachedTo=...` | As above |
 | POST | `/setTickDelay?envKey=...&milliseconds=...` | |
 | POST | `/setEventTtl?envKey=...&ttlMs=...` | `0` = events never expire |
 | POST | `/registerObjectObserver?envKey=...&clientId=...&objectId=...` | Before `/runEnvironment` only |
@@ -89,22 +89,22 @@ curl -X POST http://localhost:8080/createEnvironment
 # Metamodel
 curl -X PUT "http://localhost:8080/setMetamodel?envKey=env-123" \
  -H "Content-Type: text/plain" \
- -d @metamodel.kmeta
+ --data-binary @metamodel.kmeta
 
 # Model
 curl -X PUT "http://localhost:8080/setModel?envKey=env-123" \
  -H "Content-Type: text/plain" \
- -d @model.kmodel
+ --data-binary @model.kmodel
 
 # Event definitions (optional; only needed for events that carry a payload)
 curl -X PUT "http://localhost:8080/setEventDefinitions?envKey=env-123" \
  -H "Content-Type: text/plain" \
- -d @EVENTS.kmeta
+ --data-binary @EVENTS.kmeta
 
 # State Machine
 curl -X PUT "http://localhost:8080/setStateMachine?envKey=env-123&attachedTo=robot1" \
  -H "Content-Type: text/plain" \
- -d @statemachine.kstates
+ --data-binary @statemachine.kstates
 ```
 
 ### 3. Register for WebSocket

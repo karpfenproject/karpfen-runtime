@@ -10,9 +10,9 @@ import io.karpfen.io.karpfen.features.language.HistoryFeature
 import io.mockk.mockk
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertDoesNotThrow
-import states.History
-import states.State
-import states.actions.ActionBlock
+import io.karpfen.dsl.states.History
+import io.karpfen.dsl.states.State
+import io.karpfen.dsl.states.actions.ActionBlock
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull

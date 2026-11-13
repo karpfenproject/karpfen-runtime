@@ -10,7 +10,7 @@ import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import states.State
+import io.karpfen.dsl.states.State
 import kotlin.test.*
 
 class TickLimitTest {

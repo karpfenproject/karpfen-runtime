@@ -15,12 +15,12 @@
  */
 package io.karpfen.exec
 
-import dsl.textual.JsonToModelConverter
-import dsl.textual.KmetaDSLConverter
-import instance.DataObject
+import io.karpfen.dsl.dsl.textual.JsonToModelConverter
+import io.karpfen.dsl.dsl.textual.KmetaDSLConverter
+import io.karpfen.dsl.instance.DataObject
 import io.karpfen.io.karpfen.exec.*
 import io.karpfen.io.karpfen.messages.EventBus
-import states.actions.*
+import io.karpfen.dsl.states.actions.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test

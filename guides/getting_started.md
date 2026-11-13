@@ -23,6 +23,12 @@ Karpfen Runtime is a lightweight Kotlin/Ktor-based HTTP API server with WebSocke
 
 Gradle is included via wrapper (`gradlew` on Linux/Mac, `gradlew.bat` on Windows).
 
+The languages KMeta, KModel and KStates come from the library karpfen-dsl-tools in version 2.0, which the runtime
+carries as the git submodule `karpfen-dsl-tools/` and builds as a Gradle subproject. Clone with
+`git clone --recurse-submodules`, or run `git submodule update --init` in a clone without it. The build generates the
+library's parsers from its grammars; its comparison with version 1.0, which needs the library's own git history, is
+not part of the runtime's build.
+
 ## Project Structure
 
 ```text
@@ -35,7 +41,9 @@ karpfen-runtime/
 │       ├── server/
 │       │   ├── KtorServer.kt             # HTTP & WebSocket server
 │       │   ├── HTTPRoutes.kt             # HTTP endpoint definitions
-│       │   └── APIService.kt             # Business logic
+│       │   ├── APIService.kt             # Business logic
+│       │   ├── UploadReading.kt          # Accepts or rejects an uploaded text from its read
+│       │   └── UploadRejectedException.kt  # The 400 answer that lists the errors of an upload
 │       ├── env/
 │       │   ├── Environment.kt            # Environment data model
 │       │   ├── EnvironmentHandler.kt     # Lifecycle management (singleton)
@@ -69,7 +77,7 @@ karpfen-runtime/
 │   ├── observation/                      # Relay, snapshot, subscription and route tests
 │   └── fixtures/                         # Example environments and registry reset for tests
 ├── execution-engine/                     # Engine module (separate Gradle subproject)
-├── karpfen-dsl-tools/                    # DSL tools module (git submodule)
+├── karpfen-dsl-tools/                    # Language library 2.0 (git submodule, Gradle subproject)
 ├── examples/                             # Runnable example scenarios
 ├── build.gradle                          # Main module config
 ├── application.conf                      # Server configuration
@@ -232,6 +240,7 @@ Then start with a custom log location:
 
 - **KtorServer** - HTTP + WebSocket server. Authenticates WebSocket clients on their first message and forwards incoming events to the right environment's event queue.
 - **APIService** - Business logic behind the HTTP endpoints (parameter validation, environment lifecycle).
+- **UploadReading** - Reads every uploaded text with the readers of karpfen-dsl-tools: accepts it without errors, logs its warnings, and rejects it with `400` and the list of its errors otherwise.
 - **EnvironmentHandler** - Global singleton that owns all environments, their execution threads, and client sessions.
 - **ClientSessionManager** - Keeps track of which WebSocket clients are subscribed to which objects/domains and queues outgoing notifications for them.
 - **EnvironmentThread** - Runs one activated environment: it starts the execution engine, which ticks on its own thread, while its runner thread drains the external event queue onto the environment's event bus. It owns that one runner thread, its revision counter and its record of active stacks.
@@ -382,22 +391,22 @@ echo "Created environment: $ENV_KEY"
 # Upload metamodel
 curl -X PUT "http://localhost:8080/setMetamodel?envKey=$ENV_KEY" \
  -H "Content-Type: text/plain" \
- -d @metamodel.kmeta
+ --data-binary @metamodel.kmeta
 
 # Upload model
 curl -X PUT "http://localhost:8080/setModel?envKey=$ENV_KEY" \
  -H "Content-Type: text/plain" \
- -d @model.kmodel
+ --data-binary @model.kmodel
 
 # Upload event payload definitions (optional; only for events that carry a payload)
 curl -X PUT "http://localhost:8080/setEventDefinitions?envKey=$ENV_KEY" \
  -H "Content-Type: text/plain" \
- -d @EVENTS.kmeta
+ --data-binary @EVENTS.kmeta
 
 # Upload state machine
 curl -X PUT "http://localhost:8080/setStateMachine?envKey=$ENV_KEY&attachedTo=robot1" \
  -H "Content-Type: text/plain" \
- -d @statemachine.kstates
+ --data-binary @statemachine.kstates
 
 # Set execution tick delay
 curl -X POST "http://localhost:8080/setTickDelay?envKey=$ENV_KEY&milliseconds=100"
@@ -480,6 +489,9 @@ readable through `GET /observatory/model`.
 ```bash
 ./gradlew test --tests KtorServerIntegrationTest
 ```
+
+`./gradlew test` also runs the tests of the karpfen-dsl-tools subproject; `./gradlew :test :execution-engine:test`
+runs those of the runtime only.
 
 ### Run the tests without Python
 Tests that execute Python (`EVAL` and `MACRO` blocks, the persistent Python session) carry the JUnit tag `python`.

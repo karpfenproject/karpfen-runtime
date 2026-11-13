@@ -15,8 +15,8 @@
  */
 package io.karpfen.io.karpfen.exec
 
-import instance.DataObject
-import states.Macro
+import io.karpfen.dsl.instance.DataObject
+import io.karpfen.dsl.states.Macro
 
 /**
  * Transforms macro code from the karpfen DSL syntax into executable Python code.

@@ -15,8 +15,8 @@
  */
 package io.karpfen.observation
 
-import instance.DataObject
-import instance.SimpleAtomicPropertyObject
+import io.karpfen.dsl.instance.DataObject
+import io.karpfen.dsl.instance.SimpleAtomicPropertyObject
 import io.karpfen.env.EnvironmentHandler
 import io.karpfen.env.EnvironmentThread
 import io.karpfen.env.RegistryEnvironmentLookup

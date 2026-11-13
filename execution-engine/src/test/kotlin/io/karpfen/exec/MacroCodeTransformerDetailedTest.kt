@@ -17,11 +17,11 @@ package io.karpfen.exec
 
 import io.karpfen.io.karpfen.exec.MacroCodeTransformer
 import io.karpfen.io.karpfen.exec.ModelQueryProcessor
-import states.Macro
-import states.macros.CodeBlock
-import states.macros.Definition
-import states.macros.ReturnsDirective
-import states.macros.TakesDirective
+import io.karpfen.dsl.states.Macro
+import io.karpfen.dsl.states.macros.CodeBlock
+import io.karpfen.dsl.states.macros.Definition
+import io.karpfen.dsl.states.macros.ReturnsDirective
+import io.karpfen.dsl.states.macros.TakesDirective
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test

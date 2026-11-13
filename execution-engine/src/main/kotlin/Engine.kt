@@ -15,7 +15,7 @@
  */
 package io.karpfen
 
-import instance.Model
+import io.karpfen.dsl.instance.Model
 import io.karpfen.io.karpfen.exec.*
 import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.language.HistoryFeature
@@ -26,9 +26,9 @@ import io.karpfen.io.karpfen.features.runtime.event.EventInjectionFeature
 import io.karpfen.io.karpfen.features.runtime.event.EventRecordingFeature
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
-import meta.Metamodel
-import states.JoinTransition
-import states.StateMachine
+import io.karpfen.dsl.meta.Metamodel
+import io.karpfen.dsl.states.JoinTransition
+import io.karpfen.dsl.states.StateMachine
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.concurrent.thread
@@ -481,7 +481,7 @@ class Engine(
      * inherits the parent's event lineage, and the matched event (if any) is scoped to each target so
      * every region can read it.
      */
-    private fun applySplit(ctx: SMContext, parent: Branch, split: states.SplitTransition, matchedEvent: Event?) {
+    private fun applySplit(ctx: SMContext, parent: Branch, split: io.karpfen.dsl.states.SplitTransition, matchedEvent: Event?) {
 
         val smQueryHelper = ctx.smQueryHelper
 

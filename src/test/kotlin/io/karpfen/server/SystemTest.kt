@@ -15,9 +15,9 @@
  */
 package io.karpfen.server
 
-import dsl.textual.KmetaDSLConverter
-import dsl.textual.KmodelDSLConverter
-import dsl.textual.KstatesDSLConverter
+import io.karpfen.dsl.dsl.textual.KmetaDSLConverter
+import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.dsl.textual.KstatesDSLConverter
 import io.karpfen.Engine
 import io.karpfen.EngineTraceLogger
 import io.karpfen.EngineTraceLogger.TraceEventType
@@ -187,7 +187,7 @@ class SystemTest {
         val sm = KstatesDSLConverter.parseKstatesString(content)
 
         // Collect all state names (recursively)
-        fun collectStateNames(states: List<states.State>): Set<String> {
+        fun collectStateNames(states: List<io.karpfen.dsl.states.State>): Set<String> {
             val names = mutableSetOf<String>()
             for (state in states) {
                 names.add(state.name)
@@ -199,14 +199,14 @@ class SystemTest {
 
         for (transition in sm.transitions) {
             val sources = when (transition) {
-                is states.Transition -> listOf(transition.fromState)
-                is states.SplitTransition -> listOf(transition.fromState)
-                is states.JoinTransition -> transition.fromStates
+                is io.karpfen.dsl.states.Transition -> listOf(transition.fromState)
+                is io.karpfen.dsl.states.SplitTransition -> listOf(transition.fromState)
+                is io.karpfen.dsl.states.JoinTransition -> transition.fromStates
             }
             val targets = when (transition) {
-                is states.Transition -> listOf(transition.toState)
-                is states.SplitTransition -> transition.toStates
-                is states.JoinTransition -> listOf(transition.toState)
+                is io.karpfen.dsl.states.Transition -> listOf(transition.toState)
+                is io.karpfen.dsl.states.SplitTransition -> transition.toStates
+                is io.karpfen.dsl.states.JoinTransition -> listOf(transition.toState)
             }
             for (source in sources) {
                 assertTrue(source in allStateNames, "Transition source '$source' is not a valid state. Valid: $allStateNames")

@@ -24,9 +24,9 @@ import io.karpfen.io.karpfen.messages.EventBus
 import io.karpfen.io.karpfen.messages.EventPublicationListener
 import io.karpfen.io.karpfen.messages.EventSource
 import org.junit.jupiter.api.Test
-import states.actions.ActionOperationType
-import states.actions.ActionRule
-import states.actions.ValueActionRightSide
+import io.karpfen.dsl.states.actions.ActionOperationType
+import io.karpfen.dsl.states.actions.ActionRule
+import io.karpfen.dsl.states.actions.ValueActionRightSide
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import kotlin.test.assertEquals

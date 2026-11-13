@@ -15,8 +15,8 @@
  */
 package io.karpfen.exec
 
-import dsl.textual.KmetaDSLConverter
-import dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.dsl.textual.KmetaDSLConverter
+import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
 import io.karpfen.io.karpfen.exec.ActionProcessor
 import io.karpfen.io.karpfen.exec.EventProcessor
 import io.karpfen.io.karpfen.exec.MacroProcessor
@@ -25,11 +25,11 @@ import io.karpfen.io.karpfen.exec.ModelQueryProcessor
 import io.karpfen.io.karpfen.messages.EventBus
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import states.actions.ActionBlock
-import states.actions.ActionItem
-import states.actions.ActionOperationType
-import states.actions.ActionRule
-import states.actions.ValueActionRightSide
+import io.karpfen.dsl.states.actions.ActionBlock
+import io.karpfen.dsl.states.actions.ActionItem
+import io.karpfen.dsl.states.actions.ActionOperationType
+import io.karpfen.dsl.states.actions.ActionRule
+import io.karpfen.dsl.states.actions.ValueActionRightSide
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 

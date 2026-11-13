@@ -15,10 +15,10 @@
  */
 package io.karpfen.env
 
-import instance.Model
+import io.karpfen.dsl.instance.Model
 import io.karpfen.io.karpfen.features.FeatureManager
-import meta.Metamodel
-import states.StateMachine
+import io.karpfen.dsl.meta.Metamodel
+import io.karpfen.dsl.states.StateMachine
 
 data class Environment(
     val key: String,
