@@ -289,6 +289,25 @@ class ClientSessionManager {
     }
 
     /**
+     * Notifies every client connected to [environmentKey] over the WebSocket of the engine status [payload], whatever
+     * it subscribed to. Each client gets one `engineStatus` message, also when it is connected through more than one
+     * session. [payload] is already JSON and is spliced in as it is.
+     */
+    fun notifyEngineStatus(environmentKey: String, payload: String) {
+        enqueue(environmentKey, connectedClients(environmentKey), "engineStatus", payload)
+    }
+
+    /** The ids of the clients with an attached session in [environmentKey], each once, read under the sessions lock. */
+    private fun connectedClients(environmentKey: String): Set<String> {
+        sessionsLock.readLock().lock()
+        try {
+            return clientSessions[environmentKey]?.values?.mapTo(LinkedHashSet()) { it.clientId } ?: emptySet()
+        } finally {
+            sessionsLock.readLock().unlock()
+        }
+    }
+
+    /**
      * Gets the next outgoing message to be sent to clients.
      */
     fun nextOutgoingMessage(timeoutMs: Long = 1000): OutgoingMessage? {

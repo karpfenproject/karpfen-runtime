@@ -39,22 +39,6 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
     /** Breakpoint overrides triggering when a transition ends */
     private val endBreakpoints = HashMap<String, MutableMap<String, Boolean>>()
 
-    /** Where the engine waits at a breakpoint right now, or null while it does not. */
-    @Volatile
-    private var halt: JSONObject? = null
-
-    /**
-     * What the engine is doing, for a debugger: whether it is paused, whether its thread waits right now, and the
-     * breakpoint it waits at, if any.
-     */
-    private fun status(): String {
-        val status = JSONObject()
-        status.put("paused", tickByTickFeature.isPaused())
-        status.put("waiting", tickByTickFeature.isWaiting())
-        halt?.let { status.put("halt", it) }
-        return status.toString()
-    }
-
     /**
      * JSON based messaging system
      * Every message must contain one of the following actions: getStatus, getOverrides, addStateOverride, addTransitionOverride, removeStateOverride, removeTransitionOverride
@@ -69,7 +53,7 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
         try {
             val json = JSONObject(message)
             return when (val action = json.getString("action")) {
-                "getStatus" -> status()
+                "getStatus" -> tickByTickFeature.engineStatus()
                 "getOverrides" -> {
                     mapOf(
                         Pair("Entry Breakpoints", entryBreakpoints.toString()),
@@ -292,13 +276,8 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
             breakpointStatus = defaultBreakpointStatus
         }
         if (breakpointStatus) {
-            halt = place()
-            try {
-                tickByTickFeature.onMessage("pause")
-                tickByTickFeature.evalPausedState()
-            } finally {
-                halt = null
-            }
+            tickByTickFeature.onMessage("pause")
+            tickByTickFeature.evalPausedState(place())
         }
     }
 }

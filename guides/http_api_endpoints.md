@@ -439,13 +439,19 @@ The runtime sends every notification as one text frame:
 | `objectDeleted` | `{"objectId", "revision"}` in this order | the same |
 | `stateChange` | `{"stack", "modelElementId", "revision"}`, member order not defined | observatory clients of `*` or that element, and the model subscribers |
 | `domainEvent` | `{"domain", "payload"}`, see Register Domain Listener | the domain listeners of that domain |
+| `engineStatus` | `{"paused", "waiting"}` and, while the engine waits at a breakpoint, `"halt"`, member order not defined; the same object as the answer to `getStatus` of the `Breakpoint` feature | every client connected to the environment |
 
 Each environment numbers the object changes, object deletions and stack changes of its engine: the first one has
 revision 1, every recipient of one change gets the same revision, and a client subscribed to the model receives them
 in order without gaps. The one exception is a change to an object that cannot be written as JSON because of a
 reference loop: it uses up its revision without a message, so the gap tells the client to take a snapshot, which
-answers `409` while the loop exists. Domain events carry no revision. A client never gets the same change twice, even when it is
+answers `409` while the loop exists. Domain events and engine statuses carry no revision. A client never gets the same change twice, even when it is
 both an observer and a subscriber. All strings in a message are escaped as JSON.
+
+`engineStatus` is sent only while the feature `TickByTick` is on, alone or with `Breakpoint`: once when the engine
+thread starts to wait, between two ticks or at a breakpoint, and once when it goes on. It reaches every client with a
+connected WebSocket, whatever it registered or subscribed for, and each client once. The
+[features guide](features.md#breakpoint) describes it with an example.
 
 ## Error Handling
 

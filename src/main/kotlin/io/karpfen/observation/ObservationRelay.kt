@@ -33,6 +33,9 @@ import org.json.JSONObject
  * environment increase in enqueue order. A change whose object cannot be written uses up its revision without a
  * message, so that the gap reveals it.
  *
+ * Each time the engine thread starts to wait for a pause or goes on, [onEngineStatusChanged] tells every client
+ * connected to the environment the engine's status, without a revision.
+ *
  * As the [EventPublicationListener] of the environment's event bus, the relay also announces every published event to
  * the domain listeners of its domain. Domain events carry no revision: they are not model state, and external events
  * are published on the environment thread outside any tick, so they cannot be ordered against a snapshot.
@@ -80,6 +83,15 @@ class ObservationRelay(
             .put("revision", revision.next())
             .toString()
         sessions.notifyActiveStack(environmentKey, modelElementId, payload)
+    }
+
+    /**
+     * Pushes `engineStatus` with the engine's [status], the JSON object that the `getStatus` message of the breakpoint
+     * feature answers, to every client connected to the environment. It carries no revision: it tells what the engine
+     * thread does, not what the model holds.
+     */
+    fun onEngineStatusChanged(status: String) {
+        sessions.notifyEngineStatus(environmentKey, status)
     }
 
     /**

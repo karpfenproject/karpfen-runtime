@@ -35,6 +35,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
@@ -42,8 +43,8 @@ import kotlin.test.fail
  * active. The state machines need neither events nor Python: their transitions are unconditional, so every run takes
  * the same course, and the checks read the engine's trace, which names the active stack at the end of each tick.
  *
- * The scenarios cover the history of a state that is entered again, the delay and the timeout of a tick limit, and an
- * engine that is halted at a breakpoint and tells where.
+ * The scenarios cover the history of a state that is entered again, the delay and the timeout of a tick limit, an
+ * engine that is halted at a breakpoint and tells where, and the status reports of an engine that waits and goes on.
  */
 class FeatureScenarioTest {
 
@@ -292,6 +293,98 @@ class FeatureScenarioTest {
         assertFalse(run.engine.hasHalted)
     }
 
+    /**
+     * A pause between two ticks is reported on the engine thread once it waits and once it goes on, each report with
+     * the status at that moment, and a running engine reports nothing in its ticks.
+     */
+    @Test
+    fun `a pause between two ticks is reported when the engine waits and when it goes on`() {
+        val run = run(machine("INITIAL STATE \"a\" { }", ""), TickByTickFeature::class)
+        run.awaitTick(1)
+
+        run.manager.onMessage(TickByTickFeature::class, "pause")
+        run.awaitReports(1)
+        assertTrue(run.reports.single().similar(run.pauseStatus()), "the waiting engine reports its status as it is")
+        run.manager.onMessage(TickByTickFeature::class, "resume")
+        run.awaitReports(2)
+        run.awaitTick(run.ticksEnded() + 3)
+
+        assertEquals(listOf(WAITING, RUNNING), run.reportSummaries())
+        assertEquals(listOf("Engine-scenario"), run.reportThreads.distinct())
+    }
+
+    /**
+     * Ticks given to a paused engine are reported tick by tick: the engine goes on, waits at the top of the next tick
+     * only as long as it takes to take the permit, and waits again once the ticks are used up. A resume ends the pause.
+     */
+    @Test
+    fun `ticks given to a paused engine are reported as it goes on and waits again`() {
+        val run = run(machine("INITIAL STATE \"a\" { }", ""), TickByTickFeature::class)
+        run.awaitTick(1)
+        run.manager.onMessage(TickByTickFeature::class, "pause")
+        run.awaitReports(1)
+
+        run.manager.onMessage(TickByTickFeature::class, "tick:2")
+        run.awaitReports(5)
+        assertTrue(run.pauseStatus().getBoolean("waiting"))
+        run.manager.onMessage(TickByTickFeature::class, "resume")
+        run.awaitReports(6)
+
+        assertEquals(
+            listOf(WAITING, PAUSED_GOING_ON, WAITING, PAUSED_GOING_ON, WAITING, RUNNING),
+            run.reportSummaries()
+        )
+    }
+
+    /**
+     * Each breakpoint is reported with its halt once the engine waits there, the same status that getStatus answers,
+     * and the resume that follows is reported without it.
+     */
+    @Test
+    fun `a halt at a breakpoint is reported with where the engine waits`() {
+        val machine = machine(
+            """
+            INITIAL STATE "a" { }
+            STATE "b" { BREAKPOINT { ENTRY } }
+            STATE "c" { }
+            """,
+            """
+            TRANSITION "a" -> "b" { }
+            TRANSITION "b" -> "c" { BREAKPOINT { START END } }
+            """
+        )
+        val run = run(machine, BreakpointFeature::class)
+
+        for (count in listOf(1, 3, 5)) {
+            run.awaitReports(count)
+            assertTrue(run.reports[count - 1].similar(run.status()), "report $count is what getStatus answers")
+            run.manager.onMessage(TickByTickFeature::class, "resume")
+            run.awaitReports(count + 1)
+        }
+        run.awaitTick(5)
+
+        assertEquals(
+            listOf(
+                listOf(true, true, "entry"), RUNNING,
+                listOf(true, true, "start"), RUNNING,
+                listOf(true, true, "end"), RUNNING
+            ),
+            run.reportSummaries()
+        )
+        assertEquals(OBJECT_ID, run.reports[0].getJSONObject("halt").getString("modelElementId"))
+        assertEquals("b", run.reports[0].getJSONObject("halt").getString("state"))
+    }
+
+    /** Without TickByTick and Breakpoint the engine never reports a status. */
+    @Test
+    fun `an engine without the pause features reports no status`() {
+        val run = run(historyMachine("DEEP HISTORY "), HistoryFeature::class)
+
+        run.awaitTick(5)
+
+        assertEquals(emptyList(), run.reports.toList())
+    }
+
     /** The state machine of the history scenarios, whose state "outer" is declared with [history] in front. */
     private fun historyMachine(history: String): String = machine(
         """
@@ -343,15 +436,39 @@ class FeatureScenarioTest {
         /** Every trace entry of the engine so far, in the order it was written. */
         private val entries = CopyOnWriteArrayList<EngineTraceLogger.TraceEntry>()
 
+        /** Every status the engine reported through [Engine.onEngineStatusChanged] so far, in order. */
+        val reports = CopyOnWriteArrayList<JSONObject>()
+
+        /** The name of the thread each of the [reports] arrived on, in the same order. */
+        val reportThreads = CopyOnWriteArrayList<String>()
+
         init {
             engine.traceLogger!!.addTraceListener { entries += it }
+            engine.onEngineStatusChanged = { status ->
+                reportThreads += Thread.currentThread().name
+                reports += JSONObject(status)
+            }
         }
+
+        /** Each of the [reports] as `paused`, `waiting` and the timing of its halt, or null without one. */
+        fun reportSummaries(): List<List<Any?>> = reports.map {
+            listOf(it.getBoolean("paused"), it.getBoolean("waiting"), it.optJSONObject("halt")?.getString("timing"))
+        }
+
+        /** Waits until the engine reported [count] statuses. */
+        fun awaitReports(count: Int) = await("$count status reports") { reports.size >= count }
+
+        /** The number of ticks that have ended so far. */
+        fun ticksEnded(): Int = traces(TraceEventType.TICK_END).size
 
         /** The trace entries of [type] so far, in order. */
         fun traces(type: TraceEventType): List<EngineTraceLogger.TraceEntry> = entries.filter { it.eventType == type }
 
         /** What the breakpoint feature answers when it is asked for its status. */
         fun status(): JSONObject = JSONObject(manager.onMessage(BreakpointFeature::class, "{\"action\": \"getStatus\"}"))
+
+        /** The status of the engine as the pause of the tick-by-tick feature describes it. */
+        fun pauseStatus(): JSONObject = JSONObject(manager.getActiveFeature<TickByTickFeature>().engineStatus())
 
         /** Waits until the engine waits at a breakpoint that [accept] accepts, and returns that halt. */
         fun awaitHalt(accept: (JSONObject) -> Boolean = { true }): JSONObject {
@@ -406,6 +523,15 @@ class FeatureScenarioTest {
 
         /** How long a read waits for the tick gate. */
         const val READ_TIMEOUT_MS = 5_000L
+
+        /** The summary of a report from an engine that waits between two ticks. */
+        val WAITING = listOf(true, true, null)
+
+        /** The summary of a report from a paused engine that goes on for a tick it was given. */
+        val PAUSED_GOING_ON = listOf(true, false, null)
+
+        /** The summary of a report from an engine that runs freely again. */
+        val RUNNING = listOf(false, false, null)
 
         /** Finds the number in "Tick #3". */
         val TICK_NUMBER = Regex("#(\\d+)")

@@ -5,6 +5,7 @@ import io.karpfen.io.karpfen.features.DefaultFeature
 import io.karpfen.io.karpfen.features.Feature
 import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.FeatureProvider
+import org.json.JSONObject
 import java.util.concurrent.Semaphore
 import kotlin.reflect.KClass
 
@@ -48,19 +49,53 @@ class TickByTickFeature : DefaultFeature() {
     @Volatile
     private var isWaiting: Boolean = false
 
+    /** Where the engine waits at a breakpoint right now, or null while it does not. */
+    @Volatile
+    private var halt: JSONObject? = null
+
+    /**
+     * Told the [engineStatus] on the engine thread each time that thread starts to wait in [evalPausedState], before
+     * it blocks, and each time it goes on, right after it wakes. The engine sets it so that the environment can tell
+     * its clients.
+     */
+    @Volatile
+    var onStatusChanged: (status: String) -> Unit = {}
+
     /** True once a pause was asked for and until the engine is resumed: the engine waits, or will at its next stop. */
     fun isPaused(): Boolean = isPaused
 
     /** True while the engine thread waits, between two ticks or at a breakpoint. */
     fun isWaiting(): Boolean = isWaiting
 
-    fun evalPausedState() {
+    /**
+     * What the engine is doing, for a debugger, as a JSON object: `paused` ([isPaused]), `waiting` ([isWaiting]) and,
+     * only while the engine waits at a breakpoint, `halt`, the place it waits at.
+     */
+    fun engineStatus(): String {
+        val status = JSONObject()
+        status.put("paused", isPaused)
+        status.put("waiting", isWaiting)
+        halt?.let { status.put("halt", it) }
+        return status.toString()
+    }
+
+    /**
+     * Lets the engine thread wait while a pause was asked for, until a resume or ticks release it; otherwise returns
+     * at once. [halt] is the breakpoint the engine waits at, or null for a wait between two ticks; the [engineStatus]
+     * names it while the thread waits. The thread reports the status through [onStatusChanged] once it waits, before
+     * it blocks, and again once it goes on.
+     */
+    fun evalPausedState(halt: JSONObject? = null) {
         if (isPaused) {
+            this.halt = halt
             isWaiting = true
             try {
+                onStatusChanged(engineStatus())
                 waiting { semaphore.acquire() }
             } finally {
                 isWaiting = false
+                this.halt = null
+                onStatusChanged(engineStatus())
             }
         }
     }

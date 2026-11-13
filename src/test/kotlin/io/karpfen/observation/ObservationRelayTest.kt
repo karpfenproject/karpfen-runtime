@@ -22,6 +22,7 @@ import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
 import io.karpfen.io.karpfen.messages.EventSource
 import io.karpfen.io.karpfen.messages.PayloadFormat
+import io.karpfen.server.MockWebSocketSession
 import io.karpfen.websocket.ClientSessionManager
 import io.karpfen.websocket.OutgoingMessage
 import org.json.JSONObject
@@ -34,7 +35,7 @@ import kotlin.test.assertTrue
 /**
  * Covers [ObservationRelay] with a fresh [ClientSessionManager] and no engine: the revisions of object, deletion and
  * stack pushes, the revision gap of a change that cannot be written, their recipients, the record of active stacks,
- * domain events, and the escaping of pushed strings.
+ * domain events, engine statuses, and the escaping of pushed strings.
  */
 class ObservationRelayTest {
 
@@ -266,12 +267,54 @@ class ObservationRelayTest {
         assertEquals(oddDomain, envelopes[2].getJSONObject("payload").getString("domain"))
     }
 
+    @Test
+    fun `an engine status reaches every client connected to the environment once without a revision`() {
+        attach(ENV, "debugger")
+        attach(ENV, "ide")
+        attach(ENV, "ide")
+        sessions.subscribeToModel(ENV, "ide")
+        sessions.subscribeToObservatory(ENV, "watcher", "*")
+        sessions.registerClientAccess("registered", ENV)
+        attach("env-other", "elsewhere")
+
+        relay.onEngineStatusChanged(HALTED_STATUS)
+
+        val messages = drain()
+        assertEquals(listOf("debugger", "ide"), messages.map { it.clientId })
+        assertTrue(messages.all { it.messageType == "engineStatus" && it.payload == HALTED_STATUS })
+        assertEquals(
+            """{"environmentKey":"$ENV","clientId":"debugger","messageType":"engineStatus","payload":$HALTED_STATUS}""",
+            messages.first().toJson()
+        )
+        assertEquals(0L, revisions.current())
+    }
+
+    @Test
+    fun `an engine status reaches nobody while no client is connected`() {
+        sessions.subscribeToModel(ENV, "ide")
+        sessions.registerClientAccess("ide", ENV)
+
+        relay.onEngineStatusChanged(HALTED_STATUS)
+
+        assertEquals(emptyList(), drain())
+    }
+
+    /** Registers [clientId] for [environmentKey] and attaches a mock WebSocket session with its access key. */
+    private fun attach(environmentKey: String, clientId: String) {
+        val accessKey = sessions.registerClientAccess(clientId, environmentKey)
+        assertTrue(sessions.verifyAndAttachSession(clientId, environmentKey, accessKey, MockWebSocketSession()))
+    }
+
     /** Takes every message the relay enqueued so far; the relay enqueues synchronously, so nothing is awaited. */
     private fun drain(): List<OutgoingMessage> = generateSequence { sessions.nextOutgoingMessage(0) }.toList()
 
     private companion object {
         /** The environment the relay serves. */
         const val ENV = "env-1761560123456"
+
+        /** An engine status as the engine hands it to the relay, while it waits at the entry of a state. */
+        const val HALTED_STATUS =
+            """{"paused":true,"waiting":true,"halt":{"modelElementId":"turtle","timing":"entry","state":"step"}}"""
 
         /** A changed object's JSON as the engine hands it to the relay. */
         const val TURTLE_JSON = """{"__id__": "turtle", "__type__": "Robot", "d_closest_obstacle": 0.2}"""

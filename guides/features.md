@@ -130,6 +130,24 @@ For a state it has `state`, the name of the state. For a transition it has:
 An engine that waits between two ticks, after `pause` or after the ticks of a `tick:N`, is `paused` and `waiting`
 and has no `halt`.
 
+A debugger does not need to ask for the status again and again. While `TickByTick` is on, alone or with
+`Breakpoint`, the runtime sends the status by itself as an `engineStatus` message over the WebSocket each time the
+engine thread starts to wait and each time it goes on. The payload is the object that `getStatus` answers at that
+moment. The message for a wait is on its way before the engine thread blocks, and the one for going on right after
+it wakes. It reaches every client with a connected WebSocket for the environment, also one that subscribed to
+nothing and one with observation switched off. Nothing is sent in the ticks of a running engine, and nothing at all
+while `TickByTick` is off.
+
+```json
+{"environmentKey":"env-123","clientId":"debugger","messageType":"engineStatus","payload":{"paused":true,"waiting":true,"halt":{"modelElementId":"crossing","timing":"entry","state":"cars wait"}}}
+```
+
+After a `resume` the next message tells `{"paused":false,"waiting":false}`. After a `tick:N` the engine goes on with
+`{"paused":true,"waiting":false}`. Before each further one of the `N` ticks it waits only as long as it takes to
+take that tick, which still sends a wait and a going on, and after the last tick it sends a wait that lasts until the
+next message to `TickByTick`. `tick:2` from a waiting engine therefore sends four messages: going on, waiting, going
+on, waiting.
+
 ## EventRecording, EventInjection and EventReplayController
 
 Together these three replay the events of a run in a later run of the same environment, each event in the tick it

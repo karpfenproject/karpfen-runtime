@@ -224,9 +224,40 @@ class ModelObservationLifecycleTest {
         assertEquals(4L, snapshots.snapshot(envKey).revision)
     }
 
-    /** Creates, activates and starts an environment with the idle and step machine on `turtle`. */
-    private fun startedEnvironment(): String {
+    @Test
+    fun `a pause and a resume reach a connected client that subscribed to nothing`() {
+        val envKey = startedEnvironment("TickByTick")
+        awaitStack(envKey, "idle")
+        attachSession(envKey)
+
+        APIService.sendMessage(envKey, "TickByTick", "pause")
+        val waiting = awaitEngineStatuses(envKey, 1).single()
+        APIService.sendMessage(envKey, "TickByTick", "resume")
+        val goingOn = awaitEngineStatuses(envKey, 1).single()
+
+        assertTrue(waiting.similar(JSONObject("""{"paused":true,"waiting":true}""")), waiting.toString())
+        assertTrue(goingOn.similar(JSONObject("""{"paused":false,"waiting":false}""")), goingOn.toString())
+    }
+
+    @Test
+    fun `without the pause features no engine status is pushed`() {
+        val envKey = startedEnvironment()
+        awaitStack(envKey, "idle")
+        attachSession(envKey)
+        subscriptions.subscribe(envKey, CLIENT)
+        executionThread(envKey).acceptExternalEvent(Event("public", "go"))
+        awaitTurtle(envKey, "step", stepEntries = 1)
+
+        assertEquals(listOf("stateChange", "objectChanged"), drainPushes(envKey).map { it.first })
+    }
+
+    /**
+     * Creates an environment with the idle and step machine on `turtle`, switches on the [features] named, activates
+     * and starts it.
+     */
+    private fun startedEnvironment(vararg features: String): String {
         val envKey = CleaningRobotExample.createEnvironment()
+        features.forEach { APIService.activateFeature(envKey, it) }
         APIService.runEnvironment(envKey)
         APIService.startEnvironment(envKey)
         return envKey
@@ -269,6 +300,16 @@ class ModelObservationLifecycleTest {
             .filter { it.environmentKey == envKey && it.clientId == CLIENT }
             .map { it.messageType to JSONObject(it.payload) }
             .toList()
+
+    /** Waits until [count] `engineStatus` pushes for [CLIENT] in [envKey] are queued and returns their payloads. */
+    private fun awaitEngineStatuses(envKey: String, count: Int): List<JSONObject> {
+        val statuses = ArrayList<JSONObject>()
+        Eventually.awaitUntil("$count engine status pushes") {
+            statuses += drainPushes(envKey).filter { it.first == "engineStatus" }.map { it.second }
+            statuses.size >= count
+        }
+        return statuses
+    }
 
     /** The `turtle` object inside the room of [snapshot], parsed from its root. */
     private fun turtle(snapshot: ModelSnapshot): JSONObject =

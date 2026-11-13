@@ -118,6 +118,18 @@ class Engine(
     var onActiveStackChanged: ((String, List<String>) -> Unit)? = null
 
     /**
+     * Called with the status of the engine, the JSON object that the `getStatus` message of the breakpoint feature
+     * answers, each time the engine thread starts to wait for the pause of [TickByTickFeature], between two ticks or at
+     * a breakpoint, and each time it goes on: before the thread blocks and right after it wakes. Invoked on the engine
+     * thread, and never while [TickByTickFeature] is switched off. The environment uses it to push `engineStatus` to
+     * its clients.
+     */
+    var onEngineStatusChanged: ((String) -> Unit)? = null
+
+    /** Hands each status the pause reports on to [onEngineStatusChanged], whatever it is at that moment. */
+    private val reportEngineStatus: (String) -> Unit = { status -> onEngineStatusChanged?.invoke(status) }
+
+    /**
      * Commands to run on the engine thread at the top of a tick, with access to the live [SMContext]s.
      * Lets external threads (e.g. an HTTP request) safely mutate engine state — the contexts are
      * otherwise engine-thread-confined and unlocked. Used by [forceActiveState].
@@ -305,6 +317,7 @@ class Engine(
         while (isRunning) {
             featureManager.executeIfPresent<TickByTickFeature> { feature ->
                 feature.waiting = tickGate::outsideTick
+                feature.onStatusChanged = reportEngineStatus
                 feature.evalPausedState()
             }
 
