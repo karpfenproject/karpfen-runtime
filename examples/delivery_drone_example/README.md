@@ -1,21 +1,20 @@
-# Delivery Drone — Event Payloads & Scoped Events
+# Delivery drone: events with payloads and scoped events
 
-A single autonomous delivery drone that is driven entirely by **events that carry structured payloads**.
-This example showcases the advanced event-management feature set.
+An autonomous delivery drone that is driven by events that carry payloads.
 
-## Feature highlights
+## What it shows
 
 | Feature | Where to look |
 |---------|---------------|
-| Event payload definitions (incl. an embedded domain type) | [EVENTS.kmeta](EVENTS.kmeta) — `assignDelivery` carries a `GeoPoint` `destination` |
-| `EVENT` clause + payload/model guards in one `CONDITION` | `idle -> cruise` guards on `$(event->priority)` and `$(battery->charge)` |
-| Reading a scoped event payload in `ENTRY` | `throttle` reads `$(event->factor)`; `cruise` reads `$(event->destination->x)` |
-| `IF IN SCOPE(...)` adapting to *how* a state was entered | `cruise` ENTRY captures the destination only when it arrived via `assignDelivery` |
-| Persisting a payload so it outlives the event | `packageId` is copied into the model, still readable in `delivering` |
+| Event definitions with payloads, one of them with a domain type | [EVENTS.kmeta](EVENTS.kmeta): `assignDelivery` carries a `GeoPoint` `destination` |
+| An `EVENT` clause and clauses on the payload and the model in one `CONDITION` | `idle -> cruise` checks `$(event->priority)` and `$(battery->charge)` |
+| Reading the payload of the scoped event in `ENTRY` | `throttle` reads `$(event->factor)`; `cruise` reads `$(event->destination->x)` |
+| `IF IN SCOPE(...)` that depends on how a state was entered | The ENTRY block of `cruise` copies the destination only when `cruise` was entered with `assignDelivery` |
+| Copying a payload value into the model, where it stays after the event | `packageId` is copied into the model and can still be read in `delivering` |
 
 ## Lifecycle
 
-```
+```text
 idle ──assignDelivery(priority>=1, battery>20)──▶ cruise ──(arrived)──▶ delivering ──▶ returning ──(home)──▶ idle
                                                    │  ▲
                                        setCruiseSpeed │  │ (plain)
@@ -26,10 +25,10 @@ idle ──assignDelivery(priority>=1, battery>20)──▶ cruise ──(arrive
         cruise ──────────────────────────────────▶ returning
 ```
 
-The drone idles until it receives a delivery job. It only accepts jobs with `priority >= 1` and while its
-battery is above 20% — both checked as guard clauses on the same transition. While flying it can be
-re-throttled (`setCruiseSpeed`) or recalled (`recall`) at any time. When it reaches the destination it
-"drops" the package, then flies home.
+The drone waits in `idle` until it gets a delivery job. It takes a job only with `priority >= 1` and while its
+battery is above 20%. Both are clauses of the condition of one transition. While it cruises, `setCruiseSpeed` changes
+its speed and `recall` sends it home. At the destination it logs that it dropped the package, then flies
+home.
 
 ## Run it
 
@@ -48,8 +47,9 @@ curl -X POST "http://localhost:8080/runEnvironment?envKey=$ENV"
 curl -X POST "http://localhost:8080/startEnvironment?envKey=$ENV"
 ```
 
-Then connect a WebSocket client (see [`../../guides/getting_started.md`](../../guides/getting_started.md)) and send events. `environmentKey` is the
-**event domain** (`control`), `messageType` is the **event name / payload type**:
+Then connect a WebSocket client, see [3.5 WebSocket](../../docs/reference/3.5-websocket.md), and send events.
+`environmentKey` is the domain of the event (`control`), and `messageType` is the name of the event and of its payload
+type:
 
 ```jsonc
 // assign a delivery to (12, 8)
@@ -63,4 +63,4 @@ Then connect a WebSocket client (see [`../../guides/getting_started.md`](../../g
 { "environmentKey": "control", "messageType": "recall", "payload": "" }
 ```
 
-Watch the drone's `log` (subscribe with `registerObjectObserver ... objectId=scout`) to follow the run.
+An observer registered with `registerObjectObserver ... objectId=scout` before `runEnvironment` sees the `log` of the drone change during the run.

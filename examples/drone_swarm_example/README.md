@@ -1,23 +1,23 @@
-# Drone Swarm — Full Model Manipulators
+# Drone swarm: adding, setting and removing objects and lists
 
-A swarm coordinator that **grows, reshapes and shrinks a fleet of drones at runtime**. This example
-exercises every model-manipulation operation in one coherent lifecycle.
+A swarm coordinator grows, reshapes and shrinks a fleet of drones while it runs. The example uses every action that
+changes objects and lists in one state machine.
 
-## Feature highlights
+## What it shows
 
 | Manipulator | Relation kind | Where to look |
 |-------------|---------------|---------------|
-| `APPENDOBJ` (new object) | `has` list | `launching` spawns a fresh `Drone` built by `make_drone` |
-| `SETOBJ` (existing object) | atomic `knows` | `forming` assigns `leader` to the fittest drone |
+| `APPENDOBJ` (new object) | `has` list | `launching` adds a new `Drone` that `make_drone` builds |
+| `SETOBJ` (existing object) | single `knows` | `forming` sets `leader` to the fittest drone |
 | `APPENDOBJ` (existing object) | `knows` list | `forming` adds the weakest drone to `watchlist` |
-| `SETLIST` | simple list | `forming` / `maintenance` rebuild the `roster` |
-| `SETOBJ` + `DROPOBJ` | atomic `knows` → removal | `maintenance` points `condemned` at the weakest drone, then drops it (cascade) |
-| `DROPLIST` | simple list | `shutdown` clears the `roster` |
-| `WITH ... AS` | embedded object | `operating` updates `formationCenter` value-wise, preserving its id |
+| `SETLIST` | list property | `forming` and `maintenance` rebuild the `roster` |
+| `SETOBJ` and `DROPOBJ` | single `knows`, then removal | `maintenance` sets `condemned` to the weakest drone, then removes that drone with every reference to it |
+| `DROPLIST` | list property | `shutdown` clears the `roster` |
+| `WITH ... AS` | embedded object | `operating` changes the values of `formationCenter` in place, so it keeps its id |
 
 ## Lifecycle
 
-```
+```text
 standby ──deploy──▶ launching ──(fleet == targetSize)──▶ forming ──▶ operating
                        ▲                                                 │  │
                        │                                       droneDown │  │ recall
@@ -26,19 +26,20 @@ standby ──deploy──▶ launching ──(fleet == targetSize)──▶ for
                                                                          shutdown
 ```
 
-- **launching** appends one brand-new drone per tick (`APPENDOBJ` of a freshly-built object into the
-  `has("drones")` list) until the fleet reaches `targetSize`.
-- **forming** picks a `leader` (`SETOBJ` to an existing drone), adds the weakest unit to the `watchlist`
-  (`APPENDOBJ` of an existing reference) and rebuilds the `roster` (`SETLIST`).
-- **operating** drifts the `formationCenter` each tick using a `WITH ... AS` block, which updates the
-  embedded `Vector` in place instead of replacing it.
-- **maintenance** (on `droneDown`) retires the weakest drone: it `SETOBJ`s `condemned` to that drone and
-  `DROPOBJ`s through it. The drop cascades — the drone leaves the `drones` list and every inbound `knows`
-  reference (`leader` / `watchlist` / `condemned`) is scrubbed. Then it relaunches to replenish.
-- **shutdown** (on `recall`) clears the roster with `DROPLIST`.
+- `launching` adds one new drone per tick, with `APPENDOBJ` of a new object into the `has("drones")` list, until
+  the fleet reaches `targetSize`.
+- `forming` picks a `leader` with `SETOBJ` to an existing drone, adds the weakest drone to the `watchlist` with
+  `APPENDOBJ` of an existing object, and rebuilds the `roster` with `SETLIST`.
+- `operating` moves the `formationCenter` each tick with a `WITH ... AS` block, which changes the values of the
+  embedded `Vector` in place.
+- `maintenance`, on `droneDown`, removes the weakest drone. It sets `condemned` to that drone with `SETOBJ` and
+  removes it with `DROPOBJ("condemned")`. The drone leaves the `drones` list, and every `knows` reference to it
+  (`leader`, `watchlist`, `condemned`) is removed. Then the state machine goes back to `launching` to fill the fleet
+  again.
+- `shutdown`, on `recall`, clears the roster with `DROPLIST`.
 
-Each `make_drone` gets a random battery level, so "fittest" and "weakest" pick out different units across
-runs — the macros query the live model rather than relying on hard-coded ids.
+`make_drone` gives each drone a random battery level, so "fittest" and "weakest" pick different drones in different
+runs. The macros search the current model and use no fixed ids.
 
 ## Run it
 
@@ -57,7 +58,7 @@ curl -X POST "http://localhost:8080/runEnvironment?envKey=$ENV"
 curl -X POST "http://localhost:8080/startEnvironment?envKey=$ENV"
 ```
 
-Then connect a WebSocket client and drive the swarm (`environmentKey` is the event domain, `swarm`):
+Then connect a WebSocket client and send events. `environmentKey` is the domain of the event, `swarm`:
 
 ```jsonc
 { "environmentKey": "swarm", "messageType": "deploy",    "payload": "" }   // grow to targetSize, then patrol
@@ -65,5 +66,5 @@ Then connect a WebSocket client and drive the swarm (`environmentKey` is the eve
 { "environmentKey": "swarm", "messageType": "recall",    "payload": "" }   // clear the roster and shut down
 ```
 
-Subscribe with `registerObjectObserver ... objectId=alpha-swarm` to watch the roster and log change, and
-note the `objectDeleted` notifications emitted when `DROPOBJ` removes a drone and its embedded subtree.
+An observer registered with `registerObjectObserver ... objectId=alpha-swarm` before `runEnvironment` sees the roster and the log change.
+When `DROPOBJ` removes a drone and the objects it holds, the runtime sends `objectDeleted` messages.

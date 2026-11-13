@@ -1,32 +1,31 @@
-# Single Robot — End-to-End Walkthrough
+# Single robot: a walkthrough
 
-A single cleaning robot ("turtle") that drives around a room, senses the closest obstacle and wall, and
-steers away from whichever is too close. This is the original, full-featured example: it touches most of
-the core DSL features in one coherent state machine, which makes it the best starting point before the
-more focused examples.
+A cleaning robot, `turtle`, drives around a room, finds the closest obstacle and the closest wall, and steers away
+from whichever is too close. The example uses most constructs of KStates in one state machine. Start with it before
+the other examples, which each show fewer constructs.
 
-## Feature highlights
+## What it shows
 
 | Feature | Where to look |
 |---------|---------------|
-| Hierarchical / nested states | `observe` contains `react to obstacle` / `react to wall`; `drive` contains `drive fast` / `drive slow` |
-| `INITIAL` state + signal event to start | `ready` waits for `EVENT("public", "start")` before doing anything |
-| `NOT LOOPING` transitions + unconditional fallbacks | `observe -> react to ...` and `drive -> drive fast/slow` are `NOT LOOPING`; `observe -> drive` and `drive -> observe` are the fallbacks |
-| `EVAL` guards over model values | `drive -> drive slow/fast` branch on `$(d_closest_obstacle)` / `$(d_closest_wall)` |
-| `SETOBJ` on a `knows` relation | `observe` repoints `closest_obstacle` / `closest_wall` to existing objects via macros |
-| `SET` of a scalar from a `MACRO` | `observe` writes the `d_closest_*` distances |
-| `WITH ... AS` value-wise update of an embedded (`has`) object | `react to ...` updates the `direction` `Vector` in place, preserving its id |
-| `MACRO`s with `numpy` / `random` / nested `@macro` calls | the `MACROS` block (geometry helpers, "fittest"-style scans) |
-| Publishing internal events | `react to ...` fires `EVENT("public", "oh nooo there is an obstacle"/"...wall")` |
-| Event payload definitions (incl. an embedded domain type) | [EVENTS.kmeta](EVENTS.kmeta) — `setSpeed` carries a `number`, `teleport` carries a `Vector` |
+| Nested states | `observe` holds `react to obstacle` and `react to wall`; `drive` holds `drive fast` and `drive slow` |
+| `INITIAL` state and an event that starts the run | `ready` waits for `EVENT("public", "start")` before it does anything |
+| `NOT LOOPING` transitions and transitions without a condition as fallbacks | `observe -> react to ...` and `drive -> drive fast/slow` are `NOT LOOPING`; `observe -> drive` and `drive -> observe` are the fallbacks |
+| `EVAL` conditions on model values | `drive -> drive slow/fast` depend on `$(d_closest_obstacle)` and `$(d_closest_wall)` |
+| `SETOBJ` on a `knows` relation | `observe` sets `closest_obstacle` and `closest_wall` to existing objects that macros return |
+| `SET` with a value from a `MACRO` | `observe` writes the `d_closest_*` distances |
+| `WITH ... AS` that changes the values of an embedded (`has`) object | `react to ...` changes the `direction` `Vector` in place, so it keeps its id |
+| Macros that use `numpy` and `random` and call other macros with `@macro` | the `MACROS` block (geometry helpers, "fittest"-style scans) |
+| Events raised by the state machine | `react to ...` raises `EVENT("public", "oh nooo there is an obstacle"/"...wall")` |
+| Event definitions with payloads, one of them with a domain type | [EVENTS.kmeta](EVENTS.kmeta): `setSpeed` carries a `number`, `teleport` carries a `Vector` |
 
-> The macros use `numpy` (and the standard-library `random`/`math`), so a local run needs those Python
-> packages installed — see the prerequisites in [`../../guides/getting_started.md`](../../guides/getting_started.md).
-> The Docker image already bundles them.
+The macros use `numpy` and the standard modules `random` and `math`, so a run on your machine needs these Python
+packages installed, see the requirements in [3.3 Running the runtime](../../docs/reference/3.3-running-the-runtime.md).
+The Docker image has them.
 
 ## Lifecycle
 
-```
+```text
                             ┌────────────── react to obstacle ◀──┐ (obstacle closest & < 0.25)
                             │                                    │
 ready ──(start)──▶ observe ─┼────────────── react to wall    ◀──┤ (wall closest & < 0.25)
@@ -35,12 +34,11 @@ ready ──(start)──▶ observe ─┼────────────�
                      └──────────────────(fallback)──────────────┘   └──▶ drive slow (either < 1.0)
 ```
 
-The robot stays in `ready` until it receives a `start` event. From `observe` it refreshes its perception
-(closest obstacle/wall and their distances) every time it is entered, then either reacts (if something is
-within `0.25` units) or proceeds to `drive`. While driving it picks `drive fast` in the open or
-`drive slow` near hazards, then loops back to `observe`. `NOT LOOPING` keeps the reactive and speed
-transitions from firing twice in a row, so the unconditional fallbacks (`observe -> drive`,
-`drive -> observe`) always get a turn.
+The robot stays in `ready` until it gets a `start` event. Each time `observe` is entered, the robot computes the
+closest obstacle, the closest wall and their distances. Then it reacts if one of them is within `0.25` units, or goes
+on to `drive`. In `drive` it takes `drive fast` in open space and `drive slow` near obstacles or walls, then goes back
+to `observe`. `NOT LOOPING` keeps the transitions into the react and speed states from firing twice in a row, so the
+transitions without a condition (`observe -> drive`, `drive -> observe`) always get a turn.
 
 ## Run it
 
@@ -59,16 +57,16 @@ curl -X POST "http://localhost:8080/runEnvironment?envKey=$ENV"
 curl -X POST "http://localhost:8080/startEnvironment?envKey=$ENV"
 ```
 
-The state machine is attached to the robot object whose id is `turtle` (defined in
-[cleaning_robot.kmodel](cleaning_robot.kmodel)). Then connect a WebSocket client (see
-[`../../guides/getting_started.md`](../../guides/getting_started.md)) and send the start signal —
-`environmentKey` is the event **domain** (`public`), `messageType` is the event **name**:
+The state machine is attached to the robot object with the key `turtle`, defined in
+[cleaning_robot.kmodel](cleaning_robot.kmodel). Then connect a WebSocket client, see
+[3.5 WebSocket](../../docs/reference/3.5-websocket.md), and send the `start` event. `environmentKey` is the domain of
+the event (`public`) and `messageType` its name:
 
 ```jsonc
 { "environmentKey": "public", "messageType": "start", "payload": "" }
 ```
 
-Subscribe with `registerObjectObserver ... objectId=turtle` to watch the robot's `log` and
-`boundingBox->position` evolve. You can also subscribe with `registerDomainListener ... domain=public`
-to receive the `oh nooo there is an obstacle` / `oh nooo there is a wall` events the robot publishes while
-reacting.
+An observer registered with `registerObjectObserver ... objectId=turtle` before `runEnvironment` sees the `log` of the robot change. The
+objects inside the robot, such as its bounding box, need observers of their own. A listener registered with
+`registerDomainListener ... domain=public`, also before `runEnvironment`, gets the events `oh nooo there is an obstacle` and
+`oh nooo there is a wall` that the robot raises while it reacts.

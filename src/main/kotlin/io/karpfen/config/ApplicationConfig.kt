@@ -47,7 +47,10 @@ data class EngineConfig(
     val defaultTickDelayMs: Int = 1000,
     /** Default event TTL in milliseconds applied to every newly created environment. 0 means live forever. */
     val defaultEventTtlMs: Long = 1000,
-    /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
+    /**
+     * When true (default), an event that fires a transition is consumed by the state machine it fired in. When false,
+     * such an event stays until it expires and can fire further transitions in later ticks.
+     */
     val eventConsumptionOnFire: Boolean = true
 )
 
