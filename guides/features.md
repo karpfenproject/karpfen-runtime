@@ -52,6 +52,7 @@ curl -X POST "http://localhost:8080/sendMessageToFeature?envKey=env-123&featureN
 | `pause` | The engine finishes the tick it is in and then waits. | `execution paused` |
 | `resume` | The engine runs freely again. | `execution resumed` |
 | `tick:N` | A waiting engine runs `N` ticks and waits again. `N` is at least 1. | `execution is advancing N ticks` |
+| `status` | Nothing. | `paused` once a pause was asked for or a breakpoint halted the engine, until it is resumed. Otherwise `running`. |
 
 `tick:N` only works while the engine waits and has no ticks left from an earlier `tick:N`. Otherwise the answer says
 that the ticks are not applied. Any other message is answered with `400`. Switching the feature off resumes the
@@ -87,6 +88,7 @@ override wins over what the file says for the same place. The messages are JSON 
 | `removeStateOverride` | `modelElementId`, `stateIdentifier`, `timing` | The file decides again. |
 | `removeTransitionOverride` | `modelElementId`, `transitionIdentifier`, `timing` | The file decides again. |
 | `getOverrides` | | Lists the overrides. |
+| `getStatus` | | Answers what the engine is doing, for a debugger. See below. |
 
 `modelElementId` is the id of the object the state machine is attached to, and `stateIdentifier` is the name of the
 state. `transitionIdentifier` is the text form of the transition as the engine prints it, for example
@@ -101,7 +103,32 @@ curl -X POST "http://localhost:8080/sendMessageToFeature?envKey=env-123&featureN
   -d '{"action": "addStateOverride", "modelElementId": "crossing", "stateIdentifier": "cars go", "timing": "entry", "breakpointStatus": true}'
 ```
 
-The answer to every message is a sentence that says what was done, or what was wrong with the message.
+The answer to every other message is a sentence that says what was done, or what was wrong with the message.
+
+`getStatus` answers a JSON object:
+
+| Member | Meaning |
+|--------|---------|
+| `paused` | `true` once a pause was asked for or a breakpoint halted the engine, until it is resumed. |
+| `waiting` | `true` while the engine thread waits right now, between two ticks or at a breakpoint. |
+| `halt` | Only while the engine waits at a breakpoint: where it waits. |
+
+A `halt` has the `modelElementId` of the state machine and the `timing`, which is `entry`, `exit`, `start` or `end`.
+For a state it has `state`, the name of the state. For a transition it has:
+
+| Member | Meaning |
+|--------|---------|
+| `transition` | The identifier of the transition, as the overrides take it. |
+| `kind` | `TRANSITION`, `SPLIT` or `JOIN`. |
+| `from`, `to` | The names of its source and target states. |
+| `index` | Its place among the transitions of the `.kstates` file, counted from 0. It is -1 for a transition the engine made up for a timeout or a history. |
+
+```json
+{"paused": true, "waiting": true, "halt": {"modelElementId": "crossing", "timing": "entry", "state": "cars wait"}}
+```
+
+An engine that waits between two ticks, after `pause` or after the ticks of a `tick:N`, is `paused` and `waiting`
+and has no `halt`.
 
 ## EventRecording, EventInjection and EventReplayController
 

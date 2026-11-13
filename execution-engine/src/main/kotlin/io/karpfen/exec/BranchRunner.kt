@@ -190,7 +190,7 @@ class BranchRunner(
 
         //Normal transition start breakpoint
         featureManager.executeIfPresent<BreakpointFeature> { feature ->
-            feature.evalTransitionStartBreakpoint(ctx.modelElementId, transition)
+            feature.evalTransitionStartBreakpoint(ctx.modelElementId, transition, ctx.stateMachine.transitions.indexOfFirst { it === transition })
         }
 
         val oldStack = branch.stateStack
@@ -221,7 +221,7 @@ class BranchRunner(
 
         //Normal transition end breakpoint
         featureManager.executeIfPresent<BreakpointFeature> { feature ->
-            feature.evalTransitionEndBreakpoint(ctx.modelElementId, transition)
+            feature.evalTransitionEndBreakpoint(ctx.modelElementId, transition, ctx.stateMachine.transitions.indexOfFirst { it === transition })
         }
     }
 

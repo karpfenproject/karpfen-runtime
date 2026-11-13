@@ -27,6 +27,7 @@ import io.karpfen.io.karpfen.features.language.HistoryFeature
 import io.karpfen.io.karpfen.features.language.TickLimitFeature
 import io.karpfen.io.karpfen.features.runtime.BreakpointFeature
 import io.karpfen.io.karpfen.features.runtime.TickByTickFeature
+import org.json.JSONObject
 import org.junit.jupiter.api.AfterEach
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.reflect.KClass
@@ -42,7 +43,7 @@ import kotlin.test.fail
  * the same course, and the checks read the engine's trace, which names the active stack at the end of each tick.
  *
  * The scenarios cover the history of a state that is entered again, the delay and the timeout of a tick limit, and an
- * engine that is halted at a breakpoint.
+ * engine that is halted at a breakpoint and tells where.
  */
 class FeatureScenarioTest {
 
@@ -231,6 +232,43 @@ class FeatureScenarioTest {
     }
 
     /**
+     * A halted engine tells where it waits: at the entry of a state, then at the start and the end of a transition,
+     * each with what a debugger needs to find the place. After the last resume it waits nowhere.
+     */
+    @Test
+    fun `a halted engine tells where it waits`() {
+        val machine = machine(
+            """
+            INITIAL STATE "a" { }
+            STATE "b" { BREAKPOINT { ENTRY } }
+            STATE "c" { }
+            """,
+            """
+            TRANSITION "a" -> "b" { }
+            TRANSITION "b" -> "c" { BREAKPOINT { START END } }
+            """
+        )
+        val run = run(machine, BreakpointFeature::class)
+
+        val entry = run.awaitHalt()
+        assertEquals(listOf(OBJECT_ID, "entry", "b"), listOf("modelElementId", "timing", "state").map { entry.getString(it) })
+
+        run.manager.onMessage(TickByTickFeature::class, "resume")
+        val start = run.awaitHalt { it.optString("timing") == "start" }
+        assertEquals(listOf("TRANSITION", "[\"b\"]", "[\"c\"]", "1"), listOf("kind", "from", "to", "index").map { start.get(it).toString() })
+        assertEquals(listOf("b"), run.stacksUpTo(2).takeLast(1))
+
+        run.manager.onMessage(TickByTickFeature::class, "resume")
+        val end = run.awaitHalt { it.optString("timing") == "end" }
+        assertEquals(start.getString("transition"), end.getString("transition"))
+
+        run.manager.onMessage(TickByTickFeature::class, "resume")
+        run.awaitTick(5)
+        val status = run.status()
+        assertEquals(listOf(false, false, false), listOf(status.getBoolean("paused"), status.getBoolean("waiting"), status.has("halt")))
+    }
+
+    /**
      * Stopping an engine that is halted at a breakpoint ends its thread.
      */
     @Test
@@ -311,6 +349,20 @@ class FeatureScenarioTest {
 
         /** The trace entries of [type] so far, in order. */
         fun traces(type: TraceEventType): List<EngineTraceLogger.TraceEntry> = entries.filter { it.eventType == type }
+
+        /** What the breakpoint feature answers when it is asked for its status. */
+        fun status(): JSONObject = JSONObject(manager.onMessage(BreakpointFeature::class, "{\"action\": \"getStatus\"}"))
+
+        /** Waits until the engine waits at a breakpoint that [accept] accepts, and returns that halt. */
+        fun awaitHalt(accept: (JSONObject) -> Boolean = { true }): JSONObject {
+            var halt: JSONObject? = null
+            await("a halt") {
+                val status = status()
+                halt = status.optJSONObject("halt")?.takeIf { status.getBoolean("waiting") && accept(it) }
+                halt != null
+            }
+            return halt!!
+        }
 
         /** Waits until the tick [tick] has ended. */
         fun awaitTick(tick: Int) = await("the end of tick $tick") { traces(TraceEventType.TICK_END).any { numberOf(it) == tick } }

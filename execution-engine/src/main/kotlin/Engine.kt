@@ -501,7 +501,7 @@ class Engine(
 
         //Split transition start breakpoint
         featureManager.executeIfPresent<BreakpointFeature> { feature ->
-            feature.evalTransitionStartBreakpoint(ctx.modelElementId, split)
+            feature.evalTransitionStartBreakpoint(ctx.modelElementId, split, ctx.stateMachine.transitions.indexOfFirst { it === split })
         }
 
         if (eventConsumptionOnFire) matchedEvent?.let { parent.eventProcessor.consume(it) }
@@ -536,7 +536,7 @@ class Engine(
 
         //Split transition end breakpoint
         featureManager.executeIfPresent<BreakpointFeature> { feature ->
-            feature.evalTransitionEndBreakpoint(ctx.modelElementId, split)
+            feature.evalTransitionEndBreakpoint(ctx.modelElementId, split, ctx.stateMachine.transitions.indexOfFirst { it === split })
         }
     }
 
@@ -589,7 +589,7 @@ class Engine(
 
         //Join transition start breakpoint
         featureManager.executeIfPresent<BreakpointFeature> { feature ->
-            feature.evalTransitionStartBreakpoint(ctx.modelElementId, join)
+            feature.evalTransitionStartBreakpoint(ctx.modelElementId, join, ctx.stateMachine.transitions.indexOfFirst { it === join })
         }
 
         val targetStack = smQueryHelper.getStateStackForState(join.toState)
@@ -618,7 +618,7 @@ class Engine(
 
         //Join transition end breakpoint
         featureManager.executeIfPresent<BreakpointFeature> { feature ->
-            feature.evalTransitionEndBreakpoint(ctx.modelElementId, join)
+            feature.evalTransitionEndBreakpoint(ctx.modelElementId, join, ctx.stateMachine.transitions.indexOfFirst { it === join })
         }
     }
 

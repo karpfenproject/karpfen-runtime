@@ -7,7 +7,10 @@ import io.karpfen.io.karpfen.features.Feature
 import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.FeatureProvider
 import org.json.JSONObject
+import states.JoinTransition
+import states.SplitTransition
 import states.State
+import states.Transition
 import states.TransitionLike
 import kotlin.reflect.KClass
 
@@ -36,9 +39,26 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
     /** Breakpoint overrides triggering when a transition ends */
     private val endBreakpoints = HashMap<String, MutableMap<String, Boolean>>()
 
+    /** Where the engine waits at a breakpoint right now, or null while it does not. */
+    @Volatile
+    private var halt: JSONObject? = null
+
+    /**
+     * What the engine is doing, for a debugger: whether it is paused, whether its thread waits right now, and the
+     * breakpoint it waits at, if any.
+     */
+    private fun status(): String {
+        val status = JSONObject()
+        status.put("paused", tickByTickFeature.isPaused())
+        status.put("waiting", tickByTickFeature.isWaiting())
+        halt?.let { status.put("halt", it) }
+        return status.toString()
+    }
+
     /**
      * JSON based messaging system
-     * Every message must contain one of the following actions: getOverrides, addStateOverride, addTransitionOverride, removeStateOverride, removeTransitionOverride
+     * Every message must contain one of the following actions: getStatus, getOverrides, addStateOverride, addTransitionOverride, removeStateOverride, removeTransitionOverride
+     * getStatus returns a JSON object with paused, waiting and, while the engine waits at a breakpoint, halt
      * getOverrides returns all currently active overrides, grouped into 4 parts (entry, exit, start, end)
      * addStateOverride requires modelElementId, stateIdentifier, timing (entry, exit) and breakpointStatus (false, true)
      * addTransitionOverride requires modelElementId, transitionIdentifier, timing (start, end) and breakpointStatus (false, true)
@@ -49,6 +69,7 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
         try {
             val json = JSONObject(message)
             return when (val action = json.getString("action")) {
+                "getStatus" -> status()
                 "getOverrides" -> {
                     mapOf(
                         Pair("Entry Breakpoints", entryBreakpoints.toString()),
@@ -138,7 +159,7 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
      * Evaluates state entry breakpoints before each onEntry block
      */
     fun evalStateEntryBreakpoint(modelElementId: String, state: State) {
-        evaluateBreakpoint(entryBreakpoints, modelElementId, state.name, state.entryBreakpoint)
+        evaluateBreakpoint(entryBreakpoints, modelElementId, state.name, state.entryBreakpoint) { stateHalt(modelElementId, "entry", state) }
     }
 
     /**
@@ -151,7 +172,7 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
         stateStackPrefixMatch(oldStateStack, newStateStack, stateSet)
 
         for (state in stateSet) {
-            evaluateBreakpoint(exitBreakpoints, modelElementId, state.name, state.exitBreakpoint)
+            evaluateBreakpoint(exitBreakpoints, modelElementId, state.name, state.exitBreakpoint) { stateHalt(modelElementId, "exit", state) }
         }
     }
 
@@ -167,7 +188,7 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
         }
 
         for (state in stateSet) {
-            evaluateBreakpoint(exitBreakpoints, modelElementId, state.name, state.exitBreakpoint)
+            evaluateBreakpoint(exitBreakpoints, modelElementId, state.name, state.exitBreakpoint) { stateHalt(modelElementId, "exit", state) }
         }
     }
 
@@ -183,7 +204,7 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
         }
 
         for (state in stateSet) {
-            evaluateBreakpoint(exitBreakpoints, modelElementId, state.name, state.exitBreakpoint)
+            evaluateBreakpoint(exitBreakpoints, modelElementId, state.name, state.exitBreakpoint) { stateHalt(modelElementId, "exit", state) }
         }
     }
 
@@ -208,23 +229,59 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
 
     /**
      * Evaluates transition start breakpoints before any transition is applied
+     * [index] is the place of the transition among the transitions of its state machine, counted from 0, or -1 for a transition the engine made up
      */
-    fun evalTransitionStartBreakpoint(modelElementId: String, transition: TransitionLike) {
-        evaluateBreakpoint(startBreakpoints, modelElementId, transition.toString(), transition.startBreakpoint)
+    fun evalTransitionStartBreakpoint(modelElementId: String, transition: TransitionLike, index: Int = -1) {
+        evaluateBreakpoint(startBreakpoints, modelElementId, transition.toString(), transition.startBreakpoint) {
+            transitionHalt(modelElementId, "start", transition, index)
+        }
     }
 
     /**
      * Evaluates transition end breakpoints after any transition has been applied
+     * [index] is the place of the transition among the transitions of its state machine, counted from 0, or -1 for a transition the engine made up
      */
-    fun evalTransitionEndBreakpoint(modelElementId: String, transition: TransitionLike) {
-        evaluateBreakpoint(endBreakpoints, modelElementId, transition.toString(), transition.endBreakpoint)
+    fun evalTransitionEndBreakpoint(modelElementId: String, transition: TransitionLike, index: Int = -1) {
+        evaluateBreakpoint(endBreakpoints, modelElementId, transition.toString(), transition.endBreakpoint) {
+            transitionHalt(modelElementId, "end", transition, index)
+        }
+    }
+
+    /** The halt at the [timing], entry or exit, of [state] of the machine attached to [modelElementId]. */
+    private fun stateHalt(modelElementId: String, timing: String, state: State): JSONObject =
+        JSONObject().put("modelElementId", modelElementId).put("timing", timing).put("state", state.name)
+
+    /**
+     * The halt at the [timing], start or end, of [transition] of the machine attached to [modelElementId].
+     * It names the kind of the transition, its source and target states, its identifier for overrides and its [index].
+     */
+    private fun transitionHalt(modelElementId: String, timing: String, transition: TransitionLike, index: Int): JSONObject {
+        val (kind, from, to) = when (transition) {
+            is Transition -> Triple("TRANSITION", listOf(transition.fromState), listOf(transition.toState))
+            is SplitTransition -> Triple("SPLIT", listOf(transition.fromState), transition.toStates)
+            is JoinTransition -> Triple("JOIN", transition.fromStates, listOf(transition.toState))
+        }
+        return JSONObject()
+            .put("modelElementId", modelElementId)
+            .put("timing", timing)
+            .put("transition", transition.toString())
+            .put("kind", kind)
+            .put("from", from)
+            .put("to", to)
+            .put("index", index)
     }
 
     /**
      * Fetches custom override rules from the corresponding map
      * Uses a default if no custom rule is present
      */
-    private fun evaluateBreakpoint(overrideMap: MutableMap<String, MutableMap<String, Boolean>>, modelElementId: String, targetIdentifier: String, defaultBreakpointStatus: Boolean) {
+    private fun evaluateBreakpoint(
+        overrideMap: MutableMap<String, MutableMap<String, Boolean>>,
+        modelElementId: String,
+        targetIdentifier: String,
+        defaultBreakpointStatus: Boolean,
+        place: () -> JSONObject,
+    ) {
         var breakpointStatus: Boolean? = null
         overrideMap[modelElementId]?.let {
             it[targetIdentifier]?.let { status ->
@@ -235,8 +292,13 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
             breakpointStatus = defaultBreakpointStatus
         }
         if (breakpointStatus) {
-            tickByTickFeature.onMessage("pause")
-            tickByTickFeature.evalPausedState()
+            halt = place()
+            try {
+                tickByTickFeature.onMessage("pause")
+                tickByTickFeature.evalPausedState()
+            } finally {
+                halt = null
+            }
         }
     }
 }

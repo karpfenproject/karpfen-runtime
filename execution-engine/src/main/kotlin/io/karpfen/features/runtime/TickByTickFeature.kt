@@ -44,9 +44,24 @@ class TickByTickFeature : DefaultFeature() {
     @Volatile
     var waiting: (wait: () -> Unit) -> Unit = { wait -> wait() }
 
+    /** True while the engine thread waits in [evalPausedState] for a resume or for ticks. */
+    @Volatile
+    private var isWaiting: Boolean = false
+
+    /** True once a pause was asked for and until the engine is resumed: the engine waits, or will at its next stop. */
+    fun isPaused(): Boolean = isPaused
+
+    /** True while the engine thread waits, between two ticks or at a breakpoint. */
+    fun isWaiting(): Boolean = isWaiting
+
     fun evalPausedState() {
         if (isPaused) {
-            waiting { semaphore.acquire() }
+            isWaiting = true
+            try {
+                waiting { semaphore.acquire() }
+            } finally {
+                isWaiting = false
+            }
         }
     }
 
@@ -54,11 +69,12 @@ class TickByTickFeature : DefaultFeature() {
         resume()
     }
 
-    //Supported Messages: pause, resume, tick:{Int}
+    //Supported Messages: pause, resume, status, tick:{Int}
     override fun onMessage(message: String): String {
         return when (message) {
             "pause" -> pause()
             "resume" -> resume()
+            "status" -> if (isPaused) "paused" else "running"
             else -> {
                 val list = message.split(':')
                 if (list.size == 2 && list[0] == "tick" && list[1].toIntOrNull() != null) {
