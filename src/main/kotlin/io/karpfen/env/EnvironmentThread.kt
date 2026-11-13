@@ -75,6 +75,14 @@ class EnvironmentThread(
     @Volatile
     private var runner: Thread? = null
 
+    /**
+     * True when the event loop of the latest [launch] ended although no [stop] had asked it to, through an exception,
+     * an error or an interrupt. The runner sets it as its loop ends, and [launch] resets it before the next runner
+     * exists. A runner that ends because of [stop] never sets it.
+     */
+    @Volatile
+    private var runnerEndedOnItsOwn = false
+
     val engine = Engine(
         environment.metamodel!!,
         environment.model!!,
@@ -96,8 +104,10 @@ class EnvironmentThread(
      * run state, and its last tick may still run while [stop] waits for it. Once launched, the environment is halted
      * when it ended on its own: the engine thread of the latest start ended on its own, or an exception or error ended
      * the runner's event loop without a [stop], and the runner's end stopped the engine. It is running otherwise.
-     * [launch] sets the run state only after the engine and the runner have started, so a reader that sees it running
-     * never sees the threads of an earlier start or none at all.
+     *
+     * Both signs of an end on its own are flags that only an end without a [stop] sets, not the liveness of a thread.
+     * So a reader that took the run state as running just before a [stop] still reports running, which was true a
+     * moment ago, and never halted because the threads of the stopped run have ended meanwhile.
      */
     override val phase: EnvironmentPhase
         get() = when (runState) {
@@ -108,10 +118,10 @@ class EnvironmentThread(
 
     /**
      * True when the launched environment ended without a [stop]: the engine thread of the latest start ended on its
-     * own, or the runner of the latest [launch] is no longer alive.
+     * own, or the event loop of the latest [launch] did.
      */
     private val hasEndedOnItsOwn: Boolean
-        get() = engine.hasHalted || runner?.isAlive != true
+        get() = engine.hasHalted || runnerEndedOnItsOwn
 
     /**
      * Reads the snapshot through the engine's tick gate: the phase, the revision of the last observation, the recorded
@@ -209,6 +219,7 @@ class EnvironmentThread(
         }
         activeStacks.clear()
         isRunning = true
+        runnerEndedOnItsOwn = false
         engine.start()
         runner = Thread(this, "EnvironmentThread-${environment.key}").apply {
             isDaemon = false
@@ -259,6 +270,9 @@ class EnvironmentThread(
             println("[EnvironmentThread] Error: ${e.message}")
             e.printStackTrace()
         } finally {
+            if (isRunning) {
+                runnerEndedOnItsOwn = true
+            }
             engine.stop()
             println("[EnvironmentThread] Stopped for environment ${environment.key}")
         }
