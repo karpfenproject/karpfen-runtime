@@ -18,6 +18,7 @@ package io.karpfen.env
 import io.karpfen.EngineTraceLogger
 import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.websocket.ClientSessionManager
+import io.ktor.websocket.CloseReason
 import java.util.concurrent.ConcurrentHashMap
 
 object EnvironmentHandler {
@@ -154,11 +155,30 @@ object EnvironmentHandler {
         }
     }
 
+    /**
+     * Stops the activated environment [envKey] through [EnvironmentThread.stop]: a freeze that keeps everything for the
+     * next start. The WebSocket connections of its clients stay open. Stopping an environment that does not run changes
+     * nothing.
+     */
     fun stopEnvironmentThread(envKey: String) {
         val envThread = executionThreads[envKey]
             ?: throw IllegalStateException("Environment with key '$envKey' has no execution thread")
-        envThread.stop()
-        clientSessionManager.closeEnvironmentSessions(envKey)
-        println("[EnvironmentHandler] Stopped execution thread for environment $envKey")
+        if (envThread.stop()) {
+            println("[EnvironmentHandler] Stopped execution thread for environment $envKey")
+        } else {
+            println("[EnvironmentHandler] Environment $envKey is not running")
+        }
+    }
+
+    /**
+     * Ends every environment for good when the runtime shuts down: closes the WebSocket connections of their clients
+     * with the close code 1001 and the reason `Runtime stopped`, and disposes every execution thread, which closes the
+     * engines with their Python sessions and trace logs.
+     */
+    fun shutdown() {
+        for ((key, envThread) in executionThreads) {
+            clientSessionManager.closeEnvironmentSessions(key, CloseReason(CloseReason.Codes.GOING_AWAY, "Runtime stopped"))
+            runCatching { envThread.dispose() }
+        }
     }
 }

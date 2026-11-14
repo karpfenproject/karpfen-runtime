@@ -41,9 +41,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Covers starting and stopping an activated environment: one runner loop per environment, restarts after a stop, the
- * phase reported while a start or a stop is under way, a runner loop that ends on its own or survives a payload it
- * cannot parse, and what a stop does to the environment's WebSocket sessions.
+ * Covers starting and stopping an activated environment: one runner loop per environment, continuing after a stop,
+ * the phase reported while a start or a stop is under way, a runner loop that ends on its own or survives a payload it
+ * cannot parse, and the WebSocket sessions, which a stop keeps and a shutdown of the runtime closes.
  */
 class EnvironmentRunnerTest {
 
@@ -73,7 +73,7 @@ class EnvironmentRunnerTest {
     }
 
     @Test
-    fun `starting a stopped environment runs it again`() {
+    fun `starting a stopped environment continues it`() {
         val envKey = CleaningRobotExample.createEnvironment()
         APIService.runEnvironment(envKey)
         APIService.startEnvironment(envKey)
@@ -88,12 +88,12 @@ class EnvironmentRunnerTest {
         environment.acceptExternalEvent(Event("public", "go"))
 
         assertEquals(1, liveRunners(envKey))
-        Eventually.awaitUntil("the restarted environment handled the event") { distanceToObstacle(environment) == 2.0 }
+        Eventually.awaitUntil("the continued environment handled the event") { distanceToObstacle(environment) == 2.0 }
         assertTrue(environment.engine.isTicking)
     }
 
     @Test
-    fun `a start or restart under way is never reported as halted`() {
+    fun `a start or stop under way is never reported as halted`() {
         val envKey = CleaningRobotExample.createEnvironment()
         APIService.runEnvironment(envKey)
         val environment = executionThread(envKey)
@@ -190,7 +190,7 @@ class EnvironmentRunnerTest {
     }
 
     @Test
-    fun `stopping closes the environment's WebSocket sessions with a normal close`() {
+    fun `stopping keeps the environment's WebSocket sessions open`() {
         val envKey = CleaningRobotExample.createEnvironment()
         val sessions = EnvironmentHandler.clientSessionManager
         val accessKey = APIService.registerClientForWebSocket("ide", envKey)
@@ -201,9 +201,26 @@ class EnvironmentRunnerTest {
 
         APIService.stopEnvironment(envKey)
 
+        assertNotNull(sessions.getSessionForClient(envKey, "ide"))
+        assertEquals(emptyList(), socket.getCloseReasons())
+    }
+
+    @Test
+    fun `shutting the runtime down closes the WebSocket sessions with going away`() {
+        val envKey = CleaningRobotExample.createEnvironment()
+        val sessions = EnvironmentHandler.clientSessionManager
+        val accessKey = APIService.registerClientForWebSocket("ide", envKey)
+        val socket = MockWebSocketSession()
+        assertTrue(sessions.verifyAndAttachSession("ide", envKey, accessKey, socket))
+        APIService.runEnvironment(envKey)
+        APIService.startEnvironment(envKey)
+
+        EnvironmentHandler.shutdown()
+
         assertNull(sessions.getSessionForClient(envKey, "ide"))
         Eventually.awaitUntil("the socket was closed") { socket.getCloseReasons().isNotEmpty() }
-        assertEquals(listOf(CloseReason(CloseReason.Codes.NORMAL, "Environment stopped")), socket.getCloseReasons())
+        assertEquals(listOf(CloseReason(CloseReason.Codes.GOING_AWAY, "Runtime stopped")), socket.getCloseReasons())
+        assertFalse(executionThread(envKey).engine.isTicking)
     }
 
     /** The execution thread of the activated environment [envKey]. */

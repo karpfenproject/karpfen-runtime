@@ -53,7 +53,7 @@ class FeatureScenarioTest {
 
     @AfterEach
     fun stopEngines() {
-        engines.forEach { it.stop() }
+        engines.forEach { it.close() }
     }
 
     /**

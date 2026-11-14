@@ -25,10 +25,9 @@ import io.karpfen.io.karpfen.messages.EventBus
  *
  * Every call builds everything mutable anew: the query helper, the macro processor with its own Python sessions, the
  * transition and action processors and the first branch. The identities under which the branches consume events start
- * with `<engineId>-<objectId>#<n>`, where `n` counts the instances of the object within one run from 0, so an instance
- * that replaces another on the same object does not count the events of its predecessor as handled. [resetCounts] at
- * every start lets the first instances of a run use the identities of the first instances of the run before, as a
- * restart always did. The factory is used by the engine thread only.
+ * with `<engineId>-<objectId>#<n>`, where `n` counts the instances of the object from 0 over the life of the engine, so
+ * an instance that replaces another on the same object does not count the events of its predecessor as handled. The
+ * factory is used by the engine thread only.
  *
  * @property metamodel the metamodel of the model.
  * @property model the model the instances read and change.
@@ -46,13 +45,8 @@ class StateMachineInstanceFactory(
     private val traceLogger: EngineTraceLogger? = null
 ) {
 
-    /** The number of instances built per object since the last [resetCounts]. */
+    /** The number of instances built per object. */
     private val instanceCounts = HashMap<String, Int>()
-
-    /** Forgets how many instances each object had, at the start of a run. */
-    fun resetCounts() {
-        instanceCounts.clear()
-    }
 
     /**
      * Builds the context of [spec] at the initial stack of its state machine, with one branch whose whole stack still

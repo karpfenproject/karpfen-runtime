@@ -40,7 +40,8 @@ import org.json.JSONObject
  * [stateMachines] and [activeStacks] in step with them, so a snapshot shows only the instances that exist.
  *
  * Each time a thread of the engine starts to wait for a pause or goes on, [onEngineStatusChanged] tells every client
- * connected to the environment the engine's status, without a revision.
+ * connected to the environment the engine's status, without a revision. [onPhaseChanged] tells them the same way that a
+ * stop froze the environment and that a start let it continue.
  *
  * As the [EventPublicationListener] of the environment's event bus, the relay also announces every published event to
  * the domain listeners of its domain. Domain events carry no revision: they are not model state, and external events
@@ -128,6 +129,15 @@ class ObservationRelay(
      */
     fun onEngineStatusChanged(status: String) {
         sessions.notifyEngineStatus(environmentKey, status)
+    }
+
+    /**
+     * Pushes `engineStatus` to every client connected to the environment when a stop froze it or a start let it
+     * continue: the engine's [status] as [onEngineStatusChanged] pushes it, with the member `phase` added, `stopped` or
+     * `running` as the [phase] the snapshot names. It carries no revision.
+     */
+    fun onPhaseChanged(phase: EnvironmentPhase, status: String) {
+        sessions.notifyEngineStatus(environmentKey, JSONObject(status).put("phase", phase.wireName).toString())
     }
 
     /**

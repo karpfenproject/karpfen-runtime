@@ -24,7 +24,8 @@ import io.karpfen.dsl.instance.Model
  *
  * The rule of change: the order of instances, [instances], changes only on the engine thread, at two points. [start]
  * builds the instances of a start, and [applyChanges], which the engine calls at the end of every tick inside the tick
- * gate, carries out what the tick asked for. Everything else only asks, from whatever thread changes the model or runs
+ * gate, carries out what the tick asked for. A stop of the engine changes nothing here: the instances and the requests
+stay as they are until the engine continues. Everything else only asks, from whatever thread changes the model or runs
  * an action, and the requests are collected under [lock]:
  * - an object that enters the model ([objectsAdded]) and whose type behaves after a definition asks for an instance;
  * - an `ATTACH` clause ([attach]) names the definition of the object its rule created, in place of that one;
@@ -83,19 +84,12 @@ class StateMachineLifecycle(
         private set
 
     /**
-     * Builds the instances of a start over the current model, in the order [StateMachineDefinitions.initialInstances]
-     * gives, forgets every request of an earlier run, and tells the [listener] that each joined. Called on the engine
-     * thread inside the tick gate, before the first tick. At a [restart], an attached state machine whose object the
-     * earlier run removed is left out; at the first start such a state machine is an error that ends the engine thread.
+     * Builds the instances over the model, in the order [StateMachineDefinitions.initialInstances] gives, and tells the
+     * [listener] that each joined. Called once, on the engine thread inside the tick gate, before the first tick. An
+     * attached state machine whose object is not in the model is an error that ends the engine thread.
      */
-    fun start(restart: Boolean) {
-        synchronized(lock) {
-            live.clear()
-            pendingAttachments.clear()
-            replacements.clear()
-        }
-        factory.resetCounts()
-        val built = definitions.initialInstances(model.objects, skipMissingObjects = restart).map { factory.build(it, this) }
+    fun start() {
+        val built = definitions.initialInstances(model.objects).map { factory.build(it, this) }
         install(built)
         built.forEach(listener::joined)
     }

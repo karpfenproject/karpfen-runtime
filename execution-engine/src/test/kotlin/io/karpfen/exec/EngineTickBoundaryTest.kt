@@ -38,7 +38,7 @@ class EngineTickBoundaryTest {
     /** Stops every engine the test built. */
     @AfterEach
     fun stopEngines() {
-        engines.forEach { it.stop() }
+        engines.forEach { it.close() }
     }
 
     @Test

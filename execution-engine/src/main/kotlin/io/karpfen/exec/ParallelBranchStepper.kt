@@ -23,6 +23,8 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * Steps the branches of a split state machine at the same time, each branch on a thread of its own.
@@ -33,9 +35,11 @@ import java.util.concurrent.TimeUnit
  * environment still ends after all of its steps and keeps its number and meaning. A branch never splits while its
  * context is parallel, so every step is a plain [BranchRunner.tick] whose result needs no further handling.
  *
- * The stepper is used by the engine thread only. It keeps no reference to the contexts; the engine tells it after
- * each tick which branches still live ([retain]) and the threads of the others end then. [close] ends every thread
- * and is called when the engine thread ends, so no thread of a branch outlives its engine.
+ * The stepper is used by the engine thread, and by a stop that freezes the engine while its thread waits between two
+ * ticks ([closeIfIdle]); a lock lets one of them use it at a time. It keeps no reference to the contexts; the engine
+ * tells it after each tick which branches still live ([retain]) and the threads of the others end then. [close] ends
+ * every thread and is called when the engine thread ends, so no thread of a branch outlives its engine. A branch whose
+ * thread ended gets a new one at its next parallel step.
  *
  * A thread of a branch is a daemon thread named `Branch-<id>`, where the id is that of the branch's event processor.
  *
@@ -45,6 +49,9 @@ class ParallelBranchStepper(private val branchRunner: BranchRunner) {
 
     /** The thread of every branch that did a parallel step and has not ended, by the identity of the branch. */
     private val threads = IdentityHashMap<Branch, ExecutorService>()
+
+    /** Held while a step, [retain] or a close uses [threads]. */
+    private val use = ReentrantLock()
 
     /** The number of branch threads that are alive now. */
     val threadCount: Int
@@ -56,7 +63,7 @@ class ParallelBranchStepper(private val branchRunner: BranchRunner) {
      * attached as suppressed. When the engine thread is interrupted while it waits, every thread of this step is
      * interrupted and awaited before the interrupt is passed on, so no step runs on after the tick has left.
      */
-    fun step(ctx: SMContext) {
+    fun step(ctx: SMContext) = use.withLock {
         val branches = ctx.branches.toList()
         val running = branches.map { branch -> threadOf(branch).submit(Callable { branchRunner.tick(ctx, branch, false) }) }
         try {
@@ -73,14 +80,29 @@ class ParallelBranchStepper(private val branchRunner: BranchRunner) {
      * of all its contexts, or with none while the feature is off. The ended threads are idle at that moment, so they
      * end at once.
      */
-    fun retain(live: Collection<Branch>) {
+    fun retain(live: Collection<Branch>) = use.withLock {
         val keep = Collections.newSetFromMap(IdentityHashMap<Branch, Boolean>()).apply { addAll(live) }
         val ended = threads.keys.filter { it !in keep }
         ended.mapNotNull { threads.remove(it) }.forEach(::end)
     }
 
     /** Ends the thread of every branch. A step that still runs is interrupted. */
-    fun close() {
+    fun close() = use.withLock { closeLocked() }
+
+    /**
+     * Ends the thread of every branch unless a step runs right now, in which case nothing happens. A stop calls it from
+     * its own thread while the engine thread waits between two ticks.
+     */
+    fun closeIfIdle() {
+        if (!use.tryLock()) return
+        try {
+            closeLocked()
+        } finally {
+            use.unlock()
+        }
+    }
+
+    private fun closeLocked() {
         val all = threads.values.toList()
         threads.clear()
         all.forEach { it.shutdownNow() }

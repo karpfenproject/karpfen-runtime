@@ -315,20 +315,19 @@ class ClientSessionManager {
     }
 
     /**
-     * Closes all sessions of an environment when it stops, with the close code 1000 and the reason
-     * `Environment stopped`.
+     * Closes all sessions of an environment with [reason], when the runtime shuts down.
      *
      * The sessions are removed under the write lock; each is then closed outside the lock in a coroutine launched in
      * the session itself, so the calling HTTP thread never blocks on a client that does not read. Failures are printed
      * and do not stop the other closes. The socket handler unregisters a closed session by its access key afterwards,
      * which then finds nothing to remove. Subscriptions stay, keyed by environment and client id.
      */
-    fun closeEnvironmentSessions(environmentKey: String) {
+    fun closeEnvironmentSessions(environmentKey: String, reason: CloseReason) {
         for (clientSession in removeEnvironmentSessions(environmentKey)) {
             try {
                 clientSession.session.launch {
                     try {
-                        clientSession.session.close(CloseReason(CloseReason.Codes.NORMAL, "Environment stopped"))
+                        clientSession.session.close(reason)
                     } catch (e: Exception) {
                         reportCloseFailure(clientSession, e)
                     }

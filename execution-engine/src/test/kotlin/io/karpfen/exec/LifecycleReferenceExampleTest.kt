@@ -44,7 +44,7 @@ class LifecycleReferenceExampleTest {
 
     @AfterEach
     fun stop() {
-        engine?.stop()
+        engine?.close()
     }
 
     @Test

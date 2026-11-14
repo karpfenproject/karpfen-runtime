@@ -37,11 +37,15 @@ import kotlin.concurrent.thread
 /**
  * Executes the state machine instances of the objects of one model, on an engine thread of its own.
  *
- * The instances, which ones exist and in which order they step, belong to a [StateMachineLifecycle]. At each start it
- * builds the attached state machines of [statemachineMap] and the instances for `behaves after` over the current model;
- * during the run, actions and changes of the model ask it for new, exchanged and ended instances, and it carries the
- * requests out at the end of each tick. The engine walks the instances it hands out and skips an instance that ended
- * during the tick.
+ * The instances, which ones exist and in which order they step, belong to a [StateMachineLifecycle]. At the first
+ * start it builds the attached state machines of [statemachineMap] and the instances for `behaves after` over the
+ * model; during the run, actions and changes of the model ask it for new, exchanged and ended instances, and it carries
+ * the requests out at the end of each tick. The engine walks the instances it hands out and skips an instance that
+ * ended during the tick.
+ *
+ * [stop] freezes the run and a later [start] continues it with the next tick: the instances with their stacks,
+ * branches and events, the tick number, the state of the features and the time to live left to the events on the bus
+ * all stay as they were, see [stop]. [close] ends the engine for good.
  *
  * [start] runs the tick loop. One tick holds the [tickGate] and runs, in this order, the queued engine commands, the
  * purge of expired events, and for each state machine its tick (its `ENTRY` and `DO` blocks, each one notification
@@ -100,20 +104,51 @@ class Engine(
     @Volatile
     private var isRunning: Boolean = false
 
-    /** True once a start has built its instances; a later start is a restart. Written by the engine threads. */
+    /** True once the first start has built its instances; every later start continues the run. */
     @Volatile
     private var hasStartedBefore: Boolean = false
+
+    /** The number of the latest tick, counted from 1 over the whole life of the engine; a start goes on counting. */
+    @Volatile
+    var tickCount: Long = 0L
+        private set
+
+    /**
+     * True while a [stop] holds the engine thread where it waits for the pause of [TickByTickFeature], between two ticks
+     * or at a breakpoint; a [start] releases it. Guarded by [holdLock] for waiting and waking.
+     */
+    @Volatile
+    private var frozen: Boolean = false
+
+    /** True once [close] began; the engine does not start again. */
+    @Volatile
+    private var closed: Boolean = false
+
+    /** The monitor the engine thread waits on in [awaitStart] while it is held by a [stop]. */
+    private val holdLock = Object()
+
+    /** Lets one of [start], [stop] and [close] run at a time. */
+    private val lifeLock = Object()
+
+    /** True while a thread of the engine waits for the pause of [TickByTickFeature], also while it is held there. */
+    @Volatile
+    private var parkedInWait: Boolean = false
+
+    /** True while the engine thread waits for the pause of [TickByTickFeature] between two ticks. */
+    @Volatile
+    private var waitingBetweenTicks: Boolean = false
 
     /** The engine thread of the latest [start]; volatile so that other threads read [isTicking] safely. */
     @Volatile
     private var executionThread: Thread? = null
 
     /**
-     * True while the engine thread is alive: from [start] until the tick loop ends, either through [stop] or because
-     * an exception or error escaped it.
+     * True while the engine runs: its thread is alive and no [stop] holds it. The thread is alive from [start] until the
+     * tick loop ends, either through [stop] or [close] or because an exception or error escaped it; a [stop] while the
+     * engine waits for the pause of [TickByTickFeature] keeps the thread alive and held.
      */
     val isTicking: Boolean
-        get() = executionThread?.isAlive == true
+        get() = executionThread?.isAlive == true && !frozen
 
     /**
      * True when the engine thread of the latest [start] ended on its own, because an exception or error escaped the
@@ -266,13 +301,25 @@ class Engine(
     }
 
     /**
-     * Starts the tick loop on a new engine thread unless the engine is running. [hasHalted] is reset before the thread
-     * exists; the thread sets it when it ends while the engine was still meant to run.
+     * Starts the engine unless it runs or was closed. The first start builds the instances; every later start continues
+     * the frozen run with the next tick: the waiting events get back the time to live they had left at the [stop], and
+     * a thread that the stop held where it waited for the pause of [TickByTickFeature] is released and goes on waiting
+     * there until a resume, as before the stop. Otherwise a new engine thread runs the tick loop. [hasHalted] is reset
+     * before the thread exists; the thread sets it when it ends while the engine was still meant to run.
      */
-    fun start() {
-        if (isRunning) return
+    fun start() = synchronized(lifeLock) {
+        if (closed || isTicking) return
         isRunning = true
         hasHalted = false
+        eventBus.thaw()
+        if (executionThread?.isAlive == true) {
+            synchronized(holdLock) {
+                frozen = false
+                holdLock.notifyAll()
+            }
+            return
+        }
+        frozen = false
 
         executionThread = thread(name = "Engine-$engineId", start = true) {
             try {
@@ -293,41 +340,56 @@ class Engine(
     }
 
     /**
-     * The body of the engine thread: has the [lifecycle] build the instances of the start inside the [tickGate], then
-     * runs one tick inside the gate after the other, sleeping for the rest of [tickDelayMS] outside the gate, until
-     * [stop]. An exception escaping the start or a tick ends the thread.
+     * The body of the engine thread. The first start has the [lifecycle] build the instances inside the [tickGate] and
+     * resets the features as before any run; a later start continues with the instances and features as the [stop]
+     * left them. Then the thread runs one tick inside the gate after the other, sleeping for the rest of [tickDelayMS]
+     * outside the gate, until [stop]. An exception escaping the start or a tick ends the thread.
      */
     private fun runEngine() {
-        tickGate.duringTick { lifecycle.start(restart = hasStartedBefore) }
-        hasStartedBefore = true
-        val contexts = lifecycle.instances
+        if (!hasStartedBefore) {
+            tickGate.duringTick { lifecycle.start() }
+            hasStartedBefore = true
 
-        //Feature cleanup
-        //Unlock loop
-        featureManager.onMessage(TickByTickFeature::class, "resume")
-        //Reset tick counts
-        featureManager.executeIfPresent<TickLimitFeature> { feature ->
-            feature.incrementTick(emptyList())
+            //Feature cleanup
+            //Unlock loop
+            featureManager.onMessage(TickByTickFeature::class, "resume")
+            //Reset tick counts
+            featureManager.executeIfPresent<TickLimitFeature> { feature ->
+                feature.incrementTick(emptyList())
+            }
+            //Reset History
+            featureManager.executeIfPresent<HistoryFeature> { feature ->
+                feature.resetHistory()
+            }
+
+            val count = lifecycle.instances.size
+            traceLogger?.log(
+                "*",
+                EngineTraceLogger.TraceEventType.ENGINE_START,
+                "Engine started with $count state machine(s), tickDelay=${tickDelayMS}ms"
+            )
+            println("[Engine $engineId] Started with $count state machine(s)")
+        } else {
+            traceLogger?.log(
+                "*",
+                EngineTraceLogger.TraceEventType.ENGINE_START,
+                "Engine continued after tick $tickCount with ${lifecycle.instances.size} state machine(s)"
+            )
+            println("[Engine $engineId] Continued after tick $tickCount")
         }
-        //Reset History
-        featureManager.executeIfPresent<HistoryFeature> { feature ->
-            feature.resetHistory()
-        }
 
-        traceLogger?.log(
-            "*",
-            EngineTraceLogger.TraceEventType.ENGINE_START,
-            "Engine started with ${contexts.size} state machine(s), tickDelay=${tickDelayMS}ms"
-        )
-        println("[Engine $engineId] Started with ${contexts.size} state machine(s)")
-
-        var tickCount = 0L
         while (isRunning) {
             featureManager.executeIfPresent<TickByTickFeature> { feature ->
-                feature.waiting = tickGate::outsideTick
+                feature.waiting = ::waitOutsideTick
                 feature.onStatusChanged = reportEngineStatus
-                feature.evalPausedState()
+                waitingBetweenTicks = true
+                try {
+                    feature.evalPausedState()
+                } finally {
+                    waitingBetweenTicks = false
+                }
             }
+            if (!isRunning) break
 
             tickCount++
             val tickStart = System.currentTimeMillis()
@@ -664,22 +726,88 @@ class Engine(
         }
     }
 
-    fun stop() {
+    /**
+     * Runs the wait of the pause of [TickByTickFeature] with the [tickGate] open, as [TickGate.outsideTick] does, and
+     * then holds the thread while a [stop] froze the engine, so a resume or ticks given while the engine is frozen take
+     * effect only after the next [start].
+     */
+    private fun waitOutsideTick(wait: () -> Unit) {
+        tickGate.outsideTick {
+            parkedInWait = true
+            try {
+                wait()
+                awaitStart()
+            } finally {
+                parkedInWait = false
+            }
+        }
+    }
+
+    /** Holds the calling thread while the engine is frozen and not closed. */
+    private fun awaitStart() {
+        synchronized(holdLock) {
+            while (frozen && !closed) holdLock.wait()
+        }
+    }
+
+    /**
+     * Freezes the run: the engine ticks no more, and everything stays for a later [start], which continues with the
+     * next tick. A running tick ends first; the instances, their stacks and branches, the tick number, the features and
+     * the events on the bus stay as they are, and the bus stops counting the time to live of its events.
+     *
+     * When the engine runs, its thread ends after the running tick, and with it the threads of the branches of
+     * [TrueParallelFeature]. When a thread of the engine waits for the pause of [TickByTickFeature], between two ticks
+     * or at a breakpoint inside a tick, it stays where it is, held, so the pause and the halted tick are still there at
+     * the start; between two ticks the threads of branches end. A resume or ticks given while the engine is frozen
+     * release the wait only after the next start. The call returns once the thread ended or is held. A thread that
+     * neither ends nor waits within 5 s is interrupted. Stopping an engine that does not run changes nothing.
+     */
+    fun stop() = synchronized(lifeLock) {
+        val t = executionThread
+        if (t == null || !t.isAlive || frozen) {
+            isRunning = false
+            return
+        }
         isRunning = false
-        // A paused or halted engine thread waits for a resume; release it so that it can see the stop.
+        try {
+            val deadline = System.currentTimeMillis() + STOP_WAIT_MS
+            while (t.isAlive && !parkedInWait && System.currentTimeMillis() < deadline) t.join(STOP_POLL_MS)
+            if (t.isAlive && !parkedInWait) {
+                t.interrupt()
+                t.join(STOP_WAIT_MS)
+            }
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+        if (t.isAlive) {
+            synchronized(holdLock) { frozen = true }
+            if (waitingBetweenTicks) parallelBranchStepper.closeIfIdle()
+            traceLogger?.log("*", EngineTraceLogger.TraceEventType.ENGINE_STOP, "Engine stopped after $tickCount ticks")
+        }
+        eventBus.freeze()
+    }
+
+    /**
+     * Ends the engine for good: stops the run, releases a thread held by [stop] and the pause of [TickByTickFeature] so
+     * that the thread can end, waits for it as [stop] does, and closes the Python sessions and the trace log. The
+     * engine does not start again.
+     */
+    fun close() = synchronized(lifeLock) {
+        closed = true
+        isRunning = false
+        synchronized(holdLock) { holdLock.notifyAll() }
         featureManager.onMessage(TickByTickFeature::class, "resume")
         executionThread?.let { t ->
             try {
-                t.join(5000)
+                t.join(STOP_WAIT_MS)
                 if (t.isAlive) {
                     t.interrupt()
-                    t.join(5000)
+                    t.join(STOP_WAIT_MS)
                 }
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
             }
         }
-        // Close all persistent Python sessions
         lifecycle.close()
         traceLogger?.close()
     }
@@ -716,5 +844,14 @@ class Engine(
         }
 
         private fun describe(ctx: SMContext): String = ctx.definitionName?.let { "'$it'" } ?: "of the run configuration"
+    }
+
+    /** The timing of [stop] and [close]. */
+    private companion object {
+        /** How long [stop] and [close] wait for the engine thread before they interrupt it, and after that. */
+        const val STOP_WAIT_MS = 5_000L
+
+        /** How often [stop] looks whether the engine thread ended or is held. */
+        const val STOP_POLL_MS = 10L
     }
 }

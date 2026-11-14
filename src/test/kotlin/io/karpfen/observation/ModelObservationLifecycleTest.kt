@@ -212,17 +212,61 @@ class ModelObservationLifecycleTest {
     }
 
     @Test
-    fun `revisions keep counting across a restart`() {
+    fun `a stop and a start continue the run without announcing it again`() {
         val envKey = startedEnvironment()
-        // Each start reports the instance of the turtle, its first stack and the change of its first ENTRY block.
+        // The first start reports the instance of the turtle, its first stack and the change of its first ENTRY block.
         awaitStack(envKey, "idle")
         assertEquals(3L, snapshots.snapshot(envKey).revision)
+        attachSession(envKey)
+        subscriptions.subscribe(envKey, CLIENT)
+
+        APIService.stopEnvironment(envKey)
+        val stopped = snapshots.snapshot(envKey)
+        executionThread(envKey).acceptExternalEvent(Event("public", "go"))
+        APIService.startEnvironment(envKey)
+        awaitTurtle(envKey, "step", stepEntries = 1)
+
+        assertEquals(EnvironmentPhase.STOPPED to 3L, stopped.phase to stopped.revision)
+        assertEquals(mapOf("turtle" to null), stopped.stateMachines)
+        val pushes = drainPushes(envKey)
+        assertEquals(listOf("engineStatus", "engineStatus", "stateChange", "objectChanged"), pushes.map { it.first })
+        assertTrue(pushes[0].second.similar(JSONObject("""{"phase":"stopped","paused":false,"waiting":false}""")))
+        assertTrue(pushes[1].second.similar(JSONObject("""{"phase":"running","paused":false,"waiting":false}""")))
+        assertEquals(listOf(4L, 5L), pushes.drop(2).map { it.second.getLong("revision") })
+        assertEquals(5L, snapshots.snapshot(envKey).revision)
+    }
+
+    @Test
+    fun `a stop keeps the WebSocket session of a client and a stop or start that changes nothing tells nobody`() {
+        val envKey = startedEnvironment()
+        awaitStack(envKey, "idle")
+        attachSession(envKey)
+
+        APIService.stopEnvironment(envKey)
+        APIService.stopEnvironment(envKey)
+        APIService.startEnvironment(envKey)
+        APIService.startEnvironment(envKey)
+
+        assertNotNull(EnvironmentHandler.clientSessionManager.getSessionForClient(envKey, CLIENT))
+        val phases = drainPushes(envKey).filter { it.first == "engineStatus" }.map { it.second.getString("phase") }
+        assertEquals(listOf("stopped", "running"), phases)
+    }
+
+    @Test
+    fun `a stop while the run is paused is told as paused and waiting and the pause holds after the start`() {
+        val envKey = startedEnvironment("TickByTick")
+        awaitStack(envKey, "idle")
+        attachSession(envKey)
+        APIService.sendMessage(envKey, "TickByTick", "pause")
+        awaitEngineStatuses(envKey, 1)
 
         APIService.stopEnvironment(envKey)
         APIService.startEnvironment(envKey)
 
-        awaitStack(envKey, "idle")
-        assertEquals(6L, snapshots.snapshot(envKey).revision)
+        val notices = awaitEngineStatuses(envKey, 2)
+        assertTrue(notices[0].similar(JSONObject("""{"phase":"stopped","paused":true,"waiting":true}""")), "${notices[0]}")
+        assertTrue(notices[1].similar(JSONObject("""{"phase":"running","paused":true,"waiting":true}""")), "${notices[1]}")
+        assertEquals("paused", APIService.sendMessage(envKey, "TickByTick", "status"))
     }
 
     @Test

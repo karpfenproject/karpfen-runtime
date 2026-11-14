@@ -21,14 +21,14 @@ import io.karpfen.env.EnvironmentHandler
  * Resets the runtime's process-wide environment registry around tests that use it.
  *
  * [EnvironmentHandler] is a singleton shared by every test of the server module, and its session manager has one
- * outgoing queue. Tests that use the registry call [reset] before and after each test: it stops every execution
+ * outgoing queue. Tests that use the registry call [reset] before and after each test: it disposes every execution
  * thread, clears the environment maps, and drains the queued messages so no test sees another test's pushes.
  */
 object RuntimeRegistry {
 
-    /** Stops every execution thread, clears the registry maps and drains the shared outgoing queue. */
+    /** Disposes every execution thread, clears the registry maps and drains the shared outgoing queue. */
     fun reset() {
-        EnvironmentHandler.executionThreads.values.forEach { thread -> runCatching { thread.stop() } }
+        EnvironmentHandler.executionThreads.values.forEach { thread -> runCatching { thread.dispose() } }
         EnvironmentHandler.envs.clear()
         EnvironmentHandler.activeEnvs.clear()
         EnvironmentHandler.executionThreads.clear()

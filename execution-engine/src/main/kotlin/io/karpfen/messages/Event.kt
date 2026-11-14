@@ -71,7 +71,8 @@ enum class PayloadFormat {
  *
  * Events carry a [domain] (routing bucket), a [payload] string, a creation [timestamp],
  * the [source] category and the set of engine IDs that have already processed this event.
- * An event is considered expired once `System.currentTimeMillis() - timestamp > ttlMs`.
+ * An event is considered expired once more than `ttlMs` milliseconds have passed since its timestamp, not counting the
+ * time during which its environment was stopped ([creditFreeze]).
  *
  * @property domain      The domain / bucket name this event belongs to (e.g. "local", "global").
  * @property name        The event name / type (used for condition matching).
@@ -102,10 +103,26 @@ class Event(
     @Volatile
     var payloadObject: DataObject? = null
 
-    /** Returns true when this event has outlived its TTL. Events with ttlMs == 0 never expire. */
-    fun isExpired(): Boolean {
+    /** The milliseconds during which the environment of this event was stopped while the event waited. */
+    @Volatile
+    private var frozenMs: Long = 0L
+
+    /**
+     * Returns true when this event has outlived its TTL at the time [now]: more than [ttlMs] milliseconds passed since
+     * [timestamp], without the time it spent frozen. Events with ttlMs == 0 never expire.
+     */
+    fun isExpired(now: Long = System.currentTimeMillis()): Boolean {
         if (ttlMs <= 0) return false
-        return System.currentTimeMillis() - timestamp > ttlMs
+        return now - timestamp - frozenMs > ttlMs
+    }
+
+    /**
+     * Does not count the time from [frozenSince] to [thawedAt] against the time to live, as far as the event existed
+     * then: an event made during the freeze is credited only the part after its [timestamp].
+     */
+    fun creditFreeze(frozenSince: Long, thawedAt: Long) {
+        val frozen = thawedAt - maxOf(frozenSince, timestamp)
+        if (frozen > 0) frozenMs += frozen
     }
 
     /** Marks the event as processed by the given engine ID. */

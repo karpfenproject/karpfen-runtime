@@ -19,6 +19,7 @@ import io.karpfen.DataObservationListener
 import io.karpfen.Engine
 import io.karpfen.EngineTraceLogger
 import io.karpfen.io.karpfen.exec.ModelJsonWriter
+import io.karpfen.io.karpfen.features.runtime.TickByTickFeature
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
 import io.karpfen.observation.ActiveStackRecord
@@ -35,9 +36,11 @@ import java.util.concurrent.LinkedBlockingQueue
  * what model observation reads.
  *
  * [setup] wires the engine to the environment's WebSocket clients, [launch] starts the engine and the runner whose
- * event loop ([run]) drains external events onto the bus while the engine ticks on its own thread, and [stop] ends
- * both. The environment owns its one runner, its run state, the [revisions] that pushes and snapshots share and the
- * record of [activeStacks]; it answers the [phase] and the snapshots of model observation.
+ * event loop ([run]) drains external events onto the bus while the engine ticks on its own thread, and [stop] freezes
+ * both: the engine keeps everything for the next [launch], which continues the run, and the events that clients send
+ * meanwhile wait in the queue of the runner. The connections of the clients stay open. [dispose] ends the environment
+ * for good. The environment owns its one runner, its run state, the [revisions] that pushes and snapshots share and
+ * the record of [activeStacks]; it answers the [phase] and the snapshots of model observation.
  *
  * @property environment the configured environment this thread runs.
  * @property traceLogger the engine's trace logger, or `null` for no tracing.
@@ -57,7 +60,7 @@ class EnvironmentThread(
 
     /**
      * Counts the observations of this environment's engine for push messages and snapshots. It lives as long as the
-     * activation, so a restart after a stop continues counting.
+     * activation, so a start after a stop continues counting.
      */
     val revisions = ChangeRevision()
 
@@ -87,6 +90,12 @@ class EnvironmentThread(
     @Volatile
     private var runnerEndedOnItsOwn = false
 
+    /** The time of the latest [stop] that froze the environment, for the events that clients sent while it was frozen. */
+    private var frozenAt: Long = 0L
+
+    /** The relay that [setup] wires, which pushes the notices of [stop] and [launch]. */
+    private var relay: ObservationRelay? = null
+
     val engine = Engine(
         environment.metamodel!!,
         environment.model!!,
@@ -105,8 +114,9 @@ class EnvironmentThread(
      * may be under way.
      *
      * Before the first [launch] the environment is activated and after [stop] it is stopped, but in both run states a
-     * live engine thread still counts as running: the engine has already started while [launch] has not yet set the
-     * run state, and its last tick may still run while [stop] waits for it. Once launched, the environment is halted
+     * ticking engine ([Engine.isTicking]) still counts as running: the engine has already started while [launch] has
+     * not yet set the run state, and its last tick may still run while [stop] waits for it. An engine thread that the
+     * stop holds where it waits for a pause does not tick. Once launched, the environment is halted
      * when it ended on its own: the engine thread of the latest start ended on its own, or an exception or error ended
      * the runner's event loop without a [stop], and the runner's end stopped the engine. It is running otherwise.
      *
@@ -159,6 +169,7 @@ class EnvironmentThread(
         val clientSessionManager = EnvironmentHandler.clientSessionManager
 
         val relay = ObservationRelay(environment.key, clientSessionManager, revisions, activeStacks, stateMachineRecord)
+        this.relay = relay
         engine.modelQueryProcessor.addChangePublisher(relay)
         sharedEventBus.addPublicationListener(relay)
 
@@ -208,12 +219,13 @@ class EnvironmentThread(
      *
      * The environment owns its runner, so starting never adds a second event loop:
      * - running with a live runner and a ticking engine: nothing happens;
-     * - running with a live runner but an engine whose thread ended on its own: the engine is started again;
-     * - ready, stopped, or running without a live runner: the recorded active stacks and instances are cleared, the
-     *   engine builds and reports the instances of the start anew over the current model, the loop flag is
-     *   set before the runner exists (so a stop can no longer be overwritten by the runner's first line), the engine
-     *   is started from its initial stacks over the current model, a new non-daemon runner named
-     *   `EnvironmentThread-<key>` is started, and the run state becomes running once both have started (see [phase]).
+     * - running with a live runner but an engine whose thread ended on its own: the engine continues;
+     * - ready: the engine builds and reports the instances of the first start, the loop flag is set before the runner
+     *   exists (so a stop can no longer be overwritten by the runner's first line), a new non-daemon runner named
+     *   `EnvironmentThread-<key>` is started, and the run state becomes running once both have started (see [phase]);
+     * - stopped, or running without a live runner: the same, but the engine continues the frozen run with the next
+     *   tick, the events that clients sent while the environment was stopped get back the time it was stopped, and
+     *   after a stop every connected client is told through `engineStatus` with the phase `running`.
      *
      * @return `true` when something was started, `false` when the environment was already running.
      */
@@ -226,8 +238,11 @@ class EnvironmentThread(
             engine.start()
             return true
         }
-        activeStacks.clear()
-        stateMachineRecord.clear()
+        val continues = runState == RunState.STOPPED
+        if (continues) {
+            val thawedAt = System.currentTimeMillis()
+            incomingExternalEvents.forEach { it.creditFreeze(frozenAt, thawedAt) }
+        }
         isRunning = true
         runnerEndedOnItsOwn = false
         engine.start()
@@ -236,25 +251,55 @@ class EnvironmentThread(
             start()
         }
         runState = RunState.RUNNING
+        if (continues) relay?.onPhaseChanged(EnvironmentPhase.RUNNING, engineStatus())
         return true
     }
 
     /**
-     * Stops this environment: marks it stopped, ends the event loop, stops the engine (joining its thread), and then
-     * waits at most [RUNNER_JOIN_MS] milliseconds for the runner to finish. The model stays as the engine left it.
+     * Stops this environment as a freeze: marks it stopped, ends the event loop (waiting at most [RUNNER_JOIN_MS]
+     * milliseconds for the runner), and freezes the engine, which keeps everything for the next [launch]; see
+     * [Engine.stop]. Events that clients send from now on wait in the queue of the runner. Every connected client is
+     * told through `engineStatus` with the phase `stopped`; the connections stay open. An environment that was never
+     * started or is stopped already stays as it is.
+     *
+     * @return `true` when the environment was stopped, `false` when there was nothing to stop.
      */
     @Synchronized
-    fun stop() {
+    fun stop(): Boolean {
+        if (runState != RunState.RUNNING) return false
         runState = RunState.STOPPED
         isRunning = false
-        engine.stop()
         runner?.join(RUNNER_JOIN_MS)
+        engine.stop()
+        frozenAt = System.currentTimeMillis()
+        relay?.onPhaseChanged(EnvironmentPhase.STOPPED, engineStatus())
+        return true
     }
 
     /**
+     * Ends this environment for good, as when the runtime shuts down: ends the event loop and closes the engine with
+     * its Python sessions and its trace log. The environment does not start again.
+     */
+    @Synchronized
+    fun dispose() {
+        runState = RunState.STOPPED
+        isRunning = false
+        runner?.join(RUNNER_JOIN_MS)
+        engine.close()
+    }
+
+    /**
+     * The status of the engine as the feature TickByTick reports it, or `{"paused":false,"waiting":false}` while that
+     * feature is off.
+     */
+    private fun engineStatus(): String =
+        environment.featureManager.getActiveFeatureOrNull<TickByTickFeature>()?.engineStatus()
+            ?: "{\"paused\":false,\"waiting\":false}"
+
+    /**
      * The event loop of the runner thread that [launch] starts: drains external events onto the shared bus and purges
-     * expired events until [stop]. The engine ticks on its own thread. However the loop ends, also through an
-     * exception or an error, the engine is stopped; without a [stop] the environment is then halted (see [phase]).
+     * expired events until [stop]. The engine ticks on its own thread. When the loop ends without a [stop], through an
+     * exception, an error or an interrupt, the engine is stopped and the environment is halted (see [phase]).
      */
     override fun run() {
         println("[EnvironmentThread] Running for environment ${environment.key}")
@@ -282,8 +327,8 @@ class EnvironmentThread(
         } finally {
             if (isRunning) {
                 runnerEndedOnItsOwn = true
+                engine.stop()
             }
-            engine.stop()
             println("[EnvironmentThread] Stopped for environment ${environment.key}")
         }
     }
@@ -297,7 +342,7 @@ class EnvironmentThread(
         /** Launched by the latest [launch], with no [stop] since. */
         RUNNING,
 
-        /** Stopped by [stop]; a later [launch] runs it again. */
+        /** Stopped by [stop]; a later [launch] continues the frozen run. */
         STOPPED
     }
 

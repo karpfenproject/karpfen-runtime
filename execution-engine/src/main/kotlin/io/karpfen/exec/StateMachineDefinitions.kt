@@ -87,8 +87,8 @@ class StateMachineDefinitions(
      * whose type `behaves after` a definition and that has no attached state machine, in the depth-first order of the
      * objects of the model. An attached state machine therefore wins over the `behaves after` of the type of its object.
      *
-     * An attached state machine whose object is not in the model is left out when [skipMissingObjects] is true, as at a
-     * restart after the run removed the object; otherwise it is an error.
+     * An attached state machine whose object is not in the model is left out when [skipMissingObjects] is true, as for the
+     * instances a start would build that are shown before it; otherwise it is an error.
      *
      * @throws IllegalStateException when an attached state machine has no object and [skipMissingObjects] is false, or
      *   when a type behaves after a definition this set does not hold or that does not list
