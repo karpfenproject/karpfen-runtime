@@ -65,7 +65,7 @@ class StateMachineLifecycleEngineTest {
 
     @AfterEach
     fun stopEngines() {
-        engines.forEach { it.stop() }
+        engines.forEach { it.close() }
     }
 
     @Test
@@ -293,6 +293,18 @@ class StateMachineLifecycleEngineTest {
 
         assertEquals(listOf("-b1"), run.observed.filter { it.startsWith("-") })
         assertEquals("glowing", run.engine.stateMachineInstances.last().definitionName)
+    }
+
+    @Test
+    @Tag("python")
+    fun `a dictionary with the id of an existing object ends what it drops and attaches what it adds`() {
+        val run = run(attached = mapOf("b1" to REHOLDING_BULB))
+
+        run.await("the new bulb") { "b1" !in run.objectIds() && run.engine.stateMachineInstances.size == 3 }
+
+        assertEquals(listOf("-b1"), run.observed.filter { it.startsWith("-") })
+        assertEquals("glowing", run.engine.stateMachineInstances.last().definitionName)
+        assertEquals(listOf("gen_Bulb_0"), run.relation("lamp", "bulb"))
     }
 
     @Test
@@ -647,6 +659,9 @@ class StateMachineLifecycleEngineTest {
 
         /** Replaces the lamp with a new one holding a new bulb, in tick 2. Needs Python. */
         val REPLACING_ROOM = room("""ENTRY { SETOBJ("self", "lamp", EVAL { return {"log": [], "bulb": {"log": []}} }) }""")
+
+        /** Gives the lamp that holds it a new bulb through a dictionary with the id of the lamp, in tick 2. Needs Python. */
+        val REHOLDING_BULB = bulb("""ENTRY { SETOBJ("self", "holder", EVAL { return {"__id__": "lamp", "bulb": {"log": []}} }) }""")
 
         /** Exchanges with names from EVAL, MACRO and WITH. Needs Python. */
         val NAMING_ROOM = """

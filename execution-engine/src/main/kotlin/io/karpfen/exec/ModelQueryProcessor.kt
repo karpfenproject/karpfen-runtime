@@ -18,6 +18,7 @@ package io.karpfen.io.karpfen.exec
 import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
 import io.karpfen.dsl.instance.*
 import io.karpfen.dsl.meta.AssociationType
+import io.karpfen.dsl.meta.ClassTypeProperty
 import io.karpfen.dsl.meta.Metamodel
 import io.karpfen.dsl.meta.SimplePropertyType
 import java.util.concurrent.CopyOnWriteArrayList
@@ -520,6 +521,88 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
         }
         rel.appendValue(target)
         notifyChange(owner)
+    }
+
+    /**
+     * Changes the object [existing] of the model in place with the simple properties [props] and the relations [rels],
+     * as a dictionary with the `__id__` of an existing object that an `EVAL` or a macro returns asks for.
+     *
+     * Each relation in [rels] takes its new objects, a [DataObject] for a single relation and a list for a list
+     * relation, in the order given. For a `has` relation, every object the relation held before and does not hold any
+     * more leaves the model like through [dropObject], with everything it holds: its `knows` references are scrubbed,
+     * its deletion is published and every [ModelStructureListener] learns it. Every object the relation now holds and
+     * the model does not know yet is registered like through [registerObjectTree], with everything it holds. An object
+     * the model knows may only stay in the relation that already holds it. For a `knows` relation every object must be
+     * in the model. Relations of [rels] that the type of [existing] does not have are ignored. Finally the change of
+     * [existing] is published.
+     *
+     * @throws IllegalArgumentException when an object has the wrong type, when a `has` relation is given an object the
+     *   model holds elsewhere, or when a `knows` relation is given an object that is not in the model. Changes made to
+     *   earlier relations of [rels] stay then.
+     */
+    fun updateObjectInPlace(existing: DataObject, props: Map<String, Any>, rels: Map<String, Any>) =
+        modelLock.write { updateObjectInPlaceLocked(existing, props, rels) }
+
+    private fun updateObjectInPlaceLocked(existing: DataObject, props: Map<String, Any>, rels: Map<String, Any>) {
+        require(objectIndex[existing.id] === existing) { "Object '${existing.id}' is not part of the model" }
+        existing.assignProps(props)
+        val relDefs = existing.ofType.objectPropsAsMap()
+        for ((key, value) in rels) {
+            val relDef = relDefs[key] ?: continue
+            @Suppress("UNCHECKED_CAST")
+            val targets = if (relDef.isList) value as List<DataObject> else listOf(value as DataObject)
+            for (target in targets) {
+                require(target.ofType.name == relDef.reference.classTypeName) {
+                    "Relation '$key' expects type '${relDef.reference.classTypeName}' but got '${target.ofType.name}'"
+                }
+            }
+            if (relDef.associationType == AssociationType.EMBEDDED) {
+                replaceHeldObjects(existing, relDef, key, targets)
+            } else {
+                targets.forEach { validateExistingObject(it, key) }
+                assignRelation(existing, relDef, key, targets)
+            }
+        }
+        notifyChange(existing)
+    }
+
+    /**
+     * Lets the `has` relation [key] of [owner] hold [targets]: drops the objects it held and no longer holds, then
+     * assigns the relation and registers the targets that are new to the model.
+     */
+    private fun replaceHeldObjects(owner: DataObject, relDef: ClassTypeProperty, key: String, targets: List<DataObject>) {
+        val held = when (val rel = owner.relations.firstOrNull { it.key == key }) {
+            is ClassTypeAtomicPropertyObject -> listOfNotNull(rel.getValue())
+            is ClassTypeListPropertyObject -> rel.getValues()
+            else -> emptyList()
+        }
+        for (target in targets) {
+            val known = objectIndex[target.id] ?: continue
+            require(known === target && held.any { it === target }) {
+                "Relation '$key' is a 'has' relation and can only keep the objects it holds, but '${target.id}' " +
+                    "is held elsewhere in the model"
+            }
+        }
+        for (old in held) {
+            if (targets.none { it === old } && objectIndex[old.id] === old) dropObjectLocked(old.id)
+        }
+        assignRelation(owner, relDef, key, targets)
+        for (target in targets) {
+            if (!objectIndex.containsKey(target.id)) registerObjectTreeLocked(target)
+        }
+    }
+
+    /** Sets the relation [key] of [owner] to [targets], creating a list relation that the object does not have yet. */
+    private fun assignRelation(owner: DataObject, relDef: ClassTypeProperty, key: String, targets: List<DataObject>) {
+        if (relDef.isList) {
+            val rel = (owner.relations.firstOrNull { it.key == key } as? ClassTypeListPropertyObject)
+                ?: ClassTypeListPropertyObject(relDef, key, mutableListOf()).also { owner.relations.add(it) }
+            rel.setValues(targets)
+        } else {
+            val rel = owner.relations.firstOrNull { it.key == key } as? ClassTypeAtomicPropertyObject
+                ?: throw IllegalArgumentException("Relation '$key' is not present on object '${owner.id}'")
+            rel.setValue(targets.single())
+        }
     }
 
     /**
