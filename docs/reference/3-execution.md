@@ -29,11 +29,12 @@ The life of an environment has these steps. Each step is one call of the HTTP AP
    and that every type that behaves after a state machine finds an attachable one that lists it.
    The environment is in the phase `activated`.
 5. The client starts the environment. The state machines start in their initial states and tick until the environment
-   is stopped. Objects that rules create or remove gain and lose state machine instances on the way. The phase is `running`. Events that clients send go to the state machines, and clients get the changes
-   of the model and of the active states pushed over the WebSocket.
-6. The client stops the environment. The model stays as the state machines left it. The phase is `stopped`.
-7. The client may start the environment again. The state machines start again in their initial states, on the model
-   as it is after the last run, with the instances that this model gives them.
+   is stopped. Objects that rules create or remove gain and lose state machine instances on the way. The phase is
+   `running`. Events that clients send go to the state machines, and clients get the changes of the model and of the
+   active states pushed over the WebSocket.
+6. The client stops the environment. The run is frozen: the model, the state machines with their active states and
+   the waiting events stay as they are, the phase is `stopped`, and the connections of the clients stay open.
+7. The client may start the environment again. The run continues with the next tick as if there had been no stop.
 
 The phase `halted` means that the run ended on its own after an error inside the runtime, without a stop call. The
 phase of an environment is part of every model snapshot of [3.4 HTTP API](3.4-http-api.md).

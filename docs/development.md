@@ -27,6 +27,11 @@ This page is for people who work on the runtime itself. The reference for users 
 | `FeatureManager`, `FeatureRegistry` | Features, found as `FeatureProvider` services |
 | `ObservationRelay`, `ModelSnapshotService`, `ClientSessionManager`, `WebSocketBroadcaster` | Revisions, snapshots and the messages to clients; `StateMachineRecord` and `ActiveStackRecord` keep the instances and stacks for snapshots |
 
+A stop freezes an environment: `EnvironmentThread.stop` ends the event loop and calls `Engine.stop`, which lets the
+running tick end and holds a thread that waits for TickByTick where it waits; `EventBus.freeze` stops the time to live
+of the events. `Engine.start` continues, `Engine.close` and `EnvironmentThread.dispose` end an engine for good, and
+`EnvironmentHandler.shutdown` does that for every environment when the runtime ends.
+
 ## Startup
 
 `Main.kt` reads `application.conf` from the working directory, hands the engine defaults to `EnvironmentHandler`,
