@@ -76,6 +76,9 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     /** Registered listeners that are notified whenever a DataObject changes; copy-on-write, registered at any time. */
     private val changePublishers = CopyOnWriteArrayList<ModelChangePublisher>()
 
+    /** Registered listeners that learn which objects enter and leave the model; copy-on-write. */
+    private val structureListeners = CopyOnWriteArrayList<ModelStructureListener>()
+
     /** Guards the objects of the model, the [objectIndex] and the [idCounter]. */
     private val modelLock = ReentrantReadWriteLock()
 
@@ -100,6 +103,14 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
 
     fun removeChangePublisher(publisher: ModelChangePublisher) {
         changePublishers.remove(publisher)
+    }
+
+    /**
+     * Registers [listener] to learn about every object that enters the model through [registerObjectTree] and every
+     * object that leaves it through [dropObject]. It is called inside the write operation, with the write lock held.
+     */
+    fun addStructureListener(listener: ModelStructureListener) {
+        structureListeners.add(listener)
     }
 
     /**
@@ -373,7 +384,8 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     /**
      * Registers a newly-created object and its embedded (`has`) subtree in the object index. Every
      * object must already carry a non-empty, model-unique id (macro-built objects get one at
-     * construction time). Throws if any id already exists in the model.
+     * construction time). Throws if any id already exists in the model. Every [ModelStructureListener] then learns the
+     * registered objects, the root first.
      */
     fun registerObjectTree(root: DataObject) = modelLock.write { registerObjectTreeLocked(root) }
 
@@ -389,6 +401,8 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
             }
         }
         for (obj in subtree) objectIndex[obj.id] = obj
+        val added = subtree.toList()
+        structureListeners.forEach { it.objectsAdded(added) }
     }
 
     private fun validateNewObject(target: DataObject, relationKey: String) {
@@ -511,7 +525,7 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     /**
      * Removes an object and its embedded (`has`) subtree from the model, scrubbing every inbound `knows`
      * reference. Affected owner objects receive change notifications; every removed object id is reported
-     * via [ModelChangePublisher.onObjectDeleted].
+     * via [ModelChangePublisher.onObjectDeleted], and every [ModelStructureListener] learns the removed ids.
      */
     fun dropObject(objId: String) = modelLock.write { dropObjectLocked(objId) }
 
@@ -558,9 +572,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
         // 3. Unregister the removed subtree.
         for (id in removedIds) objectIndex.remove(id)
 
-        // 4. Notify: surviving owners changed, removed ids deleted.
+        // 4. Notify: surviving owners changed, removed ids deleted, structure listeners told what left.
         affectedOwners.forEach { if (it.id !in removedIds) notifyChange(it) }
         removedIds.forEach { notifyDeletion(it) }
+        structureListeners.forEach { it.objectsRemoved(removedIds) }
     }
 
     /** Finds the single object whose `has` (EMBEDDED) relation currently contains [target], if any. */

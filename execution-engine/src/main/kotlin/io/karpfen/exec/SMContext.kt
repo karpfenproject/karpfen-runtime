@@ -21,16 +21,28 @@ import io.karpfen.dsl.states.StateMachine
 import io.karpfen.dsl.states.TransitionLike
 
 /**
- * The execution context of one attached state machine.
+ * The execution context of one instance of a state machine: one state machine running on one object.
  *
  * It owns the shared, branch-agnostic services (transition evaluation, action execution, queries) and
- * a list of [branches]. A *simple* context has exactly one branch (today's behaviour); a *parallel*
- * context, produced by a split, has several. The mode is therefore fully determined by the branch
- * count — there is never any separate flag to keep in sync.
+ * a list of [branches]. A *simple* context has exactly one branch; a *parallel* context, produced by a
+ * split, has several. The mode is therefore fully determined by the branch count; there is never any
+ * separate flag to keep in sync.
+ *
+ * Every context is built for its instance alone by [StateMachineInstanceFactory]: its helpers, its macro processor
+ * with its Python sessions, its branches and the identities under which its branches consume events belong to no
+ * other context, also not to another instance of the same definition on another object or to an earlier instance on
+ * the same object. Only the parsed [stateMachine] is shared, and it is never changed.
+ *
+ * A context ends once ([end]) when its object leaves the model or `EXCHANGE` replaces its state machine. From then on
+ * it does no further step: a branch that runs an action block finishes that block and stops, and the engine skips the
+ * context until the [StateMachineLifecycle] takes it out of the order at the end of the tick.
  *
  * @property modelElementId The id of the model object this state machine is attached to.
+ * @property definitionName The name of the attachable state machine of this instance, or null for a state machine
+ *   that the run configuration attached to the object.
+ * @property macroProcessor The macro processor of this instance; closed when the instance leaves or the engine stops.
  * @property eventBus The shared event bus; used to mint per-branch event processors.
- * @property branchIdBase Stable prefix for branch event-processor ids.
+ * @property branchIdBase Stable prefix for branch event-processor ids, unique for this instance within one run.
  */
 class SMContext(
     val modelElementId: String,
@@ -40,14 +52,35 @@ class SMContext(
     val actionProcessor: ActionProcessor,
     private val eventBus: EventBus,
     private val branchIdBase: String,
-    var branches: MutableList<Branch>
+    var branches: MutableList<Branch>,
+    val definitionName: String? = null,
+    val macroProcessor: MacroProcessor? = null
 ) {
 
     private var branchSeq: Int = 0
 
+    /**
+     * True once the instance has ended. Set by the thread that removes its object or exchanges its state machine, read
+     * by the engine thread and the threads of its branches, hence volatile.
+     */
+    @Volatile
+    var hasEnded: Boolean = false
+        private set
+
+    /**
+     * The stack last reported to [io.karpfen.Engine.onActiveStackChanged], or null before the first report. Kept per
+     * instance, so a new instance on the same object reports its first stack also when it equals the last one of the
+     * instance before it. Used by the engine thread only.
+     */
+    var lastReportedStack: List<String>? = null
+
     /** A dedicated event processor used only to evaluate join conditions at the context level. */
     val joinEventProcessor: EventProcessor = EventProcessor("$branchIdBase-join", eventBus)
 
+    /** Ends this instance; see the class description. Ending an ended instance changes nothing. */
+    fun end() {
+        hasEnded = true
+    }
     /** True when the machine is currently split across several parallel branches. */
     fun isParallel(): Boolean = branches.size > 1
 

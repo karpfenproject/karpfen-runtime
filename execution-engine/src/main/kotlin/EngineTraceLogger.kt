@@ -90,7 +90,9 @@ class EngineTraceLogger(
         EVENT_RECEIVED,
         EVENT_CONSUMED,
         ACTION_ERROR,
-        ENGINE_ERROR
+        ENGINE_ERROR,
+        STATE_MACHINE_ATTACHED,
+        STATE_MACHINE_DETACHED
     }
 
     /**

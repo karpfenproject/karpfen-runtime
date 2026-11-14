@@ -35,7 +35,13 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.concurrent.thread
 
 /**
- * Executes the state machines attached to the objects of one model, on an engine thread of its own.
+ * Executes the state machine instances of the objects of one model, on an engine thread of its own.
+ *
+ * The instances, which ones exist and in which order they step, belong to a [StateMachineLifecycle]. At each start it
+ * builds the attached state machines of [statemachineMap] and the instances for `behaves after` over the current model;
+ * during the run, actions and changes of the model ask it for new, exchanged and ended instances, and it carries the
+ * requests out at the end of each tick. The engine walks the instances it hands out and skips an instance that ended
+ * during the tick.
  *
  * [start] runs the tick loop. One tick holds the [tickGate] and runs, in this order, the queued engine commands, the
  * purge of expired events, and for each state machine its tick (its `ENTRY` and `DO` blocks, each one notification
@@ -49,7 +55,8 @@ import kotlin.concurrent.thread
  *
  * @property metamodel the metamodel of [model].
  * @property model the model the state machines read and change.
- * @property statemachineMap the state machines by the id of the object each one is attached to.
+ * @property statemachineMap the attached state machines by the id of the object each one is attached to, in the order
+ *   in which they step.
  * @property tickDelayMS the least time from the start of one tick to the start of the next one, in milliseconds.
  */
 class Engine(
@@ -77,6 +84,11 @@ class Engine(
      * features that are switched on; without any, the engine runs as it does without a feature system.
      */
     val featureManager: FeatureManager = FeatureManager(),
+    /**
+     * The attachable state machines by their name: the definitions that `behaves after`, `ATTACH` and `EXCHANGE` name.
+     * Every `behaves after` of [metamodel] must name one that lists its type; otherwise the engine is not built.
+     */
+    stateMachineDefinitions: Map<String, StateMachine> = emptyMap(),
 ) {
 
     /** Parses incoming event payloads into the runtime object model against [eventMetamodel]. */
@@ -85,11 +97,12 @@ class Engine(
     private val dataObservationListeners: MutableMap<String, MutableList<DataObservationListener>> = mutableMapOf()
     private var messageOutChannel: Channel? = null
 
-    /** Macro processors created during engine run, tracked for cleanup. */
-    private val macroProcessors: MutableList<MacroProcessor> = mutableListOf()
-
     @Volatile
     private var isRunning: Boolean = false
+
+    /** True once a start has built its instances; a later start is a restart. Written by the engine threads. */
+    @Volatile
+    private var hasStartedBefore: Boolean = false
 
     /** The engine thread of the latest [start]; volatile so that other threads read [isTicking] safely. */
     @Volatile
@@ -129,6 +142,12 @@ class Engine(
      */
     var onEngineStatusChanged: ((String) -> Unit)? = null
 
+    /**
+     * Told when a state machine instance appears on an object and when it leaves, on the engine thread inside the tick
+     * gate. The environment uses it to push `stateMachineAttached` and `stateMachineDetached` to its clients.
+     */
+    var stateMachineObserver: StateMachineObserver? = null
+
     /** Hands each status the pause reports on to [onEngineStatusChanged], whatever it is at that moment. */
     private val reportEngineStatus: (String) -> Unit = { status -> onEngineStatusChanged?.invoke(status) }
 
@@ -144,6 +163,36 @@ class Engine(
 
     /** Model query processor – access and update model data; also hosts change publishers. */
     val modelQueryProcessor = ModelQueryProcessor(metamodel, model)
+
+    /** The attached and attachable state machines of this engine. */
+    private val definitions = StateMachineDefinitions(statemachineMap, stateMachineDefinitions).also { known ->
+        val problems = known.behavesAfterProblems(metamodel)
+        require(problems.isEmpty) {
+            "Types behave after state machines the engine cannot attach: " +
+                (problems.missing + problems.mismatched).joinToString(", ")
+        }
+    }
+
+    /** The owner of the state machine instances; see [StateMachineLifecycle]. */
+    private val lifecycle = StateMachineLifecycle(
+        definitions,
+        StateMachineInstanceFactory(metamodel, model, modelQueryProcessor, eventBus, engineId, traceLogger),
+        model,
+        modelQueryProcessor,
+        InstanceReporter()
+    ).also(modelQueryProcessor::addStructureListener)
+
+    /**
+     * The state machine instances: before the first start the ones a start would build, afterwards the ones of the
+     * latest tick, in the order in which they step. Each names its object, its definition (null for an attached state
+     * machine) and its state machine. Safe to read from any thread.
+     */
+    val stateMachineInstances: List<InstanceSpec>
+        get() = lifecycle.view
+
+    /** The state machine of the instance on [objectId] in [stateMachineInstances], or null when the object has none. */
+    fun stateMachineOf(objectId: String): StateMachine? =
+        lifecycle.view.firstOrNull { it.objectId == objectId }?.stateMachine
 
     /** Runs the per-branch mechanics (ENTRY/DO + a branch's own transitions). Shared across branches. */
     private val branchRunner = BranchRunner(traceLogger, eventConsumptionOnFire, featureManager)
@@ -176,7 +225,7 @@ class Engine(
      */
     fun forceActiveState(modelElementId: String, leaf: String) {
         commandQueue.add { contexts ->
-            val ctx = contexts.firstOrNull { it.modelElementId == modelElementId }
+            val ctx = contexts.firstOrNull { it.modelElementId == modelElementId && !it.hasEnded }
             if (ctx == null) {
                 System.err.println("[Engine $engineId] forceActiveState: no state machine '$modelElementId'")
                 return@add
@@ -244,60 +293,14 @@ class Engine(
     }
 
     /**
-     * The body of the engine thread: builds one execution context per attached state machine at its initial stack, then
-     * runs one tick inside the [tickGate] after the other, sleeping for the rest of [tickDelayMS] outside the gate,
-     * until [stop]. An exception escaping the contexts or a tick ends the thread.
+     * The body of the engine thread: has the [lifecycle] build the instances of the start inside the [tickGate], then
+     * runs one tick inside the gate after the other, sleeping for the rest of [tickDelayMS] outside the gate, until
+     * [stop]. An exception escaping the start or a tick ends the thread.
      */
     private fun runEngine() {
-        // Initialize execution contexts for each attached state machine
-        val contexts = statemachineMap.map { (modelElementId, stateMachine) ->
-            val smQueryHelper = StateMachineQueryHelper(stateMachine)
-            val macroProcessor = MacroProcessor(
-                metamodel, model, stateMachine.macros, modelElementId, modelQueryProcessor
-            )
-            macroProcessors.add(macroProcessor)
-            val transitionProcessor = TransitionProcessor(
-                stateMachine, metamodel, model, modelElementId,
-                macroProcessor, smQueryHelper, modelQueryProcessor
-            )
-            // The action processor only publishes internal events, so its identity is not used for
-            // consumption; consumption is tracked per branch via each branch's own event processor.
-            val branchIdBase = "$engineId-$modelElementId"
-            val actionsEventProcessor = EventProcessor("$branchIdBase-actions", eventBus)
-            val actionProcessor = ActionProcessor(
-                macroProcessor, modelQueryProcessor, actionsEventProcessor, modelElementId
-            )
-
-            val initialStack = smQueryHelper.getInitialStateStack()
-            if (initialStack.isEmpty()) {
-                throw IllegalStateException(
-                    "State machine attached to '$modelElementId' has no initial state"
-                )
-            }
-
-            traceLogger?.log(
-                modelElementId,
-                EngineTraceLogger.TraceEventType.INITIAL_STATE,
-                "Initial state stack: ${initialStack.joinToString(" > ")}",
-                mapOf("stack" to initialStack.joinToString(","))
-            )
-
-            val ctx = SMContext(
-                modelElementId = modelElementId,
-                stateMachine = stateMachine,
-                smQueryHelper = smQueryHelper,
-                transitionProcessor = transitionProcessor,
-                actionProcessor = actionProcessor,
-                eventBus = eventBus,
-                branchIdBase = branchIdBase,
-                branches = mutableListOf()
-            )
-            // The context starts simple: a single branch whose whole initial stack needs entering.
-            ctx.branches = mutableListOf(
-                ctx.newBranch(initialStack, initialStack.toMutableList(), null, emptySet())
-            )
-            ctx
-        }
+        tickGate.duringTick { lifecycle.start(restart = hasStartedBefore) }
+        hasStartedBefore = true
+        val contexts = lifecycle.instances
 
         //Feature cleanup
         //Unlock loop
@@ -318,11 +321,6 @@ class Engine(
         )
         println("[Engine $engineId] Started with ${contexts.size} state machine(s)")
 
-        // Last active stack pushed via onActiveStackChanged, per machine. Starts empty so the initial
-        // state is emitted on the first tick; thereafter only real changes (transition/split/join/
-        // forced resync) fire a push — no per-tick spam.
-        val lastStacks = HashMap<String, List<String>>()
-
         var tickCount = 0L
         while (isRunning) {
             featureManager.executeIfPresent<TickByTickFeature> { feature ->
@@ -334,7 +332,7 @@ class Engine(
             tickCount++
             val tickStart = System.currentTimeMillis()
 
-            tickGate.duringTick { runTick(contexts, tickCount, lastStacks) }
+            tickGate.duringTick { runTick(tickCount) }
 
             val elapsed = System.currentTimeMillis() - tickStart
             val remaining = tickDelayMS.toLong() - elapsed
@@ -349,14 +347,16 @@ class Engine(
     }
 
     /**
-     * Runs one tick inside the [tickGate]: the queued engine commands, the purge of expired events, and for each state
-     * machine its tick followed by its active-stack notification when the stack changed. Every model write and every
-     * push of the tick happens here, on the engine thread or on the threads of branches. Whether [TrueParallelFeature]
-     * is on is read once at the start, so a switch takes effect at a tick boundary; at the end the threads of branches
-     * that no longer step in parallel end.
+     * Runs one tick inside the [tickGate]: the queued engine commands, the purge of expired events, for each state
+     * machine instance that has not ended its tick followed by its active-stack notification when the stack changed,
+     * and at the end the changes of instances the tick asked for ([StateMachineLifecycle.applyChanges]). Every model
+     * write and every push of the tick happens here, on the engine thread or on the threads of branches. Whether
+     * [TrueParallelFeature] is on is read once at the start, so a switch takes effect at a tick boundary; at the end the
+     * threads of branches that no longer step in parallel end.
      */
-    private fun runTick(contexts: List<SMContext>, tickCount: Long, lastStacks: MutableMap<String, List<String>>) {
+    private fun runTick(tickCount: Long) {
         val trueParallel = featureManager.getActiveFeatureOrNull<TrueParallelFeature>() != null
+        val contexts = lifecycle.instances
 
         // Run queued engine-thread commands (e.g. forced resync) before ticking.
         while (true) {
@@ -384,6 +384,7 @@ class Engine(
         //println(eventProcessor.eventBus.getUnprocessedEvents("public", engineId).size)
 
         for (ctx in contexts) {
+            if (ctx.hasEnded) continue
             traceLogger?.log(
                 ctx.modelElementId,
                 EngineTraceLogger.TraceEventType.TICK_START,
@@ -398,15 +399,19 @@ class Engine(
                 tickDetails(ctx)
             )
 
-            // Notify observers only when the active stack actually changed.
+            // Notify observers only when the active stack actually changed, and never for an instance that has ended.
+            if (ctx.hasEnded) continue
             val cur = ctx.branches.flatMap { it.stateStack }
-            if (cur != lastStacks[ctx.modelElementId]) {
-                lastStacks[ctx.modelElementId] = cur
+            if (cur != ctx.lastReportedStack) {
+                ctx.lastReportedStack = cur
                 onActiveStackChanged?.invoke(ctx.modelElementId, cur)
             }
         }
 
-        parallelBranchStepper.retain(if (trueParallel) contexts.flatMap { it.branches } else emptyList())
+        lifecycle.applyChanges()
+
+        val live = lifecycle.instances
+        parallelBranchStepper.retain(if (trueParallel) live.flatMap { it.branches } else emptyList())
     }
 
     /**
@@ -455,8 +460,9 @@ class Engine(
 
         val allowSplit = !ctx.isParallel()
         for (branch in ctx.branches.toList()) {
+            if (ctx.hasEnded) return
             val result = branchRunner.tick(ctx, branch, allowSplit)
-            if (result is BranchTickResult.SplitRequested) {
+            if (result is BranchTickResult.SplitRequested && !ctx.hasEnded) {
                 applySplit(ctx, branch, result.split, result.matchedEvent)
             }
         }
@@ -674,13 +680,41 @@ class Engine(
             }
         }
         // Close all persistent Python sessions
-        val processors = ArrayList(macroProcessors)
-        macroProcessors.clear()
-        for (mp in processors) {
-            try {
-                mp.close()
-            } catch (_: Exception) { }
-        }
+        lifecycle.close()
         traceLogger?.close()
+    }
+
+    /**
+     * Tells the features, the trace log and the [stateMachineObserver] about every instance that joins and leaves. An
+     * instance that leaves takes its histories, tick counts and breakpoint overrides with it, so an instance that later
+     * runs on the same object starts without them.
+     */
+    private inner class InstanceReporter : StateMachineLifecycleListener {
+
+        override fun joined(ctx: SMContext) {
+            traceLogger?.log(
+                ctx.modelElementId,
+                EngineTraceLogger.TraceEventType.STATE_MACHINE_ATTACHED,
+                "State machine ${describe(ctx)} attached",
+                mapOf("stateMachine" to (ctx.definitionName ?: ""))
+            )
+            stateMachineObserver?.onStateMachineAttached(ctx.modelElementId, ctx.definitionName)
+        }
+
+        override fun left(ctx: SMContext) {
+            val id = ctx.modelElementId
+            featureManager.executeIfPresent<HistoryFeature> { it.forget(id) }
+            featureManager.executeIfPresent<TickLimitFeature> { it.forget(id) }
+            featureManager.executeIfPresent<BreakpointFeature> { it.forget(id) }
+            traceLogger?.log(
+                id,
+                EngineTraceLogger.TraceEventType.STATE_MACHINE_DETACHED,
+                "State machine ${describe(ctx)} detached",
+                mapOf("stateMachine" to (ctx.definitionName ?: ""))
+            )
+            stateMachineObserver?.onStateMachineDetached(id, ctx.definitionName)
+        }
+
+        private fun describe(ctx: SMContext): String = ctx.definitionName?.let { "'$it'" } ?: "of the run configuration"
     }
 }

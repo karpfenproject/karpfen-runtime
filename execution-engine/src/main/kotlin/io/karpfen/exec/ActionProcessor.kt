@@ -40,6 +40,15 @@ import io.karpfen.dsl.states.actions.*
  * - **DROPOBJ(path)** – remove an object and all relations pointing to it via
  *   [ModelQueryProcessor.dropObject].
  *
+ * State machine operations:
+ * - **ATTACH name** after a SETOBJ or APPENDOBJ on a `has` relation – the created object gets an instance of the named
+ *   attachable state machine in place of the one its type behaves after. The name is resolved and checked against the
+ *   type of the relation before the target value is computed and before the model changes, so a name that fails
+ *   fails the whole rule and creates nothing.
+ * - **EXCHANGE(path, name)** – the object at the path gets an instance of the named attachable state machine in place
+ *   of its current one. The path resolves like the path of DROPOBJ: `self` is no keyword there.
+ * Both hand their request to the [attachments]; the new instance joins at the end of the tick.
+ *
  * - **EVENT(domain, name)** – raise an internal event on the [EventProcessor].
  *
  * A [WithBlock] evaluates a macro once and binds its result to a name for its body; an [InScopeBlock]
@@ -52,12 +61,14 @@ import io.karpfen.dsl.states.actions.*
  * @property modelQueryProcessor   Reads and writes model data; notifies change observers.
  * @property eventProcessor        Raises internal events on the shared event bus.
  * @property contextObjectId       The id of the DataObject that is the current execution context.
+ * @property attachments           Checks and takes the requests of ATTACH and EXCHANGE.
  */
 class ActionProcessor(
     val macroProcessor: MacroProcessor,
     val modelQueryProcessor: ModelQueryProcessor,
     val eventProcessor: EventProcessor,
-    val contextObjectId: String
+    val contextObjectId: String,
+    val attachments: StateMachineAttachments = StateMachineAttachments.None
 ) {
 
     /**
@@ -148,6 +159,7 @@ class ActionProcessor(
             ActionOperationType.APPENDOBJ -> executeAppendObj(rule, scope)
             ActionOperationType.DROPOBJ   -> executeDropObj(rule)
             ActionOperationType.EVENT     -> executeEvent(rule, scope)
+            ActionOperationType.EXCHANGE  -> executeExchange(rule, scope)
         }
     }
 
@@ -197,16 +209,34 @@ class ActionProcessor(
         val owner = resolveSource(rule.leftSide)
         val relation = rule.secondSide!!
         val relDef = objectRelationOrThrow(owner, relation)
+        val attachName = resolveAttachName(rule, relDef, scope)
         val target = resolveTargetObject(rule, relDef, scope)
         modelQueryProcessor.setObjectRelation(owner.id, relation, target)
+        attachName?.let { attachments.attach(target.id, it) }
     }
 
     private fun executeAppendObj(rule: ActionRule, scope: Map<String, Any?>) {
         val owner = resolveSource(rule.leftSide)
         val relation = rule.secondSide!!
         val relDef = objectRelationOrThrow(owner, relation)
+        val attachName = resolveAttachName(rule, relDef, scope)
         val target = resolveTargetObject(rule, relDef, scope)
         modelQueryProcessor.appendObjectRelation(owner.id, relation, target)
+        attachName?.let { attachments.attach(target.id, it) }
+    }
+
+    /**
+     * The name of the ATTACH clause of [rule], checked for the type of the `has` relation [relDef], or null without a
+     * clause. Runs before the target is computed, so a failure leaves the model as it was.
+     */
+    private fun resolveAttachName(rule: ActionRule, relDef: ClassTypeProperty, scope: Map<String, Any?>): String? {
+        val clause = rule.attach ?: return null
+        require(relDef.associationType == AssociationType.EMBEDDED) {
+            "ATTACH needs a has relation, but '${relDef.key}' is a knows relation; use EXCHANGE for an existing object"
+        }
+        val name = resolveStateMachineName(clause.stateMachineName, scope)
+        attachments.requireAttachable(name, relDef.reference.classTypeName)
+        return name
     }
 
     private fun executeDropObj(rule: ActionRule) {
@@ -217,6 +247,35 @@ class ActionProcessor(
             "DROPOBJ cannot remove the state machine's own context object '$contextObjectId'"
         }
         modelQueryProcessor.dropObject(target.id)
+    }
+
+    // ---- EXCHANGE ----------------------------------------------------------
+
+    /**
+     * Gives the object at the path of [rule] an instance of the named state machine in place of its current one. The
+     * own object is allowed: its instance finishes the block it is in and leaves.
+     */
+    private fun executeExchange(rule: ActionRule, scope: Map<String, Any?>) {
+        val contextObj = modelQueryProcessor.getDataObjectById(contextObjectId)
+        val target = modelQueryProcessor.resolvePathFromObject(contextObj, rule.leftSide) as? DataObject
+            ?: throw IllegalArgumentException("EXCHANGE path '${rule.leftSide}' does not resolve to an object")
+        val name = resolveStateMachineName(rule.rightSide!!, scope)
+        attachments.requireAttachable(name, target.ofType.name)
+        attachments.exchange(target.id, name)
+    }
+
+    /**
+     * Resolves the name of a state machine: a string is the name itself, an EVAL or a MACRO must return a string.
+     *
+     * @throws IllegalArgumentException when the value is not a string.
+     */
+    private fun resolveStateMachineName(value: ActionRightSide, scope: Map<String, Any?>): String {
+        if (value is ValueActionRightSide) return value.value
+        val resolved = resolveRightSide(value, "string", scope)
+        return resolved as? String
+            ?: throw IllegalArgumentException(
+                "The name of a state machine must be a string, but the value is ${resolved ?: "nothing"}"
+            )
     }
 
     // ---- EVENT -------------------------------------------------------------

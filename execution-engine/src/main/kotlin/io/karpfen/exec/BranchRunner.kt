@@ -33,6 +33,11 @@ import io.karpfen.dsl.states.conditions.EventCondition
  * and told whether splits are currently allowed. A normal transition is applied in place; a split is
  * reported back to the caller (see [BranchTickResult]). In a simple context the engine simply runs
  * this over the single branch, so the non-parallel path is exactly the same code as the parallel one.
+ *
+ * A branch of an instance that has ended ([SMContext.hasEnded]) does nothing. When the instance ends during an action
+ * block, because the block removed an object that holds the object of the instance or exchanged its state machine, or
+ * because another branch or state machine did, the block runs to its end and the branch stops right after it, without
+ * looking for transitions.
  */
 class BranchRunner(
     private val traceLogger: EngineTraceLogger?,
@@ -41,6 +46,7 @@ class BranchRunner(
 ) {
 
     fun tick(ctx: SMContext, branch: Branch, allowSplit: Boolean): BranchTickResult {
+        if (ctx.hasEnded) return BranchTickResult.Stable
         val smQueryHelper = ctx.smQueryHelper
 
         //History: remember the stack before anything can leave it, also when a transition fires right after an ENTRY
@@ -71,6 +77,7 @@ class BranchRunner(
                         "Error in onEntry for state '$stateName': ${e.message}", mapOf("state" to stateName))
                     System.err.println("[BranchRunner] Error executing onEntry for state '$stateName': ${e.message}")
                 }
+                if (ctx.hasEnded) return BranchTickResult.Stable
 
                 // Only check for transitions if the ENTRY actually ran actions (matches simple-mode rule).
                 val fireable = findFireable(ctx, branch, allowSplit)
@@ -116,6 +123,7 @@ class BranchRunner(
                     "Error in onDo for state '$currentStateName': ${e.message}", mapOf("state" to currentStateName))
                 System.err.println("[BranchRunner] Error executing onDo for state '$currentStateName': ${e.message}")
             }
+            if (ctx.hasEnded) return BranchTickResult.Stable
         } else {
             trace(ctx, branch, EngineTraceLogger.TraceEventType.STATE_DO_SKIP,
                 "onDo for state '$currentStateName' is empty — skipped", mapOf("state" to currentStateName))
