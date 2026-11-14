@@ -425,6 +425,20 @@ class ClientSessionManager {
     }
 
     /**
+     * Notifies the clients interested in the state machine of [modelElementId] that an instance appeared or left: the
+     * same clients as for its `stateChange` (see [notifyActiveStack]), each once, with a message of [messageType]
+     * (`stateMachineAttached` or `stateMachineDetached`) and [payload].
+     */
+    fun notifyStateMachine(environmentKey: String, modelElementId: String, messageType: String, payload: String) {
+        subscriptionsLock.readLock().lock()
+        try {
+            enqueue(environmentKey, stackRecipients(environmentKey, modelElementId), messageType, payload)
+        } finally {
+            subscriptionsLock.readLock().unlock()
+        }
+    }
+
+    /**
      * The clients to notify about a change or deletion of [objectId], each once and in subscription order: those whose
      * object subscriptions contain exactly the id, then the model subscribers. Called with the subscriptions read lock
      * held.

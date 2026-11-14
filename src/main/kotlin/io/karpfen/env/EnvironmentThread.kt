@@ -27,6 +27,7 @@ import io.karpfen.observation.EnvironmentPhase
 import io.karpfen.observation.ModelSnapshot
 import io.karpfen.observation.ObservationRelay
 import io.karpfen.observation.ObservedEnvironment
+import io.karpfen.observation.StateMachineRecord
 import java.util.concurrent.LinkedBlockingQueue
 
 /**
@@ -63,6 +64,9 @@ class EnvironmentThread(
     /** The last reported active stack of every state machine of this environment, read by snapshots. */
     val activeStacks = ActiveStackRecord()
 
+    /** The state machine instances of this environment as its clients were told, read by snapshots. */
+    val stateMachineRecord = StateMachineRecord()
+
     private val incomingExternalEvents = LinkedBlockingQueue<Event>()
     @Volatile
     private var isRunning = false
@@ -92,7 +96,8 @@ class EnvironmentThread(
         traceLogger = traceLogger,
         eventConsumptionOnFire = environment.eventConsumptionOnFire,
         eventMetamodel = environment.eventMetamodel,
-        featureManager = environment.featureManager
+        featureManager = environment.featureManager,
+        stateMachineDefinitions = environment.stateMachineDefinitions
     )
 
     /**
@@ -125,7 +130,8 @@ class EnvironmentThread(
 
     /**
      * Reads the snapshot through the engine's tick gate: the phase, the revision of the last observation, the recorded
-     * active stacks and every root object written like an `objectChanged` value, all between two ticks.
+     * active stacks, every root object written like an `objectChanged` value and the recorded state machine instances,
+     * all between two ticks.
      */
     override fun snapshotBetweenTicks(timeoutMs: Long): ModelSnapshot? =
         engine.readBetweenTicks(timeoutMs) {
@@ -134,7 +140,8 @@ class EnvironmentThread(
                 phase,
                 revisions.current(),
                 activeStacks.current(),
-                engine.model.objects.map(ModelJsonWriter::write)
+                engine.model.objects.map(ModelJsonWriter::write),
+                stateMachineRecord.current()
             )
         }
 
@@ -151,7 +158,7 @@ class EnvironmentThread(
     fun setup() {
         val clientSessionManager = EnvironmentHandler.clientSessionManager
 
-        val relay = ObservationRelay(environment.key, clientSessionManager, revisions, activeStacks)
+        val relay = ObservationRelay(environment.key, clientSessionManager, revisions, activeStacks, stateMachineRecord)
         engine.modelQueryProcessor.addChangePublisher(relay)
         sharedEventBus.addPublicationListener(relay)
 
@@ -176,6 +183,7 @@ class EnvironmentThread(
 
         engine.onActiveStackChanged = relay::onActiveStackChanged
         engine.onEngineStatusChanged = relay::onEngineStatusChanged
+        engine.stateMachineObserver = relay
 
         println("[EnvironmentThread] Setup complete for environment ${environment.key}")
     }
@@ -201,7 +209,8 @@ class EnvironmentThread(
      * The environment owns its runner, so starting never adds a second event loop:
      * - running with a live runner and a ticking engine: nothing happens;
      * - running with a live runner but an engine whose thread ended on its own: the engine is started again;
-     * - ready, stopped, or running without a live runner: the recorded active stacks are cleared, the loop flag is
+     * - ready, stopped, or running without a live runner: the recorded active stacks and instances are cleared, the
+     *   engine builds and reports the instances of the start anew over the current model, the loop flag is
      *   set before the runner exists (so a stop can no longer be overwritten by the runner's first line), the engine
      *   is started from its initial stacks over the current model, a new non-daemon runner named
      *   `EnvironmentThread-<key>` is started, and the run state becomes running once both have started (see [phase]).
@@ -218,6 +227,7 @@ class EnvironmentThread(
             return true
         }
         activeStacks.clear()
+        stateMachineRecord.clear()
         isRunning = true
         runnerEndedOnItsOwn = false
         engine.start()

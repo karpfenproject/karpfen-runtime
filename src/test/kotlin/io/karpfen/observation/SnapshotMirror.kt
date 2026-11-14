@@ -32,6 +32,9 @@ class SnapshotMirror(snapshot: ModelSnapshot) {
     /** The active stack per machine, as the snapshot and the applied pushes reported them. */
     val activeStates: MutableMap<String, List<String>> = LinkedHashMap(snapshot.activeStates)
 
+    /** The definition per object with a state machine instance, as the snapshot and the applied pushes reported them. */
+    val stateMachines: MutableMap<String, String?> = LinkedHashMap(snapshot.stateMachines)
+
     /** The revision of the last observation the mirror contains. */
     var revision: Long = snapshot.revision
         private set
@@ -50,15 +53,22 @@ class SnapshotMirror(snapshot: ModelSnapshot) {
             "objectDeleted" -> remove(payload.getString("objectId"))
             "stateChange" -> activeStates[payload.getString("modelElementId")] =
                 payload.getJSONArray("stack").map { it as String }
+            "stateMachineAttached" -> stateMachines[payload.getString("modelElementId")] =
+                if (payload.isNull("stateMachine")) null else payload.getString("stateMachine")
+            "stateMachineDetached" -> {
+                stateMachines.remove(payload.getString("modelElementId"))
+                activeStates.remove(payload.getString("modelElementId"))
+            }
             else -> throw IllegalStateException("Unexpected push $messageType")
         }
         revision = pushRevision
     }
 
-    /** True when the mirror holds the same roots, stacks and revision as [snapshot]. */
+    /** True when the mirror holds the same roots, stacks, instances and revision as [snapshot]. */
     fun matches(snapshot: ModelSnapshot): Boolean =
         revision == snapshot.revision &&
             activeStates == snapshot.activeStates &&
+            stateMachines == snapshot.stateMachines &&
             roots.size == snapshot.roots.size &&
             roots.zip(snapshot.roots).all { (mirrored, written) -> mirrored.similar(JSONObject(written)) }
 

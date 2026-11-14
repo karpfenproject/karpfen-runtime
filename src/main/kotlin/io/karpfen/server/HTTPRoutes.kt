@@ -94,8 +94,8 @@ object HTTPRoutes {
                 try {
                     val envKey = call.request.queryParameters["envKey"]
                         ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    // With attachedTo the text is attached to that object, without it it is an attachable definition.
                     val attachedTo = call.request.queryParameters["attachedTo"]
-                        ?: throw IllegalArgumentException("Missing required parameter: attachedTo")
                     val stateMachine = call.receiveText()
                     APIService.receiveStateMachine(envKey, attachedTo, stateMachine)
                     call.respond(HttpStatusCode.OK, "")
@@ -252,9 +252,19 @@ object HTTPRoutes {
                     val envKey = call.request.queryParameters["envKey"]
                         ?: throw IllegalArgumentException("Missing required parameter: envKey")
                     val modelElement = call.request.queryParameters["modelElement"]
-                        ?: throw IllegalArgumentException("Missing required parameter: modelElement")
-                    val source = APIService.getStateMachineSource(envKey, modelElement)
+                    val name = call.request.queryParameters["name"]
+                    val source = APIService.getStateMachineSource(envKey, modelElement, name)
                     call.respond(HttpStatusCode.OK, source)
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
+            get("/observatory/stateMachines") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    call.respondText(APIService.describeStateMachines(envKey).toJson(), ContentType.Application.Json)
                 } catch (e: Exception) {
                     respondWithError(call, e)
                 }

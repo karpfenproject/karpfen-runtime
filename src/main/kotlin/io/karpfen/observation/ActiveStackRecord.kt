@@ -40,6 +40,12 @@ class ActiveStackRecord {
     @Synchronized
     fun current(): Map<String, List<String>> = Collections.unmodifiableMap(LinkedHashMap(stacks))
 
+    /** Forgets the stack of the machine attached to [modelElementId], when its instance leaves. */
+    @Synchronized
+    fun forget(modelElementId: String) {
+        stacks.remove(modelElementId)
+    }
+
     /** Forgets every recorded stack, as a start does before the machines report again. */
     @Synchronized
     fun clear() {

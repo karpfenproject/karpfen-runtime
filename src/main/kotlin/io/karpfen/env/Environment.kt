@@ -30,6 +30,10 @@ data class Environment(
     var eventDefinitionsSource: String? = null,
     val stateMachines: MutableMap<String, StateMachine> = mutableMapOf(), // modelElement -> attached state machine
     val stateMachineSources: MutableMap<String, String> = mutableMapOf(), // modelElement -> raw kStates DSL text
+    /** The attachable state machines by their name, uploaded without `attachedTo`, in upload order. */
+    val stateMachineDefinitions: MutableMap<String, StateMachine> = mutableMapOf(),
+    /** The KStates text of every attachable state machine, by its name. */
+    val stateMachineDefinitionSources: MutableMap<String, String> = mutableMapOf(),
     var tickDelayMS: Int = 1000,
     /** Time-to-live for events in milliseconds. 0 means events live forever. */
     var eventTtlMs: Long = 0L,

@@ -214,14 +214,15 @@ class ModelObservationLifecycleTest {
     @Test
     fun `revisions keep counting across a restart`() {
         val envKey = startedEnvironment()
+        // Each start reports the instance of the turtle, its first stack and the change of its first ENTRY block.
         awaitStack(envKey, "idle")
-        assertEquals(2L, snapshots.snapshot(envKey).revision)
+        assertEquals(3L, snapshots.snapshot(envKey).revision)
 
         APIService.stopEnvironment(envKey)
         APIService.startEnvironment(envKey)
 
         awaitStack(envKey, "idle")
-        assertEquals(4L, snapshots.snapshot(envKey).revision)
+        assertEquals(6L, snapshots.snapshot(envKey).revision)
     }
 
     @Test
