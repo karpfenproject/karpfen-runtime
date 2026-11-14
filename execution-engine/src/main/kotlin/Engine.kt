@@ -22,6 +22,7 @@ import io.karpfen.io.karpfen.features.language.HistoryFeature
 import io.karpfen.io.karpfen.features.language.TickLimitFeature
 import io.karpfen.io.karpfen.features.runtime.BreakpointFeature
 import io.karpfen.io.karpfen.features.runtime.TickByTickFeature
+import io.karpfen.io.karpfen.features.runtime.TrueParallelFeature
 import io.karpfen.io.karpfen.features.runtime.event.EventInjectionFeature
 import io.karpfen.io.karpfen.features.runtime.event.EventRecordingFeature
 import io.karpfen.io.karpfen.messages.Event
@@ -40,8 +41,9 @@ import kotlin.concurrent.thread
  * purge of expired events, and for each state machine its tick (its `ENTRY` and `DO` blocks, each one notification
  * batch of the [modelQueryProcessor] published when the block ends, and its transitions) followed by its active-stack
  * notification. Between ticks the engine sleeps for the rest of [tickDelayMS] outside the gate. Every model write and
- * every object and active-stack push happens on the engine thread inside a tick, so [readBetweenTicks] sees the model
- * at rest with every such push of the finished ticks enqueued. Events from outside arrive through
+ * every object and active-stack push happens inside a tick, on the engine thread or, while [TrueParallelFeature] is on,
+ * on the thread of a branch of a split state machine (see [ParallelBranchStepper]), so [readBetweenTicks] sees the
+ * model at rest with every such push of the finished ticks enqueued. Events from outside arrive through
  * [receiveExternalEvent] on the caller's thread outside any tick; their payloads are new objects that never touch the
  * model, and the listeners of the bus learn about them on that thread.
  *
@@ -113,7 +115,7 @@ class Engine(
      * Called whenever a state machine's active state stack changes (initial state, transition,
      * split, join, or a forced resync). Carries (modelElementId, full active stack). The environment
      * uses this to push lightweight "stateChange" updates to the observatory instead of per-tick
-     * trace spam. Invoked on the engine thread.
+     * trace spam. Invoked on the engine thread, also while branches step on threads of their own.
      */
     var onActiveStackChanged: ((String, List<String>) -> Unit)? = null
 
@@ -121,7 +123,8 @@ class Engine(
      * Called with the status of the engine, the JSON object that the `getStatus` message of the breakpoint feature
      * answers, each time the engine thread starts to wait for the pause of [TickByTickFeature], between two ticks or at
      * a breakpoint, and each time it goes on: before the thread blocks and right after it wakes. Invoked on the engine
-     * thread, and never while [TickByTickFeature] is switched off. The environment uses it to push `engineStatus` to
+     * thread, or on the thread of a branch that halts at a breakpoint while [TrueParallelFeature] is on, one report at a
+     * time, and never while [TickByTickFeature] is switched off. The environment uses it to push `engineStatus` to
      * its clients.
      */
     var onEngineStatusChanged: ((String) -> Unit)? = null
@@ -144,6 +147,12 @@ class Engine(
 
     /** Runs the per-branch mechanics (ENTRY/DO + a branch's own transitions). Shared across branches. */
     private val branchRunner = BranchRunner(traceLogger, eventConsumptionOnFire, featureManager)
+
+    /**
+     * Steps the branches of split state machines on threads of their own while [TrueParallelFeature] is on. Used by
+     * the engine thread only, and closed when that thread ends.
+     */
+    private val parallelBranchStepper = ParallelBranchStepper(branchRunner)
 
     /**
      * Accepts an event from an external source (e.g., WebSocket), parses its payload into the runtime
@@ -226,6 +235,7 @@ class Engine(
                 println("[Engine $engineId] Error: ${e.message}")
                 e.printStackTrace()
             } finally {
+                parallelBranchStepper.close()
                 hasHalted = isRunning
                 isRunning = false
                 println("[Engine $engineId] Stopped")
@@ -341,9 +351,13 @@ class Engine(
     /**
      * Runs one tick inside the [tickGate]: the queued engine commands, the purge of expired events, and for each state
      * machine its tick followed by its active-stack notification when the stack changed. Every model write and every
-     * push of the tick happens here, on the engine thread.
+     * push of the tick happens here, on the engine thread or on the threads of branches. Whether [TrueParallelFeature]
+     * is on is read once at the start, so a switch takes effect at a tick boundary; at the end the threads of branches
+     * that no longer step in parallel end.
      */
     private fun runTick(contexts: List<SMContext>, tickCount: Long, lastStacks: MutableMap<String, List<String>>) {
+        val trueParallel = featureManager.getActiveFeatureOrNull<TrueParallelFeature>() != null
+
         // Run queued engine-thread commands (e.g. forced resync) before ticking.
         while (true) {
             val cmd = commandQueue.poll() ?: break
@@ -376,7 +390,7 @@ class Engine(
                 "Tick #$tickCount",
                 tickDetails(ctx)
             )
-            tickStateMachine(ctx)
+            tickStateMachine(ctx, trueParallel)
             traceLogger?.log(
                 ctx.modelElementId,
                 EngineTraceLogger.TraceEventType.TICK_END,
@@ -391,16 +405,20 @@ class Engine(
                 onActiveStackChanged?.invoke(ctx.modelElementId, cur)
             }
         }
+
+        parallelBranchStepper.retain(if (trueParallel) contexts.flatMap { it.branches } else emptyList())
     }
 
     /**
      * Runs [read] on the calling thread at the next tick boundary, waiting at most [timeoutMs] milliseconds for the
      * running tick to end; without a running tick it runs at once. The read sees the model after a whole number of
-     * ticks with every push of those ticks enqueued.
+     * ticks with every push of those ticks enqueued. It also holds the read lock of the [modelQueryProcessor], so a
+     * read during a halt at a breakpoint never sees a write of a branch that still steps on its own thread half done.
      *
      * @return the result of [read], or `null` when no tick boundary came within the timeout.
      */
-    fun <T> readBetweenTicks(timeoutMs: Long, read: () -> T): T? = tickGate.betweenTicks(timeoutMs, read)
+    fun <T> readBetweenTicks(timeoutMs: Long, read: () -> T): T? =
+        tickGate.betweenTicks(timeoutMs) { modelQueryProcessor.readModel(read) }
 
     /**
      * Trace details for a tick. "stack" lists the active states across all branches (equal to the
@@ -417,15 +435,20 @@ class Engine(
      *
      * The top-level loop stays small: in a parallel context a JOIN is checked first (it has priority
      * and can collapse the context back to simple); then every branch is ticked in order by the
-     * [BranchRunner]. Only a simple context may take a SPLIT, which the branch reports back so this
-     * method can carry out the structural change. A simple context is just the same loop with one
-     * branch.
+     * [BranchRunner]. With [trueParallel] the branches of a parallel context instead do their steps at
+     * the same time on threads of their own through the [parallelBranchStepper]. Only a simple context
+     * may take a SPLIT, which the branch reports back so this method can carry out the structural
+     * change. A simple context is just the same loop with one branch.
      */
-    private fun tickStateMachine(ctx: SMContext) {
+    private fun tickStateMachine(ctx: SMContext, trueParallel: Boolean) {
         if (ctx.isParallel()) {
             val join = selectFireableJoin(ctx)
             if (join != null) {
                 applyJoin(ctx, join)
+                return
+            }
+            if (trueParallel) {
+                parallelBranchStepper.step(ctx)
                 return
             }
         }
@@ -644,6 +667,7 @@ class Engine(
                 t.join(5000)
                 if (t.isAlive) {
                     t.interrupt()
+                    t.join(5000)
                 }
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
