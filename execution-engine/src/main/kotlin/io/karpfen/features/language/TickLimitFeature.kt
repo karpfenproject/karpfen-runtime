@@ -10,12 +10,18 @@ import io.karpfen.dsl.states.State
 import io.karpfen.dsl.states.Transition
 import io.karpfen.dsl.states.conditions.Condition
 import io.karpfen.dsl.states.conditions.ConditionType
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.reflect.KClass
 
 class TickLimitFeature: DefaultFeature() {
 
-    /** Keeps track of how many ticks every state of a state machine has been visited */
-    private var tickMap: MutableMap<String, MutableMap<String, Long>> = HashMap()
+    /**
+     * Keeps track of how many ticks every state of a state machine has been visited. The engine thread replaces the
+     * whole map at the start of each tick; the inner maps are concurrent, because with the feature TrueParallel the
+     * branches of one state machine read and reset their counts on threads of their own during the tick.
+     */
+    @Volatile
+    private var tickMap: Map<String, MutableMap<String, Long>> = HashMap()
 
     /** Increments the tick counter of every currently visited state, removes unvisited states from the tickMap */
     fun incrementTick(contexts: List<SMContext>) {
@@ -23,7 +29,7 @@ class TickLimitFeature: DefaultFeature() {
         for (ctx in contexts) {
             val modelElementId = ctx.modelElementId
             val oldStateMap = tickMap[modelElementId] ?: emptyMap()
-            val newStateMap = HashMap<String, Long>()
+            val newStateMap = ConcurrentHashMap<String, Long>()
             newTickMap[modelElementId] = newStateMap
             for (branch in ctx.branches) {
                 for (stateName in branch.stateStack) {

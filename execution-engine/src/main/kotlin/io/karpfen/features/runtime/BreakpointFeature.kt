@@ -7,6 +7,7 @@ import io.karpfen.io.karpfen.features.Feature
 import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.FeatureProvider
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 import io.karpfen.dsl.states.JoinTransition
 import io.karpfen.dsl.states.SplitTransition
 import io.karpfen.dsl.states.State
@@ -23,21 +24,23 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
 
     /**
      * Custom breakpoint overrides defined during runtime
+     * The maps are concurrent: clients change them through messages on the threads of the server while the engine
+     * thread, and with the feature TrueParallel the threads of branches, read them
      * Mapped to state machines and state/transition identifier
      * Grouped into 4 parts for easier access, depending on target and timing
      */
 
     /** Breakpoint overrides triggering when a state is entered */
-    private val entryBreakpoints = HashMap<String, MutableMap<String, Boolean>>()
+    private val entryBreakpoints = ConcurrentHashMap<String, MutableMap<String, Boolean>>()
 
     /** Breakpoint overrides triggering when a state is exited */
-    private val exitBreakpoints = HashMap<String, MutableMap<String, Boolean>>()
+    private val exitBreakpoints = ConcurrentHashMap<String, MutableMap<String, Boolean>>()
 
     /** Breakpoint overrides triggering when a transition starts */
-    private val startBreakpoints = HashMap<String, MutableMap<String, Boolean>>()
+    private val startBreakpoints = ConcurrentHashMap<String, MutableMap<String, Boolean>>()
 
     /** Breakpoint overrides triggering when a transition ends */
-    private val endBreakpoints = HashMap<String, MutableMap<String, Boolean>>()
+    private val endBreakpoints = ConcurrentHashMap<String, MutableMap<String, Boolean>>()
 
     /**
      * JSON based messaging system
@@ -68,11 +71,11 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
                     val timing = json.getString("timing")
                     val breakpointStatus = json.getBoolean("breakpointStatus")
                     if (timing == "entry") {
-                        entryBreakpoints.getOrPut(modelElementId) { HashMap() } [stateIdentifier] = breakpointStatus
+                        entryBreakpoints.getOrPut(modelElementId) { ConcurrentHashMap() } [stateIdentifier] = breakpointStatus
                         return "Breakpoint override has ${if (breakpointStatus) "added" else "removed"} a breakpoint on state $stateIdentifier entry in statemachine attached to $modelElementId"
                     }
                     if (timing == "exit") {
-                        exitBreakpoints.getOrPut(modelElementId) { HashMap() } [stateIdentifier] = breakpointStatus
+                        exitBreakpoints.getOrPut(modelElementId) { ConcurrentHashMap() } [stateIdentifier] = breakpointStatus
                         return "Breakpoint override has ${if (breakpointStatus) "added" else "removed"} a breakpoint on state $stateIdentifier exit in statemachine attached to $modelElementId"
                     }
                     "Breakpoint override could not be added to state $stateIdentifier in statemachine attached to $modelElementId, invalid timing $timing"
@@ -83,11 +86,11 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
                     val timing = json.getString("timing")
                     val breakpointStatus = json.getBoolean("breakpointStatus")
                     if (timing == "start") {
-                        startBreakpoints.getOrPut(modelElementId) { HashMap() } [transitionIdentifier] = breakpointStatus
+                        startBreakpoints.getOrPut(modelElementId) { ConcurrentHashMap() } [transitionIdentifier] = breakpointStatus
                         return "Breakpoint override has ${if (breakpointStatus) "added" else "removed"} a breakpoint on transition $transitionIdentifier start in statemachine attached to $modelElementId"
                     }
                     if (timing == "end") {
-                        endBreakpoints.getOrPut(modelElementId) { HashMap() } [transitionIdentifier] = breakpointStatus
+                        endBreakpoints.getOrPut(modelElementId) { ConcurrentHashMap() } [transitionIdentifier] = breakpointStatus
                         return "Breakpoint override has ${if (breakpointStatus) "added" else "removed"} a breakpoint on transition $transitionIdentifier end in statemachine attached to $modelElementId"
                     }
                     "Breakpoint override could not be added to transition $transitionIdentifier in statemachine attached to $modelElementId, invalid timing $timing"
@@ -276,8 +279,7 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
             breakpointStatus = defaultBreakpointStatus
         }
         if (breakpointStatus) {
-            tickByTickFeature.onMessage("pause")
-            tickByTickFeature.evalPausedState(place())
+            tickByTickFeature.haltAt(place())
         }
     }
 }

@@ -27,13 +27,14 @@ import org.json.JSONObject
  * Turns what the engine of one environment observes into push messages for its WebSocket clients.
  *
  * The relay receives every object change and deletion as the environment's [ModelChangePublisher] and every
- * active-stack change through [onActiveStackChanged]. All of them arrive on the engine thread inside a tick; the relay
- * assigns each one the next [revision] and hands it to the [sessions], which enqueue one message per recipient in the
- * same call. Every recipient of one observation therefore gets the same revision, and the revisions of an
- * environment increase in enqueue order. A change whose object cannot be written uses up its revision without a
- * message, so that the gap reveals it.
+ * active-stack change through [onActiveStackChanged]. All of them arrive inside a tick, one at a time: on the engine
+ * thread, or object changes and deletions on the thread of a branch while the feature TrueParallel is on, where the
+ * model's publication lock lets one commit publish at a time. The relay assigns each one the next [revision] and hands
+ * it to the [sessions], which enqueue one message per recipient in the same call. Every recipient of one observation
+ * therefore gets the same revision, and the revisions of an environment increase in enqueue order. A change whose
+ * object cannot be written uses up its revision without a message, so that the gap reveals it.
  *
- * Each time the engine thread starts to wait for a pause or goes on, [onEngineStatusChanged] tells every client
+ * Each time a thread of the engine starts to wait for a pause or goes on, [onEngineStatusChanged] tells every client
  * connected to the environment the engine's status, without a revision.
  *
  * As the [EventPublicationListener] of the environment's event bus, the relay also announces every published event to

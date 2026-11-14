@@ -7,6 +7,8 @@ import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.features.FeatureProvider
 import org.json.JSONObject
 import java.util.concurrent.Semaphore
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import kotlin.reflect.KClass
 
 class TickByTickFeature : DefaultFeature() {
@@ -39,13 +41,13 @@ class TickByTickFeature : DefaultFeature() {
     }
 
     /**
-     * How the engine thread waits while it is paused: it is handed the wait and runs it. The engine sets it so that a
-     * pause inside a tick, at a breakpoint, leaves the tick gate open for readers.
+     * How a thread of the engine waits while it is paused: it is handed the wait and runs it. The engine sets it so
+     * that a pause inside a tick, at a breakpoint, leaves the tick gate open for readers.
      */
     @Volatile
     var waiting: (wait: () -> Unit) -> Unit = { wait -> wait() }
 
-    /** True while the engine thread waits in [evalPausedState] for a resume or for ticks. */
+    /** True while a thread of the engine waits in [evalPausedState] for a resume or for ticks. */
     @Volatile
     private var isWaiting: Boolean = false
 
@@ -54,17 +56,25 @@ class TickByTickFeature : DefaultFeature() {
     private var halt: JSONObject? = null
 
     /**
-     * Told the [engineStatus] on the engine thread each time that thread starts to wait in [evalPausedState], before
+     * Told the [engineStatus] on the waiting thread each time that thread starts to wait in [evalPausedState], before
      * it blocks, and each time it goes on, right after it wakes. The engine sets it so that the environment can tell
      * its clients.
      */
     @Volatile
     var onStatusChanged: (status: String) -> Unit = {}
 
+    /**
+     * Lets one thread at a time wait in [evalPausedState] and [haltAt]. While the feature TrueParallel is on, several
+     * branches can reach a breakpoint in the same tick on threads of their own; they halt one after the other, each
+     * with its own [halt] in the status, and a resume or a tick releases the one that waits. Fair, so the halts come in
+     * the order in which the branches reached them.
+     */
+    private val waitLock = ReentrantLock(true)
+
     /** True once a pause was asked for and until the engine is resumed: the engine waits, or will at its next stop. */
     fun isPaused(): Boolean = isPaused
 
-    /** True while the engine thread waits, between two ticks or at a breakpoint. */
+    /** True while a thread of the engine waits, between two ticks or at a breakpoint. */
     fun isWaiting(): Boolean = isWaiting
 
     /**
@@ -80,12 +90,12 @@ class TickByTickFeature : DefaultFeature() {
     }
 
     /**
-     * Lets the engine thread wait while a pause was asked for, until a resume or ticks release it; otherwise returns
+     * Lets the calling thread wait while a pause was asked for, until a resume or ticks release it; otherwise returns
      * at once. [halt] is the breakpoint the engine waits at, or null for a wait between two ticks; the [engineStatus]
      * names it while the thread waits. The thread reports the status through [onStatusChanged] once it waits, before
      * it blocks, and again once it goes on.
      */
-    fun evalPausedState(halt: JSONObject? = null) {
+    fun evalPausedState(halt: JSONObject? = null) = waitLock.withLock {
         if (isPaused) {
             this.halt = halt
             isWaiting = true
@@ -98,6 +108,16 @@ class TickByTickFeature : DefaultFeature() {
                 onStatusChanged(engineStatus())
             }
         }
+    }
+
+    /**
+     * Pauses the run and lets the calling thread wait at the breakpoint [halt] as [evalPausedState] describes. Pausing
+     * and waiting happen together while this thread holds the wait lock, so a branch that reaches a breakpoint while
+     * another one waits at its own halts after that one went on, instead of losing its halt to the other's resume.
+     */
+    fun haltAt(halt: JSONObject) = waitLock.withLock {
+        pause()
+        evalPausedState(halt)
     }
 
     override fun onDeactivate() {

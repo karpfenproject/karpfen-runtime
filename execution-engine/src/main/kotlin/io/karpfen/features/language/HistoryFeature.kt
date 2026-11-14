@@ -9,12 +9,17 @@ import io.karpfen.dsl.states.History
 import io.karpfen.dsl.states.Transition
 import io.karpfen.dsl.states.conditions.Condition
 import io.karpfen.dsl.states.conditions.ConditionType
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.reflect.KClass
 
 class HistoryFeature: DefaultFeature() {
 
-    /** Map from model element to states to their last visited substate */
-    private val lastVisitedSubstates: MutableMap<String, MutableMap<String, String>> = HashMap()
+    /**
+     * Map from model element to states to their last visited substate. Both levels are concurrent, because with the
+     * feature TrueParallel the branches of one state machine record and read their histories on threads of their own.
+     * Branches are in different regions, so they write different states of the inner map.
+     */
+    private val lastVisitedSubstates = ConcurrentHashMap<String, MutableMap<String, String>>()
 
     /**
      * Records the current stack in the history of its states. Every state of [currentStateStack] except the innermost
@@ -25,18 +30,20 @@ class HistoryFeature: DefaultFeature() {
         if (currentStateStack.size < 2) return
 
         val currentStateName = currentStateStack.last().name
-        val stateMap = lastVisitedSubstates.getOrPut(modelElementId) { mutableMapOf() }
+        val remembered = HashMap<String, String>()
 
         for (i in 0 until currentStateStack.size - 1) {
             val state = currentStateStack[i]
             when (state.history) {
-                History.SHALLOW -> stateMap[state.name] = currentStateStack[i + 1].name
-                History.DEEP -> stateMap[state.name] = currentStateName
+                History.SHALLOW -> remembered[state.name] = currentStateStack[i + 1].name
+                History.DEEP -> remembered[state.name] = currentStateName
                 History.NONE -> Unit
             }
         }
 
-        if (stateMap.isEmpty()) lastVisitedSubstates.remove(modelElementId)
+        if (remembered.isNotEmpty()) {
+            lastVisitedSubstates.getOrPut(modelElementId) { ConcurrentHashMap() }.putAll(remembered)
+        }
     }
 
     fun createTransitionOrNull(modelElementId: String, currentState: io.karpfen.dsl.states.State): Transition? {
