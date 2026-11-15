@@ -24,6 +24,7 @@ This page is for people who work on the runtime itself. The reference for users 
 | `MacroProcessor`, `MacroCodeTransformer`, `ExpressionClassifier` | `EVAL` and macros, with or without Python |
 | `ParallelBranchStepper`, `TickGate`, `PythonSessionPool` | The threads of the branches while TrueParallel is on, the gate between ticks and readers, and one Python session per call that runs at the same time |
 | `EventBus`, `EventProcessor` | Events, their time to live and their consumption per branch |
+| `EngineTraceLogger`, `PathNumbers` | The trace log. `PathNumbers`, owned by the `StateMachineInstanceFactory` of an engine, gives every `Branch` its path number when `SMContext.newBranch` builds it; the trace entries and the identity under which the branch consumes events both read it from the branch. `StateMachineLifecycle` tells its listener which instance an exchange replaced, so the engine writes one `STATE_MACHINE_EXCHANGED` entry |
 | `FeatureManager`, `FeatureRegistry` | Features, found as `FeatureProvider` services |
 | `ObservationRelay`, `ModelSnapshotService`, `ClientSessionManager`, `WebSocketBroadcaster` | Revisions, snapshots and the messages to clients; `StateMachineRecord` and `ActiveStackRecord` keep the instances and stacks for snapshots |
 
