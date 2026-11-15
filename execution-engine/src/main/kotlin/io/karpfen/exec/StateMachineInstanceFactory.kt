@@ -15,7 +15,6 @@
  */
 package io.karpfen.io.karpfen.exec
 
-import io.karpfen.EngineTraceLogger
 import io.karpfen.dsl.instance.Model
 import io.karpfen.dsl.meta.Metamodel
 import io.karpfen.io.karpfen.messages.EventBus
@@ -26,27 +25,30 @@ import io.karpfen.io.karpfen.messages.EventBus
  * Every call builds everything mutable anew: the query helper, the macro processor with its own Python sessions, the
  * transition and action processors and the first branch. The identities under which the branches consume events start
  * with `<engineId>-<objectId>#<n>`, where `n` counts the instances of the object from 0 over the life of the engine, so
- * an instance that replaces another on the same object does not count the events of its predecessor as handled. The
- * factory is used by the engine thread only.
+ * an instance that replaces another on the same object does not count the events of its predecessor as handled, and
+ * end in `-p<path>`, the path number of the branch. The factory owns the [PathNumbers] of the engine and gives them to
+ * every context it builds, so the path numbers of an object go on from one instance to the next. The factory is used
+ * by the engine thread only.
  *
  * @property metamodel the metamodel of the model.
  * @property model the model the instances read and change.
  * @property modelQueryProcessor the shared access to the model.
  * @property eventBus the bus of the environment.
  * @property engineId the id of the engine, the start of every branch identity.
- * @property traceLogger the trace logger, told the initial stack of every instance, or null.
  */
 class StateMachineInstanceFactory(
     private val metamodel: Metamodel,
     private val model: Model,
     private val modelQueryProcessor: ModelQueryProcessor,
     private val eventBus: EventBus,
-    private val engineId: String,
-    private val traceLogger: EngineTraceLogger? = null
+    private val engineId: String
 ) {
 
     /** The number of instances built per object. */
     private val instanceCounts = HashMap<String, Int>()
+
+    /** The path numbers of all branches of the engine. */
+    private val pathNumbers = PathNumbers()
 
     /**
      * Builds the context of [spec] at the initial stack of its state machine, with one branch whose whole stack still
@@ -78,13 +80,6 @@ class StateMachineInstanceFactory(
             attachments
         )
 
-        traceLogger?.log(
-            objectId,
-            EngineTraceLogger.TraceEventType.INITIAL_STATE,
-            "Initial state stack: ${initialStack.joinToString(" > ")}",
-            mapOf("stack" to initialStack.joinToString(","))
-        )
-
         val ctx = SMContext(
             modelElementId = objectId,
             stateMachine = stateMachine,
@@ -95,7 +90,8 @@ class StateMachineInstanceFactory(
             branchIdBase = branchIdBase,
             branches = mutableListOf(),
             definitionName = spec.definitionName,
-            macroProcessor = macroProcessor
+            macroProcessor = macroProcessor,
+            pathNumbers = pathNumbers
         )
         ctx.branches = mutableListOf(ctx.newBranch(initialStack, initialStack.toMutableList(), null, emptySet()))
         return ctx

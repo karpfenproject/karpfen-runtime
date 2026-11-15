@@ -211,7 +211,7 @@ class StateMachineLifecycleEngineTest {
         val doneB2 = run.entryTick("b2", "done")
         val doneB1 = run.entryTick("b1", "done")
         assertEquals(doneB2 + 1, doneB1, "the second instance on b1 counts its ticks from its own start")
-        assertEquals(listOf("b1", "b2"), run.traces(TraceEventType.STATE_MACHINE_DETACHED).map { it.modelElementId }.take(2))
+        assertEquals(listOf("b1", "b2"), run.traces(TraceEventType.STATE_MACHINE_EXCHANGED).map { it.modelElementId }.take(2))
     }
 
     @Test
@@ -416,22 +416,23 @@ class StateMachineLifecycleEngineTest {
             return 0
         }
 
-        /** The ticks after which instances joined, 0 for the start, in order. */
-        fun joinTicks(): List<Int> = ticksOf(TraceEventType.STATE_MACHINE_ATTACHED)
+        /** The ticks after which instances joined, on their own or by an exchange, 0 for the start, in order. */
+        fun joinTicks(): List<Int> = ticksOf(TraceEventType.STATE_MACHINE_ATTACHED, TraceEventType.STATE_MACHINE_EXCHANGED)
 
-        /** The ticks in which instances left, in order. */
-        fun leaveTicks(): List<Int> = ticksOf(TraceEventType.STATE_MACHINE_DETACHED)
+        /** The ticks in which instances left, on their own or by an exchange, in order. */
+        fun leaveTicks(): List<Int> = ticksOf(TraceEventType.STATE_MACHINE_DETACHED, TraceEventType.STATE_MACHINE_EXCHANGED)
 
-        private fun ticksOf(type: TraceEventType): List<Int> {
+        private fun ticksOf(vararg types: TraceEventType): List<Int> {
             val snapshot = entries.toList()
-            return snapshot.indices.filter { snapshot[it].eventType == type }.map(::tickAt)
+            return snapshot.indices.filter { snapshot[it].eventType in types }.map(::tickAt)
         }
 
         /** The tick after which the last instance of [objectId] joined. */
         fun joinTick(objectId: String): Int {
             val snapshot = entries.toList()
             val index = snapshot.indexOfLast {
-                it.eventType == TraceEventType.STATE_MACHINE_ATTACHED && it.modelElementId == objectId
+                (it.eventType == TraceEventType.STATE_MACHINE_ATTACHED ||
+                    it.eventType == TraceEventType.STATE_MACHINE_EXCHANGED) && it.modelElementId == objectId
             }
             return tickAt(index)
         }

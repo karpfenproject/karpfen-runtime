@@ -67,13 +67,20 @@ class LifecycleReferenceExampleTest {
         assertEquals(listOf("living room", "bulb", "gen_Bulb_0"), steps(5))
         assertEquals(4, tickOf(TraceEventType.STATE_MACHINE_ATTACHED, "gen_Bulb_0"))
         assertEquals(listOf("living room", "gen_Bulb_0"), steps(7))
-        assertEquals(7, tickOf(TraceEventType.STATE_MACHINE_DETACHED, "bulb"))
+        assertEquals(7, tickOf(TraceEventType.STATE_MACHINE_EXCHANGED, "bulb"))
+        assertTrue(entries.none { it.eventType == TraceEventType.STATE_MACHINE_DETACHED }, "no instance only left")
         assertEquals(listOf("living room", "bulb", "gen_Bulb_0"), steps(8))
         assertEquals(
-            listOf("bulb" to "glowing", "gen_Bulb_0" to "blinking", "bulb" to "blinking"),
+            listOf("bulb" to "glowing", "gen_Bulb_0" to "blinking"),
             entries.filter { it.eventType == TraceEventType.STATE_MACHINE_ATTACHED }
                 .map { it.modelElementId to it.details.getValue("stateMachine") }
                 .drop(1)
+        )
+        val exchange = entries.single { it.eventType == TraceEventType.STATE_MACHINE_EXCHANGED }
+        assertEquals("State machine 'glowing' exchanged for 'blinking'", exchange.message)
+        assertEquals(
+            mapOf("ended" to "glowing", "started" to "blinking", "ends" to "0", "path" to "1"),
+            exchange.details
         )
         assertTrue(entries.none { it.eventType == TraceEventType.ACTION_ERROR }, "errors in $entries")
     }

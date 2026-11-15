@@ -250,6 +250,11 @@ class BranchRunner(
         }
     }
 
+    /**
+     * Logs an entry of [branch]: its details start with `path`, the path number of the branch, go on with [details] and
+     * end with `stack`, the state stack of the branch. The path tells the entries of parallel branches apart, also when
+     * the branches step on threads of their own and their entries interleave.
+     */
     private fun trace(
         ctx: SMContext,
         branch: Branch,
@@ -258,7 +263,10 @@ class BranchRunner(
         details: Map<String, String>
     ) {
         if (traceLogger == null) return
-        val withBranch = details + ("branch" to branch.eventProcessor.engineId) + ("stack" to branch.stateStack.joinToString(","))
-        traceLogger.log(ctx.modelElementId, type, message, withBranch)
+        val all = LinkedHashMap<String, String>()
+        all["path"] = branch.path.toString()
+        all.putAll(details)
+        all["stack"] = branch.stateStack.joinToString(",")
+        traceLogger.log(ctx.modelElementId, type, message, all)
     }
 }

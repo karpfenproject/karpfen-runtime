@@ -91,13 +91,15 @@ class StateMachineLifecycle(
     fun start() {
         val built = definitions.initialInstances(model.objects).map { factory.build(it, this) }
         install(built)
-        built.forEach(listener::joined)
+        built.forEach { listener.joined(it, null) }
     }
 
     /**
      * Carries out the requests of the tick that ends; see the class description. Instances that leave are told to the
-     * [listener] first, in the order of the tick, then the instances that joined, in their new order. The macro
-     * processor of every instance that leaves is closed. Called on the engine thread at the end of every tick.
+     * [listener] first, in the order of the tick, then the instances that joined, in their new order; an instance that
+     * an exchange put at the place of another is told with the instance it replaces, both when that one leaves and when
+     * it joins. The macro processor of every instance that leaves is closed. Called on the engine thread at the end of
+     * every tick.
      */
     fun applyChanges() {
         val current = instances
@@ -113,6 +115,8 @@ class StateMachineLifecycle(
         val next = ArrayList<SMContext>(current.size + added.size)
         val left = ArrayList<SMContext>()
         val joined = ArrayList<SMContext>()
+        val successors = HashMap<SMContext, SMContext>()
+        val predecessors = HashMap<SMContext, SMContext>()
         for (ctx in current) {
             if (!ctx.hasEnded) {
                 next += ctx
@@ -120,7 +124,12 @@ class StateMachineLifecycle(
             }
             left += ctx
             val name = wanted[ctx.modelElementId] ?: continue
-            build(ctx.modelElementId, name)?.let { next += it; joined += it }
+            build(ctx.modelElementId, name)?.let {
+                next += it
+                joined += it
+                successors[ctx] = it
+                predecessors[it] = ctx
+            }
         }
         for ((objectId, name) in added) {
             if (next.any { it.modelElementId == objectId }) {
@@ -133,9 +142,9 @@ class StateMachineLifecycle(
         install(next)
         for (ctx in left) {
             closeQuietly(ctx)
-            listener.left(ctx)
+            listener.left(ctx, successors[ctx])
         }
-        joined.forEach(listener::joined)
+        joined.forEach { listener.joined(it, predecessors[it]) }
     }
 
     /** Closes the macro processors of every instance, when the engine stops. */
@@ -231,9 +240,15 @@ class StateMachineLifecycle(
  */
 interface StateMachineLifecycleListener {
 
-    /** [ctx] joined the order; it does its first step in the next tick. */
-    fun joined(ctx: SMContext)
+    /**
+     * [ctx] joined the order; it does its first step in the next tick. [predecessor] is the instance on the same object
+     * that `EXCHANGE` replaced by [ctx], or null when [ctx] replaces none.
+     */
+    fun joined(ctx: SMContext, predecessor: SMContext?)
 
-    /** [ctx] left the order; it does no further step. */
-    fun left(ctx: SMContext)
+    /**
+     * [ctx] left the order; it does no further step. [successor] is the instance that `EXCHANGE` put at its place, told
+     * to [joined] afterwards, or null when no instance takes its place.
+     */
+    fun left(ctx: SMContext, successor: SMContext?)
 }

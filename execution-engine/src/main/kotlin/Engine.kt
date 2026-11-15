@@ -211,7 +211,7 @@ class Engine(
     /** The owner of the state machine instances; see [StateMachineLifecycle]. */
     private val lifecycle = StateMachineLifecycle(
         definitions,
-        StateMachineInstanceFactory(metamodel, model, modelQueryProcessor, eventBus, engineId, traceLogger),
+        StateMachineInstanceFactory(metamodel, model, modelQueryProcessor, eventBus, engineId),
         model,
         modelQueryProcessor,
         InstanceReporter()
@@ -257,6 +257,9 @@ class Engine(
      * tick boundary (the contexts are not visible/safe off-thread). A pure SNAP: the target's
      * ENTRY/DO blocks are NOT re-run, so it does not publish further events. Unknown ids/states are
      * logged and ignored (the HTTP layer validates the state name up front for a clean error).
+     *
+     * The forced state starts a new path: the paths the instance ran end, and its single new branch runs on the next
+     * path number of the object. The `INITIAL_STATE` entry names both, as `ends` and `path`.
      */
     fun forceActiveState(modelElementId: String, leaf: String) {
         commandQueue.add { contexts ->
@@ -273,12 +276,13 @@ class Engine(
             eventBus.clearDomain(modelElementId)
             // Empty notEnteredSubstack => pure snap, no ENTRY/DO re-run; empty lineage is safe because
             // the domain bucket was just cleared.
+            val ended = ctx.pathList()
             ctx.branches = mutableListOf(ctx.newBranch(newStack, mutableListOf(), null, emptySet()))
             traceLogger?.log(
                 modelElementId,
                 EngineTraceLogger.TraceEventType.INITIAL_STATE,
                 "Forced state: ${newStack.joinToString(" > ")}",
-                mapOf("stack" to newStack.joinToString(","))
+                mapOf("ends" to ended, "path" to ctx.pathList(), "stack" to newStack.joinToString(","))
             )
         }
     }
@@ -488,10 +492,13 @@ class Engine(
         tickGate.betweenTicks(timeoutMs) { modelQueryProcessor.readModel(read) }
 
     /**
-     * Trace details for a tick. "stack" lists the active states across all branches (equal to the
-     * single stack in simple mode); "currentStates" lists each branch's innermost state.
+     * Trace details for a tick. "path" names the path of the only branch, or "paths" the paths of all
+     * branches while the instance is split, in branch order; "stack" lists the active states across all
+     * branches (equal to the single stack in simple mode); "currentStates" lists each branch's innermost
+     * state, in the same order as "paths".
      */
     private fun tickDetails(ctx: SMContext): Map<String, String> = mapOf(
+        ctx.pathDetail(),
         "stack" to ctx.branches.flatMap { it.stateStack }.joinToString(","),
         "currentStates" to ctx.branches.joinToString(",") { it.currentState() },
         "parallel" to ctx.isParallel().toString()
@@ -600,7 +607,7 @@ class Engine(
             ctx.modelElementId,
             EngineTraceLogger.TraceEventType.SPLIT_START,
             "${split.fromState} -> ${split.toStates.joinToString(",")}",
-            mapOf("from" to split.fromState, "to" to split.toStates.joinToString(","))
+            mapOf("path" to parent.path.toString(), "from" to split.fromState, "to" to split.toStates.joinToString(","))
         )
 
         //Split transition start breakpoint
@@ -635,7 +642,12 @@ class Engine(
             ctx.modelElementId,
             EngineTraceLogger.TraceEventType.SPLIT_FIRED,
             "${split.fromState} -> ${split.toStates.joinToString(",")}",
-            mapOf("from" to split.fromState, "to" to split.toStates.joinToString(","))
+            mapOf(
+                "path" to parent.path.toString(),
+                "starts" to ctx.pathList(),
+                "from" to split.fromState,
+                "to" to split.toStates.joinToString(",")
+            )
         )
 
         //Split transition end breakpoint
@@ -688,7 +700,7 @@ class Engine(
             ctx.modelElementId,
             EngineTraceLogger.TraceEventType.JOIN_START,
             "${join.fromStates.joinToString(",")} -> ${join.toState}",
-            mapOf("from" to join.fromStates.joinToString(","), "to" to join.toState)
+            mapOf("paths" to ctx.pathList(), "from" to join.fromStates.joinToString(","), "to" to join.toState)
         )
 
         //Join transition start breakpoint
@@ -702,6 +714,7 @@ class Engine(
             return
         }
 
+        val ended = ctx.pathList()
         val inherited = ctx.branches.flatMap { it.eventProcessor.lineage() }.toSet()
         val entry = StateStackHelper.computeEntrySequence(emptyList(), targetStack, join.toState)
         val newBranch = ctx.newBranch(targetStack, entry.toMutableList(), join, inherited)
@@ -717,7 +730,12 @@ class Engine(
             ctx.modelElementId,
             EngineTraceLogger.TraceEventType.JOIN_FIRED,
             "${join.fromStates.joinToString(",")} -> ${join.toState}",
-            mapOf("from" to join.fromStates.joinToString(","), "to" to join.toState)
+            mapOf(
+                "ends" to ended,
+                "path" to newBranch.path.toString(),
+                "from" to join.fromStates.joinToString(","),
+                "to" to join.toState
+            )
         )
 
         //Join transition end breakpoint
@@ -816,34 +834,66 @@ class Engine(
      * Tells the features, the trace log and the [stateMachineObserver] about every instance that joins and leaves. An
      * instance that leaves takes its histories, tick counts and breakpoint overrides with it, so an instance that later
      * runs on the same object starts without them.
+     *
+     * The trace log gets one entry per change: `STATE_MACHINE_ATTACHED` for an instance that joins on its own,
+     * `STATE_MACHINE_DETACHED` for one that leaves with no successor, and a single `STATE_MACHINE_EXCHANGED` for an
+     * instance that `EXCHANGE` put at the place of another, written when the new one joins. Every joining instance is
+     * followed by an `INITIAL_STATE` entry with its initial stack. The observer still learns an exchange as the old
+     * instance detached and the new one attached.
      */
     private inner class InstanceReporter : StateMachineLifecycleListener {
 
-        override fun joined(ctx: SMContext) {
+        override fun joined(ctx: SMContext, predecessor: SMContext?) {
+            val id = ctx.modelElementId
+            if (predecessor == null) {
+                traceLogger?.log(
+                    id,
+                    EngineTraceLogger.TraceEventType.STATE_MACHINE_ATTACHED,
+                    "State machine ${describe(ctx)} attached",
+                    mapOf("stateMachine" to (ctx.definitionName ?: ""), "path" to ctx.pathList())
+                )
+            } else {
+                traceLogger?.log(
+                    id,
+                    EngineTraceLogger.TraceEventType.STATE_MACHINE_EXCHANGED,
+                    "State machine ${describe(predecessor)} exchanged for ${describe(ctx)}",
+                    mapOf(
+                        "ended" to (predecessor.definitionName ?: ""),
+                        "started" to (ctx.definitionName ?: ""),
+                        "ends" to predecessor.pathList(),
+                        "path" to ctx.pathList()
+                    )
+                )
+            }
+            val stack = ctx.branches.single().stateStack
             traceLogger?.log(
-                ctx.modelElementId,
-                EngineTraceLogger.TraceEventType.STATE_MACHINE_ATTACHED,
-                "State machine ${describe(ctx)} attached",
-                mapOf("stateMachine" to (ctx.definitionName ?: ""))
+                id,
+                EngineTraceLogger.TraceEventType.INITIAL_STATE,
+                "Initial state stack: ${stack.joinToString(" > ")}",
+                mapOf("path" to ctx.pathList(), "stack" to stack.joinToString(","))
             )
-            stateMachineObserver?.onStateMachineAttached(ctx.modelElementId, ctx.definitionName)
+            stateMachineObserver?.onStateMachineAttached(id, ctx.definitionName)
         }
 
-        override fun left(ctx: SMContext) {
+        override fun left(ctx: SMContext, successor: SMContext?) {
             val id = ctx.modelElementId
             featureManager.executeIfPresent<HistoryFeature> { it.forget(id) }
             featureManager.executeIfPresent<TickLimitFeature> { it.forget(id) }
             featureManager.executeIfPresent<BreakpointFeature> { it.forget(id) }
-            traceLogger?.log(
-                id,
-                EngineTraceLogger.TraceEventType.STATE_MACHINE_DETACHED,
-                "State machine ${describe(ctx)} detached",
-                mapOf("stateMachine" to (ctx.definitionName ?: ""))
-            )
+            if (successor == null) {
+                traceLogger?.log(
+                    id,
+                    EngineTraceLogger.TraceEventType.STATE_MACHINE_DETACHED,
+                    "State machine ${describe(ctx)} detached",
+                    mapOf("stateMachine" to (ctx.definitionName ?: ""), ctx.pathDetail())
+                )
+            }
             stateMachineObserver?.onStateMachineDetached(id, ctx.definitionName)
         }
 
-        private fun describe(ctx: SMContext): String = ctx.definitionName?.let { "'$it'" } ?: "of the run configuration"
+        /** Names the state machine of [ctx] for a message: its definition in quotes, or the run configuration. */
+        private fun describe(ctx: SMContext): String =
+            ctx.definitionName?.let { "'$it'" } ?: "of the run configuration"
     }
 
     /** The timing of [stop] and [close]. */

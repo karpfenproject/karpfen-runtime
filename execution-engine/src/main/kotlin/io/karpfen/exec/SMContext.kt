@@ -43,6 +43,8 @@ import io.karpfen.dsl.states.TransitionLike
  * @property macroProcessor The macro processor of this instance; closed when the instance leaves or the engine stops.
  * @property eventBus The shared event bus; used to mint per-branch event processors.
  * @property branchIdBase Stable prefix for branch event-processor ids, unique for this instance within one run.
+ * @property pathNumbers Hands out the path number of every branch this context builds; shared by all instances of one
+ *   engine, so the numbers on one object go on across instances.
  */
 class SMContext(
     val modelElementId: String,
@@ -54,10 +56,9 @@ class SMContext(
     private val branchIdBase: String,
     var branches: MutableList<Branch>,
     val definitionName: String? = null,
-    val macroProcessor: MacroProcessor? = null
+    val macroProcessor: MacroProcessor? = null,
+    private val pathNumbers: PathNumbers = PathNumbers()
 ) {
-
-    private var branchSeq: Int = 0
 
     /**
      * True once the instance has ended. Set by the thread that removes its object or exchanges its state machine, read
@@ -84,8 +85,18 @@ class SMContext(
     /** True when the machine is currently split across several parallel branches. */
     fun isParallel(): Boolean = branches.size > 1
 
+    /** The path numbers of the current branches, in their order, separated by commas. */
+    fun pathList(): String = branches.joinToString(",") { it.path.toString() }
+
     /**
-     * Creates a new branch with its own event-processor identity. [inheritedIds] seeds the branch's
+     * The trace detail that names the paths of the instance as it stands: `path` with the number of its only branch,
+     * or `paths` with the numbers of all branches while it is split.
+     */
+    fun pathDetail(): Pair<String, String> = if (branches.size == 1) "path" to pathList() else "paths" to pathList()
+
+    /**
+     * Creates a new branch on the next path number of the object, with its own event-processor identity, which ends in
+     * `-p<path>`. [inheritedIds] seeds the branch's
      * consumption lineage (a split child inherits the parent's lineage; a join's branch inherits the
      * union of the joined branches' lineages), so a freshly created branch does not re-handle events
      * its ancestors already handled.
@@ -96,7 +107,8 @@ class SMContext(
         lastFiredTransition: TransitionLike?,
         inheritedIds: Set<String>
     ): Branch {
-        val processor = EventProcessor("$branchIdBase-b${branchSeq++}", eventBus, inheritedIds)
-        return Branch(processor, stateStack, notEnteredSubstack, lastFiredTransition)
+        val path = pathNumbers.next(modelElementId)
+        val processor = EventProcessor("$branchIdBase-p$path", eventBus, inheritedIds)
+        return Branch(processor, path, stateStack, notEnteredSubstack, lastFiredTransition)
     }
 }

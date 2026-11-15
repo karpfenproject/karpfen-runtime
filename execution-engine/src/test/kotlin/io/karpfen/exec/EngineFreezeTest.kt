@@ -100,7 +100,8 @@ class EngineFreezeTest {
 
         assertEquals(instances, run.engine.stateMachineInstances.map { it.objectId to it.definitionName })
         assertEquals("blinking", instances.single { it.first == "b1" }.second)
-        assertEquals(5, run.traces(TraceEventType.STATE_MACHINE_ATTACHED).size)
+        assertEquals(4, run.traces(TraceEventType.STATE_MACHINE_ATTACHED).size)
+        assertEquals(1, run.traces(TraceEventType.STATE_MACHINE_EXCHANGED).size)
         val log = run.log("b1")
         assertEquals(listOf("a") + cycle(listOf("off", "on"), log.size - 1), log)
     }
