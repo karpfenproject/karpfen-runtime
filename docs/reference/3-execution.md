@@ -35,6 +35,9 @@ The life of an environment has these steps. Each step is one call of the HTTP AP
 6. The client stops the environment. The run is frozen: the model, the state machines with their active states and
    the waiting events stay as they are, the phase is `stopped`, and the connections of the clients stay open.
 7. The client may start the environment again. The run continues with the next tick as if there had been no stop.
+8. The client drops the environment when it no longer needs it. Its engine, its Python processes and its connections
+   end, and its key is gone. A client may drop an environment in any phase. An environment that is not dropped stays
+   in the runtime, frozen when it is stopped, until the runtime ends.
 
 The phase `halted` means that the run ended on its own after an error inside the runtime, without a stop call. The
 phase of an environment is part of every model snapshot of [3.4 HTTP API](3.4-http-api.md).

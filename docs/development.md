@@ -33,6 +33,14 @@ running tick end and holds a thread that waits for TickByTick where it waits; `E
 of the events. `Engine.start` continues, `Engine.close` and `EnvironmentThread.dispose` end an engine for good, and
 `EnvironmentHandler.shutdown` does that for every environment when the runtime ends.
 
+`EnvironmentHandler.dropEnv` drops one environment. Under its registry lock, which creating, activating and
+registering clients take as well, the key leaves the three maps and `ClientSessionManager.forgetEnvironment` removes the
+access keys, sessions, subscriptions and queued messages of the environment. Outside the lock `EnvironmentThread.dispose`
+closes the engine; `Engine.close` makes every later wait for a pause return at once, so a breakpoint reached after its
+resume cannot hold the end, and aborts the Python sessions through `PythonSessionPool.abort` when the tick does not end
+within 5 s. Then the sockets close with `EnvironmentHandler.DROPPED`. Keys come from a counter that only grows, so a
+dropped key never returns.
+
 ## Startup
 
 `Main.kt` reads `application.conf` from the working directory, hands the engine defaults to `EnvironmentHandler`,
