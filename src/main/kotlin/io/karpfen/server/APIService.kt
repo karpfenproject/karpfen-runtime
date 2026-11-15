@@ -228,6 +228,16 @@ object APIService {
         EnvironmentHandler.stopEnvironmentThread(envKey)
     }
 
+    /**
+     * Drops the environment [envKey] for good, in every phase, as [EnvironmentHandler.dropEnv] describes. Afterwards
+     * every call with the key answers as for an environment that never existed.
+     *
+     * @throws IllegalArgumentException when the environment does not exist.
+     */
+    fun dropEnvironment(envKey: String) {
+        EnvironmentHandler.dropEnv(envKey)
+    }
+
     fun registerClientForWebSocket(clientId: String, envKey: String): String {
         if (EnvironmentHandler.getEnv(envKey) == null) {
             throw IllegalArgumentException("Environment with key $envKey does not exist")
@@ -299,8 +309,7 @@ object APIService {
         if (EnvironmentHandler.getEnv(envKey) == null) {
             throw IllegalArgumentException("Environment with key $envKey does not exist")
         }
-        val accessKey = EnvironmentHandler.registerClientSession(clientId, envKey)
-        EnvironmentHandler.clientSessionManager.subscribeToObservatory(envKey, clientId, modelElement)
+        val accessKey = EnvironmentHandler.registerObservatorySession(clientId, envKey, modelElement)
         println("[APIService] Observatory client $clientId registered for environment $envKey, element $modelElement with accessKey $accessKey")
         return accessKey
     }

@@ -251,6 +251,11 @@ class MacroProcessor(
         pythonSessions.close()
     }
 
+    /** Ends every Python session of this processor at once, also one a call waits for; see [PythonSessionPool.abort]. */
+    fun abort() {
+        pythonSessions.abort()
+    }
+
     /**
      * Parses the raw string result from Python execution into the expected type.
      *

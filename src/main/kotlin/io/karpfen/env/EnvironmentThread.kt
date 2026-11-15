@@ -93,6 +93,10 @@ class EnvironmentThread(
     /** The time of the latest [stop] that froze the environment, for the events that clients sent while it was frozen. */
     private var frozenAt: Long = 0L
 
+    /** True once [dispose] began; from then on [launch] and [stop] do nothing and events from clients are dropped. */
+    @Volatile
+    private var disposed = false
+
     /** The relay that [setup] wires, which pushes the notices of [stop] and [launch]. */
     private var relay: ObservationRelay? = null
 
@@ -199,8 +203,9 @@ class EnvironmentThread(
         println("[EnvironmentThread] Setup complete for environment ${environment.key}")
     }
 
-    /** Accepts an externally produced Event and queues it for publication on the bus. */
+    /** Accepts an externally produced Event and queues it for publication on the bus; dropped once disposed. */
     fun acceptExternalEvent(event: Event) {
+        if (disposed) return
         incomingExternalEvents.offer(event)
     }
 
@@ -227,10 +232,13 @@ class EnvironmentThread(
      *   tick, the events that clients sent while the environment was stopped get back the time it was stopped, and
      *   after a stop every connected client is told through `engineStatus` with the phase `running`.
      *
-     * @return `true` when something was started, `false` when the environment was already running.
+     * A disposed environment starts nothing.
+     *
+     * @return `true` when something was started, `false` when the environment was already running or is disposed.
      */
     @Synchronized
     fun launch(): Boolean {
+        if (disposed) return false
         if (runState == RunState.RUNNING && runner?.isAlive == true) {
             if (engine.isTicking) {
                 return false
@@ -266,7 +274,7 @@ class EnvironmentThread(
      */
     @Synchronized
     fun stop(): Boolean {
-        if (runState != RunState.RUNNING) return false
+        if (disposed || runState != RunState.RUNNING) return false
         runState = RunState.STOPPED
         isRunning = false
         runner?.join(RUNNER_JOIN_MS)
@@ -277,14 +285,19 @@ class EnvironmentThread(
     }
 
     /**
-     * Ends this environment for good, as when the runtime shuts down: ends the event loop and closes the engine with
-     * its Python sessions and its trace log. The environment does not start again.
+     * Ends this environment for good, when it is dropped or the runtime shuts down: ends the event loop, drops the
+     * events that wait in its queue and closes the engine, which ends its thread and the threads of its branches,
+     * releases a pause or a halt, and closes the Python sessions and the trace log; see [Engine.close]. A [launch] or
+     * [stop] under way finishes first, and the environment does not start again. Disposing twice changes nothing.
      */
     @Synchronized
     fun dispose() {
+        if (disposed) return
+        disposed = true
         runState = RunState.STOPPED
         isRunning = false
         runner?.join(RUNNER_JOIN_MS)
+        incomingExternalEvents.clear()
         engine.close()
     }
 

@@ -222,6 +222,17 @@ object HTTPRoutes {
                 }
             }
 
+            post("/dropEnvironment") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    APIService.dropEnvironment(envKey)
+                    call.respond(HttpStatusCode.OK, "")
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
             get("/health") {
                 // Respond with an explicit JSON string + content type. We cannot use
                 // call.respond(map) here because no ContentNegotiation/JSON serializer

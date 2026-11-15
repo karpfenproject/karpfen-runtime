@@ -192,6 +192,25 @@ class ClientSessionManager {
     }
 
     /**
+     * Subscribes [clientId] to the whole model of [environmentKey] as [subscribeToModel] does, but only while the client
+     * has an attached session for the environment. The check and the subscription happen together, holding the
+     * subscriptions lock and inside it the sessions lock, so a subscription never outlives a [forgetEnvironment] that
+     * runs at the same time.
+     *
+     * @return `true` when the client was connected and is subscribed now, `false` when it has no attached session.
+     */
+    fun subscribeToModelIfConnected(environmentKey: String, clientId: String): Boolean {
+        subscriptionsLock.writeLock().lock()
+        try {
+            if (getSessionForClient(environmentKey, clientId) == null) return false
+            modelSubscriptions.getOrPut(environmentKey) { LinkedHashSet() }.add(clientId)
+            return true
+        } finally {
+            subscriptionsLock.writeLock().unlock()
+        }
+    }
+
+    /**
      * Ends the model subscription of [clientId] in [environmentKey]: no new object or stack push is enqueued for the
      * client because of it. Its object observations and its observatory registration stay. Idempotent.
      */
@@ -315,15 +334,57 @@ class ClientSessionManager {
     }
 
     /**
-     * Closes all sessions of an environment with [reason], when the runtime shuts down.
-     *
-     * The sessions are removed under the write lock; each is then closed outside the lock in a coroutine launched in
-     * the session itself, so the calling HTTP thread never blocks on a client that does not read. Failures are printed
-     * and do not stop the other closes. The socket handler unregisters a closed session by its access key afterwards,
-     * which then finds nothing to remove. Subscriptions stay, keyed by environment and client id.
+     * Closes all sessions of an environment with [reason], when the runtime shuts down. The sessions are removed under
+     * the write lock and then closed as [closeSessions] describes. Subscriptions stay, keyed by environment and client
+     * id.
      */
     fun closeEnvironmentSessions(environmentKey: String, reason: CloseReason) {
-        for (clientSession in removeEnvironmentSessions(environmentKey)) {
+        closeSessions(removeEnvironmentSessions(environmentKey), reason)
+    }
+
+    /**
+     * Forgets everything this manager holds for [environmentKey], when the environment is dropped: the access keys not
+     * yet used, the attached sessions, the object, domain, observatory and model subscriptions, and the messages for it
+     * that wait in the outgoing queue. Afterwards no push for the environment is enqueued any more, and a socket can no
+     * longer authenticate with one of its access keys. The subscriptions lock is taken first and the sessions lock inside
+     * it, as in [subscribeToModelIfConnected].
+     *
+     * @return the sessions that were attached, still open; the caller closes them with [closeSessions].
+     */
+    fun forgetEnvironment(environmentKey: String): List<ClientSession> {
+        val sessions: List<ClientSession>
+        subscriptionsLock.writeLock().lock()
+        try {
+            sessionsLock.writeLock().lock()
+            try {
+                sessions = clientSessions.remove(environmentKey)?.values?.toList() ?: emptyList()
+                pendingRegistrations.remove(environmentKey)
+            } finally {
+                sessionsLock.writeLock().unlock()
+            }
+            objectSubscriptions.remove(environmentKey)
+            domainSubscriptions.remove(environmentKey)
+            observatorySubscriptions.remove(environmentKey)
+            modelSubscriptions.remove(environmentKey)
+        } finally {
+            subscriptionsLock.writeLock().unlock()
+        }
+        discardOutgoing(environmentKey)
+        return sessions
+    }
+
+    /** Removes every message for [environmentKey] from the outgoing queue that the broadcaster has not taken yet. */
+    fun discardOutgoing(environmentKey: String) {
+        outgoingMessageQueue.removeIf { it.environmentKey == environmentKey }
+    }
+
+    /**
+     * Closes [sessions] with [reason]. Each is closed in a coroutine launched in the session itself, so the calling HTTP
+     * thread never blocks on a client that does not read. Failures are printed and do not stop the other closes. The
+     * socket handler unregisters a closed session by its access key afterwards, which then finds nothing to remove.
+     */
+    fun closeSessions(sessions: List<ClientSession>, reason: CloseReason) {
+        for (clientSession in sessions) {
             try {
                 clientSession.session.launch {
                     try {

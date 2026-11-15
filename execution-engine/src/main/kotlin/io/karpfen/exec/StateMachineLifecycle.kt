@@ -152,6 +152,19 @@ class StateMachineLifecycle(
         instances.forEach(::closeQuietly)
     }
 
+    /**
+     * Ends the Python sessions of every instance at once, also those a running EVAL waits for, when the engine ends for
+     * good and its tick does not end on its own.
+     */
+    fun abort() {
+        for (ctx in instances) {
+            try {
+                ctx.macroProcessor?.abort()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     override fun requireAttachable(name: String, typeName: String) {
         definitions.requireAttachable(name, typeName)
     }

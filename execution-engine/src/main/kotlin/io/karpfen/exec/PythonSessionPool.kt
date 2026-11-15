@@ -25,6 +25,12 @@ interface PythonSession {
 
     /** Ends the process. */
     fun close()
+
+    /**
+     * Ends the process at once, also while another thread waits in [execute] for its answer; that call then fails.
+     * Called only when the engine ends for good.
+     */
+    fun abort() = close()
 }
 
 /**
@@ -51,6 +57,9 @@ class PythonSessionPool(private val newSession: () -> PythonSession) {
 
     /** The number of sessions this pool created and has not closed. Guarded by this pool. */
     private var created = 0
+
+    /** The sessions that calls use now. Guarded by this pool. */
+    private val busy = HashSet<PythonSession>()
 
     /** The number of sessions this pool created and has not closed. */
     val size: Int
@@ -80,18 +89,32 @@ class PythonSessionPool(private val newSession: () -> PythonSession) {
         toClose.forEach { it.close() }
     }
 
+    /**
+     * Ends every session at once, the busy ones too, so a call that waits for Python fails instead of holding up the
+     * end of the engine; used when the engine ends for good and a tick does not end on its own.
+     */
+    fun abort() {
+        val toAbort = synchronized(this) {
+            closed = true
+            created -= idle.size
+            (idle.toList() + busy).also { idle.clear() }
+        }
+        toAbort.forEach { it.abort() }
+    }
+
     /** Takes the most recently used idle session, or creates one. */
     @Synchronized
     private fun borrow(): PythonSession {
         check(!closed) { "The Python sessions of this state machine are closed" }
-        idle.removeLastOrNull()?.let { return it }
-        created++
-        return newSession()
+        val session = idle.removeLastOrNull() ?: newSession().also { created++ }
+        busy += session
+        return session
     }
 
     /** Puts [session] back for the next call, or closes it when the pool was closed meanwhile. */
     private fun giveBack(session: PythonSession) {
         val keep = synchronized(this) {
+            busy -= session
             if (!closed) idle.addLast(session) else created--
             !closed
         }

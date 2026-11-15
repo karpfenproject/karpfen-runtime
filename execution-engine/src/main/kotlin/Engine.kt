@@ -747,9 +747,11 @@ class Engine(
     /**
      * Runs the wait of the pause of [TickByTickFeature] with the [tickGate] open, as [TickGate.outsideTick] does, and
      * then holds the thread while a [stop] froze the engine, so a resume or ticks given while the engine is frozen take
-     * effect only after the next [start].
+     * effect only after the next [start]. Once [close] began the thread does not wait at all, so a breakpoint that a
+     * thread reaches after the resume of [close], in the same tick or in a branch, cannot hold the end of the engine.
      */
     private fun waitOutsideTick(wait: () -> Unit) {
+        if (closed) return
         tickGate.outsideTick {
             parkedInWait = true
             try {
@@ -807,8 +809,10 @@ class Engine(
 
     /**
      * Ends the engine for good: stops the run, releases a thread held by [stop] and the pause of [TickByTickFeature] so
-     * that the thread can end, waits for it as [stop] does, and closes the Python sessions and the trace log. The
-     * engine does not start again.
+     * that the thread can end, and waits for it: the running tick ends, and the threads of branches end with the engine
+     * thread. A thread that has not ended within 5 s, as one whose EVAL waits for Python, first loses its Python
+     * sessions, which ends that wait, and is then interrupted. At the end the Python sessions and the trace log are
+     * closed; the trace file stays on disk. The engine does not start again.
      */
     fun close() = synchronized(lifeLock) {
         closed = true
@@ -819,6 +823,7 @@ class Engine(
             try {
                 t.join(STOP_WAIT_MS)
                 if (t.isAlive) {
+                    lifecycle.abort()
                     t.interrupt()
                     t.join(STOP_WAIT_MS)
                 }

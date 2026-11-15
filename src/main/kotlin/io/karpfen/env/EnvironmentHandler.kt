@@ -20,8 +20,29 @@ import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.websocket.ClientSessionManager
 import io.ktor.websocket.CloseReason
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
+/**
+ * The registry of the environments of the runtime: the configured ones in [envs], the activated ones in [activeEnvs]
+ * with their [executionThreads], and the [clientSessionManager] with the WebSocket clients of all of them.
+ *
+ * Creating, activating, registering clients and dropping take the [registryLock] for their changes of the registry,
+ * so an environment that is dropped leaves nothing behind that one of those calls adds at the same time. Ending the
+ * engine of a dropped environment, which may take a while, happens outside the lock.
+ */
 object EnvironmentHandler {
+
+    /** The close code and reason of the sockets of a dropped environment. */
+    val DROPPED: CloseReason = CloseReason(CloseReason.Codes.NORMAL, "Environment dropped")
+
+    /** The close code and reason of the sockets of every environment when the runtime ends. */
+    val RUNTIME_STOPPED: CloseReason = CloseReason(CloseReason.Codes.GOING_AWAY, "Runtime stopped")
+
+    /** Guards the changes of the registry that must not interleave with a drop; see the class description. */
+    private val registryLock = Any()
+
+    /** The milliseconds of the latest key that [createUniqueEnv] handed out; keys only grow, so none comes twice. */
+    private val lastKeyMillis = AtomicLong(0L)
 
     val envs: MutableMap<String, Environment> = ConcurrentHashMap()
     val activeEnvs: MutableMap<String, Environment> = ConcurrentHashMap()
@@ -58,18 +79,18 @@ object EnvironmentHandler {
     /**
      * Creates an environment under a key never handed out before, `env-<epoch millis>`.
      *
-     * The key is claimed with `putIfAbsent`; when the key of the current millisecond is taken, the next millisecond is
-     * tried, and so on. Keys therefore keep their shape and stay unique also when several environments are created
-     * within one millisecond.
+     * The milliseconds of a key are the current time, or one more than those of the latest key when that is not
+     * earlier, so the keys grow with every call and a key of a dropped environment never comes again, also when
+     * several environments are created within one millisecond. The key is claimed with `putIfAbsent`, and a key taken
+     * by [createEnv] is skipped.
      */
     fun createUniqueEnv(): Environment {
-        var millis = System.currentTimeMillis()
         while (true) {
+            val millis = lastKeyMillis.updateAndGet { last -> maxOf(System.currentTimeMillis(), last + 1) }
             val env = newEnvironment("env-$millis")
             if (envs.putIfAbsent(env.key, env) == null) {
                 return env
             }
-            millis++
         }
     }
 
@@ -96,7 +117,7 @@ object EnvironmentHandler {
      * or the thread, or its setup, fails, the claim is removed and the trace logger closed before the exception
      * propagates, so the environment stays configurable.
      */
-    fun activeEnv(key: String) {
+    fun activeEnv(key: String) = synchronized(registryLock) {
         val env = envs[key] ?: throw IllegalArgumentException("Environment with key '$key' does not exist.")
         if (activeEnvs.putIfAbsent(key, env) != null) {
             throw IllegalStateException(
@@ -134,11 +155,54 @@ object EnvironmentHandler {
         return activeEnvs.containsKey(key)
     }
 
-    fun registerClientSession(clientId: String, envKey: String): String {
+    /** Issues an access key for [clientId] in the environment [envKey]. */
+    fun registerClientSession(clientId: String, envKey: String): String = synchronized(registryLock) {
         if (envs[envKey] == null) {
             throw IllegalArgumentException("Environment with key '$envKey' does not exist.")
         }
-        return clientSessionManager.registerClientAccess(clientId, envKey)
+        clientSessionManager.registerClientAccess(clientId, envKey)
+    }
+
+    /**
+     * Issues an access key for the observatory client [clientId] in the environment [envKey] and subscribes it to the
+     * traces and states of [modelElement], `*` for all, in one step under the [registryLock].
+     */
+    fun registerObservatorySession(clientId: String, envKey: String, modelElement: String): String =
+        synchronized(registryLock) {
+            val accessKey = registerClientSession(clientId, envKey)
+            clientSessionManager.subscribeToObservatory(envKey, clientId, modelElement)
+            accessKey
+        }
+
+    /**
+     * Drops the environment [envKey] for good, in every phase.
+     *
+     * Under the [registryLock] the key leaves [envs], [activeEnvs] and [executionThreads], and the
+     * [clientSessionManager] forgets its access keys, sessions, subscriptions and queued messages. From then on every
+     * call with the key finds no environment, and no push for it reaches a client. Outside the lock the execution thread
+     * is disposed, which ends the event loop and closes the engine: its thread and the threads of branches end, a pause
+     * of TickByTick or a halt at a breakpoint is released, the Python sessions end and the trace log is closed and
+     * stays on disk. Messages the last tick enqueued meanwhile are discarded, and then the sockets of the clients are
+     * closed with [DROPPED]. The call returns after all of that, normally within the rest of the running tick.
+     *
+     * A drop that comes while a stop or a start is under way waits for it. Of two drops of one environment at the same
+     * time, one drops it and the other finds no environment.
+     *
+     * @throws IllegalArgumentException when there is no environment [envKey].
+     */
+    fun dropEnv(envKey: String) {
+        val (envThread, sessions) = synchronized(registryLock) {
+            envs.remove(envKey) ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+            activeEnvs.remove(envKey)
+            executionThreads.remove(envKey) to clientSessionManager.forgetEnvironment(envKey)
+        }
+        try {
+            envThread?.dispose()
+        } finally {
+            clientSessionManager.discardOutgoing(envKey)
+            clientSessionManager.closeSessions(sessions, DROPPED)
+        }
+        println("[EnvironmentHandler] Dropped environment $envKey")
     }
 
     /**
@@ -177,7 +241,7 @@ object EnvironmentHandler {
      */
     fun shutdown() {
         for ((key, envThread) in executionThreads) {
-            clientSessionManager.closeEnvironmentSessions(key, CloseReason(CloseReason.Codes.GOING_AWAY, "Runtime stopped"))
+            clientSessionManager.closeEnvironmentSessions(key, RUNTIME_STOPPED)
             runCatching { envThread.dispose() }
         }
     }
