@@ -23,7 +23,44 @@ import io.karpfen.dsl.states.State
 import io.karpfen.dsl.states.StateMachine
 import io.karpfen.dsl.states.Transition
 
+/**
+ * Answers questions about the states and transitions of [stateMachine], whose states must not change while the
+ * helper is in use.
+ *
+ * The states by name and the path from the outermost state to each state are indexed on first use, because the engine
+ * asks for them several times per tick. When two states share a name, the index keeps the first in the order of a
+ * depth-first walk of the state tree, the state a search from the top would find.
+ */
 class StateMachineQueryHelper(val stateMachine: StateMachine) {
+
+    /** The paths of all states by name, outermost state first, each ending with the named state. */
+    private val pathsByName: Map<String, List<String>> by lazy {
+        val paths = HashMap<String, List<String>>()
+        indexPaths(stateMachine.states, emptyList(), paths)
+        paths
+    }
+
+    /** The states by name, the first of the walk when names repeat. */
+    private val statesByName: Map<String, State> by lazy {
+        val states = HashMap<String, State>()
+        indexStates(stateMachine.states, states)
+        states
+    }
+
+    private fun indexPaths(states: List<State>, above: List<String>, into: MutableMap<String, List<String>>) {
+        for (state in states) {
+            val path = above + state.name
+            into.putIfAbsent(state.name, path)
+            indexPaths(state.innerStates, path, into)
+        }
+    }
+
+    private fun indexStates(states: List<State>, into: MutableMap<String, State>) {
+        for (state in states) {
+            into.putIfAbsent(state.name, state)
+            indexStates(state.innerStates, into)
+        }
+    }
 
     /**
      * Returns the stack an instance starts in, outermost first: the start path of [InitialStates.startPath], the rule
@@ -83,32 +120,12 @@ class StateMachineQueryHelper(val stateMachine: StateMachine) {
 
     /**
      * Returns the full state stack (path from root to the named state) for a given state name.
-     * Searches recursively through the entire state tree.
      *
      * @return A list of state names from outermost to innermost, ending with [stateName],
      *         or an empty list if the state is not found.
      */
-    fun getStateStackForState(stateName: String): List<String> {
-        val path = mutableListOf<String>()
-        if (findStatePath(stateMachine.states, stateName, path)) {
-            return path
-        }
-        return emptyList()
-    }
-
-    private fun findStatePath(states: List<State>, target: String, path: MutableList<String>): Boolean {
-        for (state in states) {
-            path.add(state.name)
-            if (state.name == target) {
-                return true
-            }
-            if (findStatePath(state.innerStates, target, path)) {
-                return true
-            }
-            path.removeAt(path.lastIndex)
-        }
-        return false
-    }
+    fun getStateStackForState(stateName: String): List<String> =
+        pathsByName[stateName]?.let(::ArrayList) ?: emptyList()
 
     /**
      * Returns all states reachable from the given state via a single transition.
@@ -131,18 +148,7 @@ class StateMachineQueryHelper(val stateMachine: StateMachine) {
     }
 
     /**
-     * Finds a [State] object by name, searching recursively.
+     * Finds a [State] object by name, from the index of states.
      */
-    fun findStateByName(stateName: String): State? {
-        return findStateByNameRecursive(stateMachine.states, stateName)
-    }
-
-    private fun findStateByNameRecursive(states: List<State>, name: String): State? {
-        for (state in states) {
-            if (state.name == name) return state
-            val found = findStateByNameRecursive(state.innerStates, name)
-            if (found != null) return found
-        }
-        return null
-    }
+    fun findStateByName(stateName: String): State? = statesByName[stateName]
 }
