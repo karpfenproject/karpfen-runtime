@@ -134,11 +134,15 @@ class BranchRunner(
                 "onDo for state '$currentStateName' is empty — skipped", mapOf("state" to currentStateName))
         }
 
+        // The events offered to this step are those on the bus before the transitions are looked at. An event that
+        // arrives while they are looked at, from a client or from a branch on another thread, is not burned here and
+        // is offered to the next step.
+        val offered = offeredEvents(ctx, branch)
         val fireable = findFireable(ctx, branch, allowSplit)
         if (fireable != null) return applyOrRequest(ctx, branch, fireable)
 
         // Nothing fired: burn events that were offered to this branch but consumed by nothing.
-        burnDispatchedEvents(ctx, branch)
+        offered.forEach(branch.eventProcessor::consume)
         return BranchTickResult.Stable
     }
 
@@ -246,21 +250,23 @@ class BranchRunner(
         }
     }
 
-    /** Consumes (for this branch's lineage) every event that matched a trigger but fired nothing. */
-    private fun burnDispatchedEvents(ctx: SMContext, branch: Branch) {
+    /**
+     * The events not yet handled by the lineage of [branch] that a transition of its active states waits for: those
+     * that the step burns when nothing fires.
+     */
+    private fun offeredEvents(ctx: SMContext, branch: Branch): Set<Event> {
         val ep = branch.eventProcessor
-        val burned = HashSet<Event>()
+        val offered = LinkedHashSet<Event>()
         for (stateName in branch.stateStack) {
             for (transition in ctx.stateMachine.outgoingFrom(stateName)) {
                 for (clause in transition.condition.leafClauses()) {
                     if (clause is EventCondition) {
-                        for (event in ep.getEvents(clause.eventDomain, clause.eventValue)) {
-                            if (burned.add(event)) ep.consume(event)
-                        }
+                        offered += ep.getEvents(clause.eventDomain, clause.eventValue)
                     }
                 }
             }
         }
+        return offered
     }
 
     /**
