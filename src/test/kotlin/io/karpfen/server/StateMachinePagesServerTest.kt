@@ -89,6 +89,18 @@ class StateMachinePagesServerTest {
     }
 
     @Test
+    fun `an upload that starts with a byte order mark is read like the same text without it`() {
+        val envKey = configured()
+
+        APIService.receiveStateMachine(envKey, null, "\uFEFF" + BULB_TEST)
+        APIService.runEnvironment(envKey)
+
+        val env = assertNotNull(EnvironmentHandler.getEnv(envKey))
+        assertEquals(listOf("bulb test"), env.stateMachineFragments.keys.toList())
+        assertTrue(EnvironmentHandler.isActiveEnv(envKey))
+    }
+
+    @Test
     fun `fragments and attachable state machines share one name space and the latest upload holds the name`() {
         val envKey = configured()
         val attachable = """
