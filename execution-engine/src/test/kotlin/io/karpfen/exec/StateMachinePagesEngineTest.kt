@@ -293,6 +293,10 @@ class StateMachinePagesEngineTest {
         run.awaitStack("self test", "self test/lit")
         run.engine.forceActiveState(LAMP, "self test/dark")
         run.awaitStack("self test", "self test/dark")
+        val reached = run.ticks()
+        run.await("two more ticks") { run.ticks() >= reached + 2 }
+
+        assertEquals(emptyList(), run.log(), "a forced state runs no ENTRY block")
 
         val forced = run.traces(TraceEventType.INITIAL_STATE).map { it.message }
         assertEquals(
@@ -303,6 +307,100 @@ class StateMachinePagesEngineTest {
             ),
             forced
         )
+    }
+
+    @Test
+    fun `the mark of a fragment is not seen from the state machine that uses it`() {
+        val run = run(HIDDEN_MARK_LAMP, LEVELS)
+
+        run.awaitStack("spare", "ready")
+
+        assertEquals(listOf("spare", "ready"), run.stacks().first())
+    }
+
+    @Test
+    fun `a marked container state starts in the marked state of its fragment`() {
+        val marked = HIDDEN_MARK_LAMP.replace("CONTAINER STATE \"on\"", "INITIAL CONTAINER STATE \"on\"")
+            .replace("INITIAL STATE \"ready\"", "STATE \"ready\"")
+        val run = run(marked, LEVELS)
+
+        run.awaitStack("on", "on/dimmed")
+
+        assertEquals(listOf("on", "on/dimmed"), run.stacks().first())
+    }
+
+    @Test
+    fun `a transition from a container state to itself enters the container and the start of its fragment again`() {
+        val again = SELF_TEST_LAMP.replace(
+            "TRANSITION \"self test\" -> \"off\"",
+            "TRANSITION \"self test\" -> \"self test\" { CONDITION { EVENT(\"t\", \"again\") } }\n" +
+                "                    TRANSITION \"self test\" -> \"off\""
+        )
+        val run = run(again, BULB_TEST)
+
+        run.awaitStack("off")
+        run.send("test")
+        run.awaitStack("self test", "self test/lit")
+        run.send("next")
+        run.awaitStack("self test", "self test/dark")
+        run.send("again")
+        run.awaitStack("self test", "self test/lit")
+        run.await("the second entry of self test/lit") { run.log().size == 3 }
+
+        assertEquals(listOf("lit", "dark", "lit"), run.log())
+        val entered = run.traces(TraceEventType.STATE_ENTRY_SKIP).map { it.details["state"] }
+        assertEquals(2, entered.count { it == "self test" }, "the container state is entered again")
+    }
+
+    @Test
+    fun `the same behaviour as a compound state and as a container state gives the same ticks with other names`() {
+        val compound = run(COMPOUND_SELF_TEST)
+        val container = run(CONTAINER_SELF_TEST, RUNNING_TEST)
+
+        compound.awaitLog("on")
+        container.awaitLog("on")
+
+        assertEquals(
+            listOf("self test,lit", "self test,dark", "self test,passed", "on"),
+            compound.tickEndStacks().take(4)
+        )
+        assertEquals(
+            listOf("self test,self test/lit", "self test,self test/dark", "self test,self test/passed", "on"),
+            container.tickEndStacks().take(4)
+        )
+        assertEquals(compound.entryTicks(), container.entryTicks())
+        assertEquals(listOf(2, 3, 5), compound.entryTicks())
+    }
+
+    @Test
+    fun `a transition into a compound state rests on it and enters none of its inner states`() {
+        val run = run(COMPOUND_SELF_TEST.replace("\"off\" -> \"lit\"", "\"off\" -> \"self test\""))
+
+        run.awaitStack("self test")
+        val reached = run.ticks()
+        run.await("three more ticks") { run.ticks() >= reached + 3 }
+
+        assertEquals(listOf(listOf("self test")), run.stacks())
+        assertEquals(emptyList(), run.log())
+    }
+
+    @Test
+    fun `a compound state with a history rests on itself for one tick before it leads on to the remembered state`() {
+        val run = run(COMPOUND_HISTORY_LAMP, features = arrayOf(HistoryFeature::class))
+
+        run.awaitStack("off")
+        run.send("test")
+        run.awaitStack("c", "a")
+        run.send("next")
+        run.awaitStack("c", "b")
+        run.send("abort")
+        run.awaitStack("off")
+        run.send("back")
+        run.awaitStack("c", "b")
+
+        assertEquals(listOf(listOf("off"), listOf("c"), listOf("c", "b")), run.stacks().takeLast(3))
+        val ends = run.tickEndStacks()
+        assertEquals("c,b", ends[ends.indexOfLast { it == "c" } + 1], "the remembered state follows in the next tick")
     }
 
     @Test
@@ -457,6 +555,21 @@ class StateMachinePagesEngineTest {
 
         /** The stacks at the end of every tick of the host state machine, as the trace log writes them. */
         fun tickEndStacks(): List<String> = traces(TraceEventType.TICK_END).map { it.details.getValue("stack") }
+
+        /**
+         * The ticks in which an ENTRY block with actions ran for the host state machine, in order, counted from the
+         * first tick of the engine.
+         */
+        fun entryTicks(): List<Int> {
+            val snapshot = entries.toList().filter { it.modelElementId == objectId }
+            var tick = 0
+            val ticks = ArrayList<Int>()
+            for (entry in snapshot) {
+                if (entry.eventType == TraceEventType.TICK_START) tick = entry.message.removePrefix("Tick #").toInt()
+                if (entry.eventType == TraceEventType.STATE_ENTRY_EXEC) ticks += tick
+            }
+            return ticks
+        }
 
         /** Sends the event [name] of the domain `t` from outside. */
         fun send(name: String) = engine.receiveExternalEvent(Event("t", name))
@@ -704,6 +817,102 @@ class StateMachinePagesEngineTest {
                 TRANSITIONS {
                     SPLIT "off" -> "left", "right" { CONDITION { EVENT("t", "test") } }
                     JOIN "left", "right" -> "both done" { CONDITION { DONE } }
+                }
+            }
+        """
+
+        /** A fragment whose marked state is its second one. */
+        val LEVELS = """
+            STATEMACHINE "levels" FRAGMENT {
+                STATES {
+                    STATE "full" { }
+                    INITIAL STATE "dimmed" { }
+                    FINAL STATE "out" { }
+                }
+                TRANSITIONS { }
+            }
+        """
+
+        /** The container state `on` comes before `spare`, which holds the mark of the state machine itself. */
+        val HIDDEN_MARK_LAMP = """
+            STATEMACHINE ATTACHED TO "Lamp" {
+                STATES {
+                    STATE "off" { }
+                    CONTAINER STATE "on" USE "levels" { }
+                    STATE "spare" {
+                        INITIAL STATE "ready" { }
+                    }
+                }
+                TRANSITIONS { }
+            }
+        """
+
+        /** The self test written with a compound state: the transitions lead into its inner states. */
+        val COMPOUND_SELF_TEST = """
+            STATEMACHINE ATTACHED TO "Lamp" {
+                STATES {
+                    INITIAL STATE "off" { }
+                    STATE "self test" {
+                        STATE "lit" { ENTRY { APPEND("log", "lit") } }
+                        STATE "dark" { ENTRY { APPEND("log", "dark") } }
+                        STATE "passed" { }
+                    }
+                    STATE "on" { ENTRY { APPEND("log", "on") } }
+                }
+                TRANSITIONS {
+                    TRANSITION "off" -> "lit" { }
+                    TRANSITION "lit" -> "dark" { }
+                    TRANSITION "dark" -> "passed" { }
+                    TRANSITION "passed" -> "on" { }
+                }
+            }
+        """
+
+        /** The bulb test without events: lit, dark and passed one tick after the other. */
+        val RUNNING_TEST = """
+            STATEMACHINE "bulb test" FRAGMENT {
+                STATES {
+                    INITIAL STATE "lit" { ENTRY { APPEND("log", "lit") } }
+                    STATE "dark" { ENTRY { APPEND("log", "dark") } }
+                    FINAL STATE "passed" { }
+                }
+                TRANSITIONS {
+                    TRANSITION "lit" -> "dark" { }
+                    TRANSITION "dark" -> "passed" { }
+                }
+            }
+        """
+
+        /** The self test written with a container state that uses [RUNNING_TEST]. */
+        val CONTAINER_SELF_TEST = """
+            STATEMACHINE ATTACHED TO "Lamp" {
+                STATES {
+                    INITIAL STATE "off" { }
+                    CONTAINER STATE "self test" USE "bulb test" { }
+                    STATE "on" { ENTRY { APPEND("log", "on") } }
+                }
+                TRANSITIONS {
+                    TRANSITION "off" -> "self test" { }
+                    TRANSITION "self test" -> "on" { CONDITION { DONE } }
+                }
+            }
+        """
+
+        /** A compound state `c` with a shallow history around `a` and `b`. */
+        val COMPOUND_HISTORY_LAMP = """
+            STATEMACHINE ATTACHED TO "Lamp" {
+                STATES {
+                    INITIAL STATE "off" { }
+                    SHALLOW HISTORY STATE "c" {
+                        STATE "a" { }
+                        STATE "b" { }
+                    }
+                }
+                TRANSITIONS {
+                    TRANSITION "off" -> "a" { CONDITION { EVENT("t", "test") } }
+                    TRANSITION "a" -> "b" { CONDITION { EVENT("t", "next") } }
+                    TRANSITION "c" -> "off" { CONDITION { EVENT("t", "abort") } }
+                    TRANSITION "off" -> "c" { CONDITION { EVENT("t", "back") } }
                 }
             }
         """
