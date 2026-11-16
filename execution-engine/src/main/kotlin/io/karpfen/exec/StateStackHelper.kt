@@ -60,6 +60,21 @@ object StateStackHelper {
     }
 
     /**
+     * Computes which states need their ENTRY block to run when moving from [oldStack] to [restingStack], the stack the
+     * branch rests on after entering [target] with [targetStack], the path from the top to [target]. [restingStack]
+     * starts with [targetStack] and goes on below [target] when [target] is a container state (see
+     * [StateMachineQueryHelper.getEnteredStack]). The states of [targetStack] are entered as [computeEntrySequence]
+     * says, so a transition from a container state to itself leaves and enters the container again, and every state
+     * below [target] is entered after them.
+     */
+    fun computeEntrySequence(
+        oldStack: List<String>,
+        targetStack: List<String>,
+        target: String,
+        restingStack: List<String>
+    ): List<String> = computeEntrySequence(oldStack, targetStack, target) + restingStack.drop(targetStack.size)
+
+    /**
      * Computes which states are left when moving from [oldStack] to [newStack] with target state [target], innermost
      * first.
      *

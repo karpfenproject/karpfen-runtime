@@ -229,8 +229,14 @@ class Engine(
     fun stateMachineOf(objectId: String): StateMachine? =
         lifecycle.view.firstOrNull { it.objectId == objectId }?.stateMachine
 
+    /**
+     * Finds the stack a branch rests on when it enters a state, going down into container states. Shared by the
+     * [branchRunner] and the splits, joins and forced states of the engine.
+     */
+    private val stateEntry = StateEntry(featureManager)
+
     /** Runs the per-branch mechanics (ENTRY/DO + a branch's own transitions). Shared across branches. */
-    private val branchRunner = BranchRunner(traceLogger, eventConsumptionOnFire, featureManager)
+    private val branchRunner = BranchRunner(traceLogger, eventConsumptionOnFire, featureManager, stateEntry)
 
     /**
      * Steps the branches of split state machines on threads of their own while [TrueParallelFeature] is on. Used by
@@ -256,7 +262,8 @@ class Engine(
      * pending events on its domain. The work is queued and executed on the engine thread at the next
      * tick boundary (the contexts are not visible/safe off-thread). A pure SNAP: the target's
      * ENTRY/DO blocks are NOT re-run, so it does not publish further events. Unknown ids/states are
-     * logged and ignored (the HTTP layer validates the state name up front for a clean error).
+     * logged and ignored (the HTTP layer validates the state name up front for a clean error). A container state is
+     * gone down into as by a transition (see [StateEntry]), so the instance rests on a state inside it.
      *
      * The forced state starts a new path: the paths the instance ran end, and its single new branch runs on the next
      * path number of the object. The `INITIAL_STATE` entry names both, as `ends` and `path`.
@@ -268,11 +275,12 @@ class Engine(
                 System.err.println("[Engine $engineId] forceActiveState: no state machine '$modelElementId'")
                 return@add
             }
-            val newStack = ctx.smQueryHelper.getStateStackForState(leaf)
-            if (newStack.isEmpty()) {
+            val targetStack = ctx.smQueryHelper.getStateStackForState(leaf)
+            if (targetStack.isEmpty()) {
                 System.err.println("[Engine $engineId] forceActiveState: unknown state '$leaf' for '$modelElementId'")
                 return@add
             }
+            val newStack = stateEntry.restingStack(ctx, targetStack)
             eventBus.clearDomain(modelElementId)
             // Empty notEnteredSubstack => pure snap, no ENTRY/DO re-run; empty lineage is safe because
             // the domain bucket was just cleared.
@@ -547,7 +555,9 @@ class Engine(
     private fun selectFireableJoin(ctx: SMContext): Fireable? {
         for (join in ctx.stateMachine.joinTransitions()) {
             if (!branchesMatchJoin(join.fromStates, ctx.branches)) continue
-            val fireable = ctx.transitionProcessor.evaluateJoin(join, ctx.joinEventProcessor)
+            val fireable = ctx.transitionProcessor.evaluateJoin(
+                join, ctx.joinEventProcessor, ctx.branches.map { it.stateStack }
+            )
             if (fireable != null) return fireable
         }
         return null
@@ -577,7 +587,7 @@ class Engine(
     /**
      * Fans [parent] out into one new branch per split target, turning the context parallel. Each child
      * inherits the parent's event lineage, and the matched event (if any) is scoped to each target so
-     * every region can read it.
+     * every region can read it. A target that is a container state is gone down into (see [StateEntry]).
      */
     private fun applySplit(ctx: SMContext, parent: Branch, split: io.karpfen.dsl.states.SplitTransition, matchedEvent: Event?) {
 
@@ -624,8 +634,9 @@ class Engine(
                 System.err.println("[Engine] Split target '$target' not found — skipping it")
                 return@mapNotNull null
             }
-            val entry = StateStackHelper.computeEntrySequence(parent.stateStack, targetStack, target)
-            ctx.newBranch(targetStack, entry.toMutableList(), split, inherited).also { branch ->
+            val restingStack = stateEntry.restingStack(ctx, targetStack)
+            val entry = StateStackHelper.computeEntrySequence(parent.stateStack, targetStack, target, restingStack)
+            ctx.newBranch(restingStack, entry.toMutableList(), split, inherited).also { branch ->
                 matchedEvent?.let { branch.scopedEventByState[target] = it }
             }
         }.toMutableList()
@@ -659,7 +670,8 @@ class Engine(
     /**
      * Collapses all parallel branches into a single new branch entering the join target, turning the
      * context simple again. The new branch inherits the union of the joined branches' lineages so it
-     * does not re-handle events the parallel phase already handled.
+     * does not re-handle events the parallel phase already handled. A target that is a container state is
+     * gone down into (see [StateEntry]).
      */
     private fun applyJoin(ctx: SMContext, fireable: Fireable) {
 
@@ -716,8 +728,9 @@ class Engine(
 
         val ended = ctx.pathList()
         val inherited = ctx.branches.flatMap { it.eventProcessor.lineage() }.toSet()
-        val entry = StateStackHelper.computeEntrySequence(emptyList(), targetStack, join.toState)
-        val newBranch = ctx.newBranch(targetStack, entry.toMutableList(), join, inherited)
+        val restingStack = stateEntry.restingStack(ctx, targetStack)
+        val entry = StateStackHelper.computeEntrySequence(emptyList(), targetStack, join.toState, restingStack)
+        val newBranch = ctx.newBranch(restingStack, entry.toMutableList(), join, inherited)
         if (eventConsumptionOnFire) fireable.matchedEvent?.let { newBranch.eventProcessor.consume(it) }
         ctx.branches = mutableListOf(newBranch)
 

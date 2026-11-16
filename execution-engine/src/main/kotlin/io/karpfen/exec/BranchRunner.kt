@@ -38,11 +38,16 @@ import io.karpfen.dsl.states.conditions.EventCondition
  * block, because the block removed an object that holds the object of the instance or exchanged its state machine, or
  * because another branch or state machine did, the block runs to its end and the branch stops right after it, without
  * looking for transitions.
+ *
+ * A transition whose target is a container state goes down into it through [stateEntry], so the branch rests on a
+ * state inside the container. A final state has no actions and no outgoing transitions; a branch on it only looks for
+ * transitions of the states around it, among them those with `DONE`.
  */
 class BranchRunner(
     private val traceLogger: EngineTraceLogger?,
     private val eventConsumptionOnFire: Boolean,
-    private val featureManager: FeatureManager
+    private val featureManager: FeatureManager,
+    private val stateEntry: StateEntry = StateEntry(featureManager)
 ) {
 
     fun tick(ctx: SMContext, branch: Branch, allowSplit: Boolean): BranchTickResult {
@@ -153,7 +158,10 @@ class BranchRunner(
         val ambient = branch.currentScopedEvent()?.payloadObject
         for (i in branch.stateStack.indices.reversed()) {
             val stateName = branch.stateStack[i]
-            for (fireable in ctx.transitionProcessor.findFireable(stateName, ambient, branch.eventProcessor, allowSplit)) {
+            val candidates = ctx.transitionProcessor.findFireable(
+                stateName, branch.stateStack, ambient, branch.eventProcessor, allowSplit
+            )
+            for (fireable in candidates) {
                 if (shouldFire(ctx, branch, fireable.transition)) return fireable
             }
         }
@@ -169,7 +177,11 @@ class BranchRunner(
         return true
     }
 
-    /** Applies a normal 1-to-1 transition by mutating [branch] in place. */
+    /**
+     * Applies a normal 1-to-1 transition by mutating [branch] in place. The states the transition leaves and the exit
+     * breakpoints are found from the path to the target; the branch then rests on the stack [stateEntry] finds, which
+     * goes on below a target that is a container state, and every state of it below the common part is entered.
+     */
     private fun applyNormal(ctx: SMContext, branch: Branch, transition: Transition, matchedEvent: Event?) {
 
         val smQueryHelper = ctx.smQueryHelper
@@ -210,8 +222,9 @@ class BranchRunner(
 
         if (eventConsumptionOnFire) matchedEvent?.let { branch.eventProcessor.consume(it) }
 
-        val changedSequence = StateStackHelper.computeEntrySequence(oldStack, newStackBase, transition.toState)
-        branch.stateStack = newStackBase
+        val newStack = stateEntry.restingStack(ctx, newStackBase)
+        val changedSequence = StateStackHelper.computeEntrySequence(oldStack, newStackBase, transition.toState, newStack)
+        branch.stateStack = newStack
         branch.notEnteredSubstack = changedSequence.toMutableList()
         branch.lastFiredTransition = transition
 
@@ -220,7 +233,7 @@ class BranchRunner(
             feature.resetTicks(ctx.modelElementId, changedSequence)
         }
 
-        branch.scopedEventByState.keys.retainAll(newStackBase.toSet())
+        branch.scopedEventByState.keys.retainAll(newStack.toSet())
         matchedEvent?.let { branch.scopedEventByState[transition.toState] = it }
 
         trace(ctx, branch, EngineTraceLogger.TraceEventType.TRANSITION_FIRED,
