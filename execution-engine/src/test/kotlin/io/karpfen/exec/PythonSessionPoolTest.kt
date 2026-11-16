@@ -15,6 +15,7 @@
  */
 package io.karpfen.exec
 
+import io.karpfen.io.karpfen.exec.PythonAnswer
 import io.karpfen.io.karpfen.exec.PythonSession
 import io.karpfen.io.karpfen.exec.PythonSessionPool
 import org.junit.jupiter.api.Test
@@ -29,8 +30,8 @@ import kotlin.test.assertTrue
 
 /**
  * Covers [PythonSessionPool] with sessions that answer with their own number and never start Python: calls one after
- * the other share a session, calls at the same time get one each, closing ends every session, and aborting ends a
- * session also while a call uses it.
+ * the other share a session, calls at the same time get one each, and closing ends every session, a busy one by
+ * aborting it while its call waits.
  */
 class PythonSessionPoolTest {
 
@@ -44,8 +45,8 @@ class PythonSessionPoolTest {
 
     @Test
     fun `calls one after the other share one session`() {
-        assertEquals("1", pool.execute("first"))
-        assertEquals("1", pool.execute("second"))
+        assertEquals("1", pool.execute("first").result)
+        assertEquals("1", pool.execute("second").result)
         assertEquals(1, pool.size)
     }
 
@@ -74,18 +75,19 @@ class PythonSessionPoolTest {
     }
 
     @Test
-    fun `aborting ends a busy session while its call waits, and refuses later calls`() {
+    fun `closing aborts a busy session while its call waits, and refuses later calls`() {
         val inside = CountDownLatch(1)
         val caller = thread {
             pool.execute("wait") {
                 inside.countDown()
                 val session = synchronized(sessions) { sessions.single() }
-                while (!session.aborted) Thread.onSpinWait()
+                val deadline = System.currentTimeMillis() + WAIT_MS
+                while (!session.aborted && System.currentTimeMillis() < deadline) Thread.onSpinWait()
             }
         }
         assertTrue(inside.await(WAIT_MS, TimeUnit.MILLISECONDS))
 
-        pool.abort()
+        pool.close()
         caller.join(WAIT_MS)
 
         assertTrue(sessions.single().aborted)
@@ -97,7 +99,7 @@ class PythonSessionPoolTest {
     private fun PythonSessionPool.execute(code: String, inside: () -> Unit): String? {
         FakeSession.inside.set(inside)
         try {
-            return execute(code)
+            return execute(code).result
         } finally {
             FakeSession.inside.remove()
         }
@@ -108,9 +110,9 @@ class PythonSessionPoolTest {
         @Volatile
         var closed = false
 
-        override fun execute(code: String): String {
+        override fun execute(code: String): PythonAnswer {
             inside.get()?.invoke()
-            return number.toString()
+            return PythonAnswer(number.toString(), "")
         }
 
         override fun close() {

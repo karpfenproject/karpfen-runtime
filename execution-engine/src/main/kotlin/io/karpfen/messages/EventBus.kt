@@ -27,17 +27,28 @@ import java.util.concurrent.CopyOnWriteArrayList
  *
  * **Event lifecycle**
  * - An event lives in its domain bucket until its TTL expires.
- * - When [purgeExpired] is called (typically once per engine tick), all expired events are removed.
+ * - When [purgeExpired] is called (typically once per engine tick), expired events are removed.
  * - An engine that has already reacted to an event marks it via [Event.markProcessedBy]; subsequent
  *   calls to [hasUnprocessedEvent] will return `false` for that engine.
+ *
+ * **Order**
+ * A bucket keeps its events from the oldest to the newest [Event.timestamp], events of the same timestamp in the order
+ * in which they were published. Every query answers in this order without sorting.
+ *
+ * **Cursors**
+ * A reader that asks the same domain and name again and again, such as the branch of a state machine in every tick,
+ * passes an [EventCursor] to [unhandledEvents]. The cursor remembers how far the front of the bucket holds only events
+ * the reader has handled, events of other names and expired events. Since an event never becomes unhandled or live
+ * again, the next query starts behind that front. A query therefore costs the events behind the front and not every
+ * event on the bus, which keeps a tick cheap while thousands of handled events wait for their time to live to end.
  *
  * **Freezing**
  * While its environment is stopped, the bus is frozen ([freeze]): time does not pass for its events. [thaw] credits
  * every waiting event with the frozen time, so each keeps the time to live it had left at the freeze.
  *
  * **Thread safety**
- * The top-level domain map is a [ConcurrentHashMap]. Each bucket is a [CopyOnWriteArrayList],
- * which allows cheap concurrent reads while keeping write operations safe.
+ * The top-level domain map is a [ConcurrentHashMap]. Each bucket guards its events with its own lock, which every
+ * method holds only for the work on that bucket.
  */
 class EventBus(
     /** Default TTL in milliseconds applied to every published event (0 = live forever). */
@@ -74,10 +85,9 @@ class EventBus(
     /** True while the bus is frozen. */
     val isFrozen: Boolean
         get() = frozenSince != null
-    /** domain → list of live events */
-    // TODO: The CopyOnWriteArrayList is not ideal for collections with high write frequency such as this one
-    //  In the current demo cases, not much event action is going on so its okay for now.
-    private val buckets: ConcurrentHashMap<String, CopyOnWriteArrayList<Event>> = ConcurrentHashMap()
+
+    /** domain to its bucket */
+    private val buckets: ConcurrentHashMap<String, Bucket> = ConcurrentHashMap()
 
     /** Listeners told about every published event; copy-on-write, so publishing never blocks on registration. */
     private val publicationListeners = CopyOnWriteArrayList<EventPublicationListener>()
@@ -109,7 +119,7 @@ class EventBus(
         } else {
             event
         }
-        getOrCreateBucket(effectiveEvent.domain).add(effectiveEvent)
+        buckets.computeIfAbsent(effectiveEvent.domain) { Bucket() }.add(effectiveEvent)
         announce(effectiveEvent)
     }
 
@@ -146,8 +156,8 @@ class EventBus(
      * [Event.markProcessedBy] after reacting to an event.
      */
     fun getUnprocessedEvents(domain: String, engineId: String): List<Event> {
-        return getBucket(domain)
-            .filter { !it.isExpired(now()) && !it.wasProcessedBy(engineId) }
+        val now = now()
+        return buckets[domain]?.select { !it.isExpired(now) && !it.wasProcessedBy(engineId) } ?: emptyList()
     }
 
     /**
@@ -155,40 +165,69 @@ class EventBus(
      * ordered oldest-first. Used to scan candidate events when a transition has payload guards.
      */
     fun getUnprocessedEvents(domain: String, eventName: String, engineId: String): List<Event> {
-        return getBucket(domain)
-            .filter { !it.isExpired(now()) && !it.wasProcessedBy(engineId) && it.name == eventName }
-            .sortedBy { it.timestamp }
+        val now = now()
+        return buckets[domain]?.select { it.name == eventName && !it.isExpired(now) && !it.wasProcessedBy(engineId) }
+            ?: emptyList()
     }
 
     /**
      * Returns all non-expired events with [eventName] in [domain], oldest-first, regardless of which
-     * engines have processed them. The caller applies its own "processed by my lineage" filter — this
-     * is what lets several parallel branches each get their own chance to react to the same event.
+     * engines have processed them.
      */
     fun eventsOf(domain: String, eventName: String): List<Event> {
-        return getBucket(domain)
-            .filter { !it.isExpired(now()) && it.name == eventName }
-            .sortedBy { it.timestamp }
+        val now = now()
+        return buckets[domain]?.select { it.name == eventName && !it.isExpired(now) } ?: emptyList()
+    }
+
+    /**
+     * Returns the non-expired events with [eventName] in [domain] for which [handled] is false, oldest-first, and
+     * moves [cursor] behind the front of the bucket that holds no such event.
+     *
+     * [handled] must stay true for an event once it was true, as "processed by one of a fixed set of ids" does, and
+     * [cursor] must belong to one reader, one domain and one name, with the same [handled] in every call. The query
+     * then starts behind the front that the cursor remembers, so its cost does not depend on how many handled events
+     * wait in front of it.
+     */
+    fun unhandledEvents(
+        domain: String,
+        eventName: String,
+        cursor: EventCursor,
+        handled: (Event) -> Boolean
+    ): List<Event> {
+        val now = now()
+        return buckets[domain]?.unhandled(eventName, now, cursor, handled) ?: emptyList()
+    }
+
+    /**
+     * Returns the ids of [engineIds] that marked at least one event of the bus that has not expired. Goes through every
+     * live event once and stops early when all of [engineIds] are found, so it costs the number of live events times
+     * the markers of each.
+     */
+    fun markersAmong(engineIds: Set<String>): Set<String> {
+        if (engineIds.isEmpty()) return emptySet()
+        val now = now()
+        val found = HashSet<String>()
+        for (bucket in buckets.values) {
+            bucket.collectMarkers(engineIds, now, found)
+            if (found.size == engineIds.size) break
+        }
+        return found
     }
 
     /**
      * Returns true if at least one non-expired, unprocessed event with the given [eventName]
      * exists in [domain] for [engineId].
      */
-    fun hasUnprocessedEvent(domain: String, eventName: String, engineId: String): Boolean {
-        return getBucket(domain).any { event ->
-            !event.isExpired(now()) && !event.wasProcessedBy(engineId) && event.name == eventName
-        }
-    }
+    fun hasUnprocessedEvent(domain: String, eventName: String, engineId: String): Boolean =
+        peekEvent(domain, eventName, engineId) != null
 
     /**
      * Returns the first non-expired, unprocessed event matching [eventName] in [domain],
      * or `null` if none exists.
      */
     fun peekEvent(domain: String, eventName: String, engineId: String): Event? {
-        return getBucket(domain).firstOrNull { event ->
-            !event.isExpired(now()) && !event.wasProcessedBy(engineId) && event.name == eventName
-        }
+        val now = now()
+        return buckets[domain]?.first { it.name == eventName && !it.isExpired(now) && !it.wasProcessedBy(engineId) }
     }
 
     /**
@@ -208,13 +247,13 @@ class EventBus(
     }
 
     /**
-     * Removes all expired events from every bucket. Should be called periodically,
-     * e.g., once per engine tick.
+     * Removes expired events. Called once per tick, it removes the expired events at the front of every bucket, which
+     * costs only the events it removes, and it goes through a whole bucket when the bucket has doubled since the last
+     * such pass. Expired events that wait behind a live one until then are never answered by a query.
      */
     fun purgeExpired() {
-        for ((_, bucket) in buckets) {
-            bucket.removeIf { it.isExpired(now()) }
-        }
+        val now = now()
+        for (bucket in buckets.values) bucket.purge(now)
     }
 
     /**
@@ -222,21 +261,142 @@ class EventBus(
      * *and* are expired. This is a more conservative cleanup strategy for shared domains.
      */
     fun purgeFullyConsumedAndExpired(knownEngineIds: Set<String>) {
-        for ((_, bucket) in buckets) {
-            bucket.removeIf { event ->
-                event.isExpired(now()) || knownEngineIds.all { engineId -> event.wasProcessedBy(engineId) }
-            }
+        val now = now()
+        for (bucket in buckets.values) {
+            bucket.removeIf { event -> event.isExpired(now) || knownEngineIds.all { event.wasProcessedBy(it) } }
         }
-    }
-
-    // ---- Helpers ----------------------------------------------------------
-
-    private fun getOrCreateBucket(domain: String): CopyOnWriteArrayList<Event> {
-        return buckets.getOrPut(domain) { CopyOnWriteArrayList() }
-    }
-
-    private fun getBucket(domain: String): CopyOnWriteArrayList<Event> {
-        return buckets[domain] ?: CopyOnWriteArrayList()
     }
 }
 
+/**
+ * Where the front of a bucket ends for one reader, one domain and one name: the events up to it were handled by the
+ * reader, had another name or were expired at the last query. Used by [EventBus.unhandledEvents] only.
+ */
+class EventCursor {
+
+    /** The number of the last event of the front, or -1 before the first query. Guarded by the bucket. */
+    internal var lastSeq = -1L
+
+    /** The numbering of the bucket the cursor refers to. Guarded by the bucket. */
+    internal var numbering = -1L
+}
+
+/**
+ * The events of one domain, from the oldest to the newest timestamp. Each event gets a number in this order, which
+ * cursors use to find their place again.
+ *
+ * An event is often published later than it was stamped, so it may be older than the newest event in the bucket:
+ * - an event from a WebSocket client is stamped on receipt and published by the event loop of its environment up to
+ *   10 ms later, while the engine may raise an internal event in between;
+ * - events that clients send while the environment is stopped wait in the queue of its runner and are published only
+ *   after the restart;
+ * - while events are recorded, an event is published at the next tick;
+ * - an injected event keeps the timestamp of its upload;
+ * - the clock of the machine may go back.
+ *
+ * Such an event is put in its place, and the bucket numbers its events anew. A cursor whose numbering is not the
+ * bucket's forgets its place and starts once from the front, because its number of the last event means nothing in
+ * the new numbering.
+ */
+private class Bucket {
+
+    private class Entry(val event: Event, var seq: Long)
+
+    private val entries = ArrayDeque<Entry>()
+    private var nextSeq = 0L
+    private var numbering = 0L
+    private var sizeAtLastSweep = 0
+
+    @Synchronized
+    fun add(event: Event) {
+        val last = entries.lastOrNull()
+        if (last == null || last.event.timestamp <= event.timestamp) {
+            entries.addLast(Entry(event, nextSeq++))
+            return
+        }
+        val at = entries.indexOfFirst { it.event.timestamp > event.timestamp }
+        entries.add(at, Entry(event, 0))
+        renumber()
+    }
+
+    @Synchronized
+    fun select(keep: (Event) -> Boolean): List<Event> = entries.mapNotNull { e -> e.event.takeIf(keep) }
+
+    @Synchronized
+    fun first(match: (Event) -> Boolean): Event? = entries.firstOrNull { match(it.event) }?.event
+
+    @Synchronized
+    fun forEach(action: (Event) -> Unit) = entries.forEach { action(it.event) }
+
+    @Synchronized
+    fun unhandled(name: String, now: Long, cursor: EventCursor, handled: (Event) -> Boolean): List<Event> {
+        if (cursor.numbering != numbering) {
+            cursor.numbering = numbering
+            cursor.lastSeq = -1
+        }
+        var index = firstAfter(cursor.lastSeq)
+        var front = true
+        var result: MutableList<Event>? = null
+        while (index < entries.size) {
+            val entry = entries[index++]
+            val event = entry.event
+            val passed = event.name != name || event.isExpired(now) || handled(event)
+            if (passed) {
+                if (front) cursor.lastSeq = entry.seq
+                continue
+            }
+            front = false
+            (result ?: ArrayList<Event>().also { result = it }).add(event)
+        }
+        return result ?: emptyList()
+    }
+
+    @Synchronized
+    fun collectMarkers(engineIds: Set<String>, now: Long, into: MutableSet<String>) {
+        for (entry in entries) {
+            if (into.size == engineIds.size) return
+            if (!entry.event.isExpired(now)) entry.event.addMarkersAmong(engineIds, into)
+        }
+    }
+
+    @Synchronized
+    fun purge(now: Long) {
+        while (entries.isNotEmpty() && entries.first().event.isExpired(now)) entries.removeFirst()
+        if (entries.size >= 2 * sizeAtLastSweep + SWEEP_SLACK) {
+            entries.removeAll { it.event.isExpired(now) }
+            sizeAtLastSweep = entries.size
+        }
+    }
+
+    @Synchronized
+    fun removeIf(drop: (Event) -> Boolean) {
+        entries.removeAll { drop(it.event) }
+    }
+
+    @Synchronized
+    fun clear() {
+        entries.clear()
+        sizeAtLastSweep = 0
+    }
+
+    /** The index of the first entry whose number is greater than [seq]. */
+    private fun firstAfter(seq: Long): Int {
+        var low = 0
+        var high = entries.size
+        while (low < high) {
+            val mid = (low + high) ushr 1
+            if (entries[mid].seq <= seq) low = mid + 1 else high = mid
+        }
+        return low
+    }
+
+    private fun renumber() {
+        numbering++
+        nextSeq = 0
+        for (entry in entries) entry.seq = nextSeq++
+    }
+
+    private companion object {
+        const val SWEEP_SLACK = 64
+    }
+}

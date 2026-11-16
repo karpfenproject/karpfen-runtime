@@ -1,6 +1,22 @@
+/**
+ * Copyright 2026 Karl Kegel
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 plugins {
     id 'org.jetbrains.kotlin.jvm'
     id 'org.jetbrains.kotlin.kapt'
+    id 'org.jetbrains.kotlinx.benchmark' version '0.4.13'
 }
 
 group = 'io.karpfen'
@@ -8,6 +24,13 @@ version = '1.0-SNAPSHOT'
 
 repositories {
     mavenCentral()
+}
+
+kotlin {
+    jvmToolchain(21)
+    target {
+        compilations.create('benchmark').associateWith(compilations.named('main').get())
+    }
 }
 
 dependencies {
@@ -27,10 +50,11 @@ dependencies {
 
     testCompileOnly 'com.google.auto.service:auto-service-annotations:1.1.1'
     kaptTest 'com.google.auto.service:auto-service:1.1.1'
-}
 
-kotlin {
-    jvmToolchain(21)
+    // Benchmarks (src/benchmark), never part of test or check
+    benchmarkImplementation project(':karpfen-dsl-tools')
+    benchmarkImplementation 'org.json:json:20240303'
+    benchmarkImplementation 'org.jetbrains.kotlinx:kotlinx-benchmark-runtime:0.4.13'
 }
 
 test {
@@ -38,5 +62,58 @@ test {
         if (project.hasProperty('skipPythonTests')) {
             excludeTags 'python'
         }
+    }
+}
+
+// The benchmarks run only through their own tasks, inside the container of test_docker.sh, since most of them start
+// Python. Each configuration has a task:
+//
+// - `benchmark` (main): every benchmark, short enough to be run often; the long runs only up to 10000 ticks.
+// - `growthBenchmark` (growth): the long runs up to 100000 ticks, each once, since every run builds a new engine.
+// - `longBenchmark` (long): every benchmark but the long runs, with more iterations and two forks, for a report.
+// - `smokeBenchmark` (smoke): every benchmark for one short iteration, to see that all of them run.
+//
+// Each writes benchmark.json below build/reports/benchmarks/<configuration>/<time>/, and the numbers the engine
+// measured to build/reports/benchmarks/tick-metrics.jsonl, one line per benchmark and parameter set.
+benchmark {
+    configurations {
+        main {
+            warmups = 2
+            iterations = 3
+            iterationTime = 1
+            iterationTimeUnit = 's'
+            reportFormat = 'json'
+            advanced('jvmForks', 1)
+            param('ticks', 1000, 10000)
+        }
+        growth {
+            include('GrowthBenchmark')
+            warmups = 0
+            iterations = 1
+            reportFormat = 'json'
+            advanced('jvmForks', 1)
+            param('ticks', 1000, 10000, 100000)
+        }
+        long {
+            exclude('GrowthBenchmark')
+            warmups = 3
+            iterations = 10
+            iterationTime = 2
+            iterationTimeUnit = 's'
+            reportFormat = 'json'
+            advanced('jvmForks', 2)
+        }
+        smoke {
+            warmups = 0
+            iterations = 1
+            iterationTime = 200
+            iterationTimeUnit = 'ms'
+            reportFormat = 'json'
+            advanced('jvmForks', 1)
+            param('ticks', 1000)
+        }
+    }
+    targets {
+        register('benchmark')
     }
 }

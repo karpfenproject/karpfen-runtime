@@ -18,30 +18,38 @@ package io.karpfen.io.karpfen.exec
 import io.karpfen.dsl.instance.Model
 import io.karpfen.dsl.meta.Metamodel
 import io.karpfen.io.karpfen.messages.EventBus
+import io.karpfen.io.karpfen.metrics.RunMetricsRecorder
 
 /**
  * Builds the execution context of one state machine instance, at its initial stack, from an [InstanceSpec].
  *
- * Every call builds everything mutable anew: the query helper, the macro processor with its own Python sessions, the
- * transition and action processors and the first branch. The identities under which the branches consume events start
- * with `<engineId>-<objectId>#<n>`, where `n` counts the instances of the object from 0 over the life of the engine, so
- * an instance that replaces another on the same object does not count the events of its predecessor as handled, and
- * end in `-p<path>`, the path number of the branch. The factory owns the [PathNumbers] of the engine and gives them to
- * every context it builds, so the path numbers of an object go on from one instance to the next. The factory is used
- * by the engine thread only.
+ * Every call builds everything mutable anew: the query helper, the macro processor, the transition and action
+ * processors and the first branch. The Python processes and the result cache are not built here, because every macro
+ * processor uses the [pythonSessions] and the [resultCache] of the engine. The identities under which the branches
+ * consume events start with `<engineId>-<objectId>#<n>`, where `n` counts the instances of the object from 0 over the
+ * life of the engine, so an instance that replaces another on the same object does not count the events of its
+ * predecessor as handled, and end in `-p<path>`, the path number of the branch. The factory owns the [PathNumbers] of
+ * the engine and gives them to every context it builds, so the path numbers of an object go on from one instance to
+ * the next. The factory is used by the engine thread only.
  *
  * @property metamodel the metamodel of the model.
  * @property model the model the instances read and change.
  * @property modelQueryProcessor the shared access to the model.
  * @property eventBus the bus of the environment.
  * @property engineId the id of the engine, the start of every branch identity.
+ * @property metrics where the macro processors of the instances report their calls of code.
+ * @property pythonSessions the Python processes of the environment, shared by all instances.
+ * @property resultCache the results of earlier Python calls of the environment, shared by all instances.
  */
 class StateMachineInstanceFactory(
     private val metamodel: Metamodel,
     private val model: Model,
     private val modelQueryProcessor: ModelQueryProcessor,
     private val eventBus: EventBus,
-    private val engineId: String
+    private val engineId: String,
+    private val metrics: RunMetricsRecorder = RunMetricsRecorder.NONE,
+    private val pythonSessions: PythonSessionPool = PythonSessionPool(::PersistentPythonSession),
+    private val resultCache: ResultCache = ResultCache.NONE
 ) {
 
     /** The number of instances built per object. */
@@ -64,7 +72,9 @@ class StateMachineInstanceFactory(
         val initialStack = smQueryHelper.getInitialStateStack()
         check(initialStack.isNotEmpty()) { "State machine attached to '$objectId' has no initial state" }
 
-        val macroProcessor = MacroProcessor(metamodel, model, stateMachine.macros, objectId, modelQueryProcessor)
+        val macroProcessor = MacroProcessor(
+            metamodel, model, stateMachine.macros, objectId, modelQueryProcessor, metrics, pythonSessions, resultCache
+        )
         val transitionProcessor = TransitionProcessor(
             stateMachine, metamodel, model, objectId, macroProcessor, smQueryHelper, modelQueryProcessor
         )

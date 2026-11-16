@@ -409,30 +409,17 @@ class MacroCodeTransformerDetailedTest {
         val turtle = mqp.getDataObjectById("turtle")
         val result = transformer.transformInlineCode("return 42", turtle)
         assertTrue(result.contains("def __karpfen_main__():"))
-        assertTrue(result.contains("__result__ = __karpfen_main__()"))
+        assertTrue(result.trimEnd().endsWith(MacroCodeTransformer.RESULT_LINE))
     }
 
     @Test
-    fun `generated code prints dict result as json`() {
+    fun `generated code leaves the result of any type to the result global and prints nothing`() {
         val turtle = mqp.getDataObjectById("turtle")
-        val result = transformer.transformInlineCode("return {\"x\": 1}", turtle)
-        assertTrue(result.contains("isinstance(__result__, dict)"))
-        assertTrue(result.contains("json.dumps(__result__)"))
-    }
-
-    @Test
-    fun `generated code prints list result as json`() {
-        val turtle = mqp.getDataObjectById("turtle")
-        val result = transformer.transformInlineCode("return [1, 2, 3]", turtle)
-        assertTrue(result.contains("isinstance(__result__, list)"))
-    }
-
-    @Test
-    fun `generated code prints bool result as json dumps`() {
-        val turtle = mqp.getDataObjectById("turtle")
-        val result = transformer.transformInlineCode("return True", turtle)
-        assertTrue(result.contains("isinstance(__result__, bool)"))
-        assertTrue(result.contains("json.dumps(__result__)"))
+        for (code in listOf("return {\"x\": 1}", "return [1, 2, 3]", "return True")) {
+            val result = transformer.transformInlineCode(code, turtle)
+            assertTrue(result.trimEnd().endsWith(MacroCodeTransformer.RESULT_LINE), code)
+            assertFalse(result.contains("print("), code)
+        }
     }
 
     @Test

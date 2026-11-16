@@ -39,7 +39,7 @@ class ParallelPythonCallsTest {
 
     @AfterEach
     fun close() {
-        processor.close()
+        processor.pythonSessions.close()
     }
 
     @Test
@@ -49,7 +49,7 @@ class ParallelPythonCallsTest {
             thread {
                 repeat(20) { call ->
                     val expected = "$caller-$call"
-                    val answer = processor.runPythonCodeViaSession("import math\nprint('$expected')")
+                    val answer = processor.runPython("import math\n__karpfen_result__ = '$expected'")
                     if (answer != expected) wrong += "expected $expected, got $answer"
                 }
             }

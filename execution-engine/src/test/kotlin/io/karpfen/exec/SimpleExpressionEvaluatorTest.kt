@@ -324,9 +324,27 @@ class SimpleExpressionEvaluatorTest {
         assertEquals(5.0, SimpleExpressionEvaluator.evaluate("  2  +  3  "))
     }
 
+    /** The evaluator stands in for Python, so it gives what Python gives where Kotlin would differ. */
     @Test
-    fun `evaluate division by zero returns infinity`() {
-        assertEquals(Double.POSITIVE_INFINITY, SimpleExpressionEvaluator.evaluate("1 / 0"))
+    fun `evaluate follows Python for modulo, floor division, power, and and or`() {
+        assertEquals(2.0, SimpleExpressionEvaluator.evaluate("-7 % 3"))
+        assertEquals(-2.0, SimpleExpressionEvaluator.evaluate("7 % -3"))
+        assertEquals(-4.0, SimpleExpressionEvaluator.evaluate("-7.5 // 2"))
+        assertEquals(9.0, SimpleExpressionEvaluator.evaluate("1 // 0.1"))
+        assertEquals(-4.0, SimpleExpressionEvaluator.evaluate("-2 ** 2"))
+        assertEquals(0.5, SimpleExpressionEvaluator.evaluate("2 ** -1"))
+        assertEquals(5.0, SimpleExpressionEvaluator.evaluate("0 or 5"))
+        assertEquals(3.0, SimpleExpressionEvaluator.evaluate("2 and 3"))
+        assertEquals(false, SimpleExpressionEvaluator.evaluate("not 2"))
+        assertThrows<SimpleExpressionEvaluator.NotSimpleException> { SimpleExpressionEvaluator.evaluate("(-8) ** 0.5") }
+    }
+
+    /** Python raises `ZeroDivisionError` here, so the evaluator gives no result and leaves the code to Python. */
+    @Test
+    fun `evaluate division by zero is left to Python`() {
+        for (expression in listOf("1 / 0", "1 % 0", "1 // 0", "0 ** -1")) {
+            assertThrows<SimpleExpressionEvaluator.NotSimpleException>(expression) { SimpleExpressionEvaluator.evaluate(expression) }
+        }
     }
 
     @Test

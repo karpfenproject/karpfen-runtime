@@ -180,10 +180,9 @@ class StateMachineLifecycleEngineTest {
         val expected = listOf(
             "No attachable state machine is named 'unknown'",
             "The state machine 'glowing' is attachable to 'Bulb', not to 'Lamp'",
-            "The name of a state machine must be a string, but the value is 3.0",
             "EXCHANGE path 'lamp->bulb->holder->bulb->log' does not resolve to an object",
             "No attachable state machine is named 'missing'",
-            "The name of a state machine must be a string, but the value is 2.0",
+            "No attachable state machine is named 'unknown'",
             "ATTACH needs a has relation, but 'favourite' is a knows relation; use EXCHANGE for an existing object",
             "The state machine 'lampish' is attachable to 'Lamp', not to 'Bulb'"
         )
@@ -316,6 +315,23 @@ class StateMachineLifecycleEngineTest {
 
         assertEquals("glowing", run.engine.stateMachineInstances.first { it.objectId == "b1" }.definitionName)
         assertEquals("blinking", run.engine.stateMachineInstances.first { it.objectId == "b2" }.definitionName)
+    }
+
+    @Test
+    @Tag("python")
+    fun `a name from code is the text Python gives, and code without a result names nothing`() {
+        val run = run(attached = mapOf("room" to UNNAMED_ROOM))
+
+        run.awaitTick(5)
+
+        val errors = run.traces(TraceEventType.ACTION_ERROR).map { it.message }
+        val expected = listOf(
+            "No attachable state machine is named '3'",
+            "The name of a state machine must be a string, but the value is nothing"
+        )
+        assertEquals(expected.size, errors.size, "errors: $errors")
+        expected.zip(errors).forEach { (text, error) -> assertTrue(error.endsWith(text), "error: $error") }
+        assertEquals(listOf("b3"), run.engine.readBetweenTicks(AWAIT_MS) { run.relation("room", "spares") })
     }
 
     // ---- Running ------------------------------------------------------------------------------------------------
@@ -619,12 +635,17 @@ class StateMachineLifecycleEngineTest {
         val FAILING_ROOM = chain(
             """EXCHANGE("lamp->bulb", "unknown")""",
             """EXCHANGE("lamp", "glowing")""",
-            """EXCHANGE("lamp->bulb", EVAL { return 3 })""",
             """EXCHANGE("lamp->bulb->holder->bulb->log", "glowing")""",
             """APPENDOBJ("self", "spares", EVAL { return 1 }) ATTACH "missing"""",
-            """SETOBJ("self", "spare", EVAL { return 1 }) ATTACH EVAL { return 2 }""",
+            """SETOBJ("self", "spare", EVAL { return 1 }) ATTACH "unknown"""",
             """SETOBJ("self", "favourite", "spare") ATTACH "blinking"""",
             """APPENDOBJ("self", "spares", EVAL { return 1 }) ATTACH "lampish""""
+        )
+
+        /** Names a state machine by code that gives a number, and by code that gives no result. */
+        val UNNAMED_ROOM = chain(
+            """EXCHANGE("lamp->bulb", EVAL { return 3 })""",
+            """APPENDOBJ("self", "spares", EVAL { return 1 }) ATTACH EVAL { return None }"""
         )
 
         /** Removes the lamp, which holds its own object, in tick 2, and raises events before and after. */

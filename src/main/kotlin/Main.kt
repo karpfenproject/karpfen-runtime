@@ -29,6 +29,10 @@ fun main() {
     println("[Main]   Default tick delay: ${config.engine.defaultTickDelayMs}ms")
     println("[Main]   Default event TTL: ${config.engine.defaultEventTtlMs}ms")
     println("[Main]   Event consumption on fire: ${config.engine.eventConsumptionOnFire}")
+    println(
+        "[Main]   Result caching: ${config.engine.resultCaching} (at most ${config.engine.resultCacheMaxEntries} " +
+            "results and ${config.engine.resultCacheMaxMegabytes} MB per environment)"
+    )
 
     // Apply engine tracing configuration
     if (config.engineTracing.enabled) {
@@ -41,6 +45,9 @@ fun main() {
     EnvironmentHandler.defaultTickDelayMs = config.engine.defaultTickDelayMs
     EnvironmentHandler.defaultEventTtlMs = config.engine.defaultEventTtlMs
     EnvironmentHandler.defaultEventConsumptionOnFire = config.engine.eventConsumptionOnFire
+    EnvironmentHandler.defaultResultCaching = config.engine.resultCaching
+    EnvironmentHandler.resultCacheMaxEntries = config.engine.resultCacheMaxEntries
+    EnvironmentHandler.resultCacheMaxBytes = config.engine.resultCacheMaxMegabytes * 1024 * 1024
 
     val sessionManager = EnvironmentHandler.clientSessionManager
     val server = KtorServer(

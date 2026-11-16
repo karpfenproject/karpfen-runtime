@@ -16,6 +16,8 @@
 package io.karpfen.observation
 
 import io.karpfen.dsl.instance.Model
+import io.karpfen.io.karpfen.metrics.RunMetrics
+import io.karpfen.io.karpfen.metrics.RunMetricsSnapshot
 
 /**
  * An [EnvironmentLookup] over environments a test declares, without the runtime's registry.
@@ -53,15 +55,19 @@ class FakeEnvironments : EnvironmentLookup {
 }
 
 /**
- * An [ObservedEnvironment] that answers every snapshot request with [snapshot] and records the timeouts it was asked
- * to wait.
+ * An [ObservedEnvironment] that answers every snapshot request with [snapshot], every request for numbers with
+ * [metrics], and records the timeouts it was asked to wait.
  *
  * @property phase the phase the environment reports.
  * @property snapshot the snapshot answered, or `null` to act as an environment whose tick never ends.
+ * @property metrics the numbers answered by [metrics]; by default none, as before the first tick.
+ * @property resultCaching the answer of [ObservedEnvironment.resultCaching]; on by default, as in the runtime.
  */
 class FakeObservedEnvironment(
     override val phase: EnvironmentPhase,
-    private val snapshot: ModelSnapshot?
+    private val snapshot: ModelSnapshot?,
+    private val metrics: RunMetricsSnapshot = NO_METRICS,
+    override val resultCaching: Boolean = true
 ) : ObservedEnvironment {
 
     /** The timeouts of every snapshot request, in request order. */
@@ -71,5 +77,13 @@ class FakeObservedEnvironment(
     override fun snapshotBetweenTicks(timeoutMs: Long): ModelSnapshot? {
         requestedTimeouts.add(timeoutMs)
         return snapshot
+    }
+
+    /** Answers the configured numbers. */
+    override fun metrics(): RunMetricsSnapshot = metrics
+
+    companion object {
+        /** The numbers of an engine that has not ticked. */
+        val NO_METRICS: RunMetricsSnapshot = RunMetrics().snapshot()
     }
 }

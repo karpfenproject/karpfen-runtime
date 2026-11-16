@@ -98,8 +98,7 @@ class StateMachineLifecycle(
      * Carries out the requests of the tick that ends; see the class description. Instances that leave are told to the
      * [listener] first, in the order of the tick, then the instances that joined, in their new order; an instance that
      * an exchange put at the place of another is told with the instance it replaces, both when that one leaves and when
-     * it joins. The macro processor of every instance that leaves is closed. Called on the engine thread at the end of
-     * every tick.
+     * it joins. Called on the engine thread at the end of every tick.
      */
     fun applyChanges() {
         val current = instances
@@ -140,29 +139,8 @@ class StateMachineLifecycle(
         }
 
         install(next)
-        for (ctx in left) {
-            closeQuietly(ctx)
-            listener.left(ctx, successors[ctx])
-        }
+        for (ctx in left) listener.left(ctx, successors[ctx])
         joined.forEach { listener.joined(it, predecessors[it]) }
-    }
-
-    /** Closes the macro processors of every instance, when the engine stops. */
-    fun close() {
-        instances.forEach(::closeQuietly)
-    }
-
-    /**
-     * Ends the Python sessions of every instance at once, also those a running EVAL waits for, when the engine ends for
-     * good and its tick does not end on its own.
-     */
-    fun abort() {
-        for (ctx in instances) {
-            try {
-                ctx.macroProcessor?.abort()
-            } catch (_: Exception) {
-            }
-        }
     }
 
     override fun requireAttachable(name: String, typeName: String) {
@@ -237,13 +215,6 @@ class StateMachineLifecycle(
             instances = frozen
         }
         view = frozen.map { InstanceSpec(it.modelElementId, it.definitionName, it.stateMachine) }
-    }
-
-    private fun closeQuietly(ctx: SMContext) {
-        try {
-            ctx.macroProcessor?.close()
-        } catch (_: Exception) {
-        }
     }
 }
 

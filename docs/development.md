@@ -60,3 +60,45 @@ its grammars and changes files in the submodule; `git -C karpfen-dsl-tools check
 ```
 
 Tests that run Python carry the JUnit tag `python`. `-PskipPythonTests` leaves them out, in both Gradle projects.
+
+`test_docker.sh` runs the tests in a throwaway container, so Python never runs on the development machine. It builds
+the image `karpfen-runtime-test` from the stage `test` of the `Dockerfile`, which has the Python and the packages of
+the runtime image plus a JDK, copies the checkout into the container without its build folders, runs Gradle there with
+three workers and brings `build/test-results` and `build/reports` of each project back to `build/container`. Gradle's
+downloads stay in the volume `karpfen-runtime-test-gradle`. The checkout is copied rather than mounted so that the build
+in the container leaves the build folders, `.gradle` and the generated sources of `karpfen-dsl-tools` of the checkout
+alone, and every run starts clean. Every image, container and volume carries the label `io.karpfen.runtime.test=true`;
+the container is removed however the run ends, and no port is published.
+
+```bash
+./test_docker.sh                                                   # both projects, Python tests included
+./test_docker.sh :execution-engine:test --tests 'io.karpfen.exec.PythonFailuresTest'
+./test_docker.sh --collect "libs" :execution-engine:jar             # other folders below build
+./test_docker.sh --cleanup                                         # removes everything with the label
+./test_docker.sh --cleanup --keep-cache                            # keeps the Gradle volume
+```
+
+`KARPFEN_TEST_WORKERS` sets the number of Gradle workers, 3 by default, and `KARPFEN_TEST_MEMORY` the memory of the
+container, 6g by default.
+
+## Benchmarks
+
+The benchmarks in `execution-engine/src/benchmark` use kotlinx-benchmark and run a fixed number of ticks of an engine
+through the feature TickByTick. They are not part of `test` or `check`. Since most of them start Python, they run in
+the container.
+
+```bash
+./test_docker.sh --collect "reports/benchmarks" :execution-engine:benchmark        # all, short: about 4 minutes
+./test_docker.sh --collect "reports/benchmarks" :execution-engine:growthBenchmark  # up to 100000 ticks: about 6.5 minutes
+./test_docker.sh --collect "reports/benchmarks" :execution-engine:longBenchmark    # more iterations and two forks: about 30 minutes
+./test_docker.sh --collect "reports/benchmarks" :execution-engine:smokeBenchmark   # one short iteration each: about 1 minute
+./test_docker.sh --collect "reports/integration" --script benchmark_integration.sh 30  # about 1.5 minutes
+```
+
+Each task writes `benchmark.json` to `reports/benchmarks/<configuration>/<time>/` and the numbers the engine measured
+during the measured iterations to `reports/benchmarks/tick-metrics.jsonl`, both below `build/container/execution-engine`.
+The notebook `execution-engine/src/benchmark/kotlin/compare-benchmark-runs.ipynb` compares the latest runs of one
+configuration. Because `test_docker.sh` replaces `build/container` on every run, earlier runs have to be copied
+somewhere else first, and `runsDir` in the notebook has to point there. `benchmark_integration.sh` starts the runtime as a server inside the container, runs the robot of
+`examples/single_robot_example` through the HTTP API with a tick delay of 0 and of 50 ms for the given number of
+seconds each, and writes the answers of `GET /observatory/metrics` to `build/container/reports/integration`.

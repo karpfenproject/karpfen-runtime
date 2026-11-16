@@ -17,7 +17,9 @@ package io.karpfen.io.karpfen.exec
 
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
+import io.karpfen.io.karpfen.messages.EventCursor
 import io.karpfen.io.karpfen.messages.EventSource
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Per-identity facade for the shared [EventBus].
@@ -30,6 +32,15 @@ import io.karpfen.io.karpfen.messages.EventSource
  * can react to an event another branch already consumed. A branch created by a split inherits its
  * parent's lineage (so it does not re-handle what the parent already did), and a branch created by a
  * join inherits the union of the joined branches' lineages.
+ *
+ * A lineage keeps only the ids that still matter: [lineage] gives a descendant the ids of this lineage that have marked
+ * an event still on the bus. An id that marked no such event can never make an event count as handled again, because
+ * the branch it belongs to has ended and every event it marked has left the bus. Without this, a state machine that
+ * splits and joins again and again would hand ever longer lineages to its branches, and every split, join and query
+ * would cost more the longer the engine runs.
+ *
+ * The queries keep an [EventCursor] per domain and name, so a query in every tick does not go again through the
+ * events that this lineage handled before; see [EventBus.unhandledEvents].
  *
  * @property engineId     Unique identifier used when consuming (marking) events.
  * @property eventBus     The shared [EventBus] instance for the environment.
@@ -45,8 +56,20 @@ class EventProcessor(
     /** The full set of ids whose processing counts as "handled" for this processor. */
     private val effectiveIds: Set<String> = inheritedIds + engineId
 
-    /** Returns this processor's full lineage, used to seed descendant branches on split/join. */
-    fun lineage(): Set<String> = effectiveIds
+    /** The cursors of the queries of this processor, by domain and name. */
+    private val cursors = ConcurrentHashMap<Pair<String, String>, EventCursor>()
+
+    /**
+     * The lineage to seed descendant branches with on a split or join: the ids of this processor's lineage that
+     * marked an event that is still on the bus.
+     */
+    fun lineage(): Set<String> = eventBus.markersAmong(effectiveIds)
+
+    /** The events of [eventName] in [domain] that this lineage has not handled, oldest first. */
+    private fun unhandled(domain: String, eventName: String): List<Event> =
+        eventBus.unhandledEvents(domain, eventName, cursors.getOrPut(domain to eventName) { EventCursor() }) {
+            it.wasProcessedByAny(effectiveIds)
+        }
 
     // ---- Publishing -------------------------------------------------------
 
@@ -81,14 +104,14 @@ class EventProcessor(
      * processor's lineage has not yet handled.
      */
     fun hasEvent(domain: String, eventName: String): Boolean {
-        return eventBus.eventsOf(domain, eventName).any { !it.wasProcessedByAny(effectiveIds) }
+        return unhandled(domain, eventName).isNotEmpty()
     }
 
     /**
      * Returns the first matching event not yet handled by this processor's lineage, or null.
      */
     fun peekEvent(domain: String, eventName: String): Event? {
-        return eventBus.eventsOf(domain, eventName).firstOrNull { !it.wasProcessedByAny(effectiveIds) }
+        return unhandled(domain, eventName).firstOrNull()
     }
 
     /**
@@ -96,7 +119,7 @@ class EventProcessor(
      * oldest-first. Used to scan candidate events when a transition guards on the payload.
      */
     fun getEvents(domain: String, eventName: String): List<Event> {
-        return eventBus.eventsOf(domain, eventName).filter { !it.wasProcessedByAny(effectiveIds) }
+        return unhandled(domain, eventName)
     }
 
     /**

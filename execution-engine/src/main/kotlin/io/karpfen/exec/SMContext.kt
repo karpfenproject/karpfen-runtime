@@ -28,10 +28,11 @@ import io.karpfen.dsl.states.TransitionLike
  * split, has several. The mode is therefore fully determined by the branch count; there is never any
  * separate flag to keep in sync.
  *
- * Every context is built for its instance alone by [StateMachineInstanceFactory]: its helpers, its macro processor
- * with its Python sessions, its branches and the identities under which its branches consume events belong to no
- * other context, also not to another instance of the same definition on another object or to an earlier instance on
- * the same object. Only the parsed [stateMachine] is shared, and it is never changed.
+ * Every context is built for its instance alone by [StateMachineInstanceFactory]: its helpers, its macro processor,
+ * its branches and the identities under which its branches consume events belong to no other context, also not to
+ * another instance of the same definition on another object or to an earlier instance on the same object. Shared are
+ * the parsed [stateMachine], which is never changed, and the Python processes of the engine, which give every call a
+ * fresh namespace.
  *
  * A context ends once ([end]) when its object leaves the model or `EXCHANGE` replaces its state machine. From then on
  * it does no further step: a branch that runs an action block finishes that block and stops, and the engine skips the
@@ -40,7 +41,7 @@ import io.karpfen.dsl.states.TransitionLike
  * @property modelElementId The id of the model object this state machine is attached to.
  * @property definitionName The name of the attachable state machine of this instance, or null for a state machine
  *   that the run configuration attached to the object.
- * @property macroProcessor The macro processor of this instance; closed when the instance leaves or the engine stops.
+ * @property macroProcessor The macro processor of this instance.
  * @property eventBus The shared event bus; used to mint per-branch event processors.
  * @property branchIdBase Stable prefix for branch event-processor ids, unique for this instance within one run.
  * @property pathNumbers Hands out the path number of every branch this context builds; shared by all instances of one

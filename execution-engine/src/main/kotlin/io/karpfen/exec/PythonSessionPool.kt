@@ -16,19 +16,33 @@
 package io.karpfen.io.karpfen.exec
 
 /**
+ * What one call of code gave.
+ *
+ * @property result the result as text, or null when the code left no result.
+ * @property printed everything the code wrote to stdout and stderr during the call, empty when it wrote nothing.
+ * @property error the last line of the Python error when the code failed, such as `ZeroDivisionError: division by
+ *   zero`, or null when it succeeded.
+ */
+data class PythonAnswer(val result: String?, val printed: String, val error: String? = null)
+
+/**
  * A Python process that runs one piece of code at a time and stays open between calls.
  */
 interface PythonSession {
 
-    /** Runs [code] and returns what it printed, trimmed, or null when it printed nothing or failed in Python. */
-    fun execute(code: String): String?
+    /**
+     * Runs [code] and returns its [PythonAnswer]. An exception in the code is part of the answer and keeps the process.
+     *
+     * @throws PythonExecutionException when the process ends during the call or answers outside the protocol.
+     */
+    fun execute(code: String): PythonAnswer
 
     /** Ends the process. */
     fun close()
 
     /**
-     * Ends the process at once, also while another thread waits in [execute] for its answer; that call then fails.
-     * Called only when the engine ends for good.
+     * Ends the process at once, also while another thread waits in [execute] for its answer; that call then fails. The
+     * session starts no process after it, so every later call fails too. Called only when the engine ends for good.
      */
     fun abort() = close()
 }
@@ -38,12 +52,18 @@ interface PythonSession {
  *
  * A call borrows an idle session, or a new one from [newSession] when every session is busy, and gives it back when it
  * ends. Calls that come one after the other therefore share one session, and the pool grows only to the number of
- * calls that run at the same time, which is the number of branches of a split state machine that step on threads of
- * their own. Sessions are reused across ticks, splits and joins, so a state machine that splits again and again does
- * not start a new Python process each time.
+ * calls that run at the same time.
  *
- * [close] ends every session. A session that is still in use is closed when its call gives it back, and a call after
- * [close] fails, so no Python process outlives the engine that closed the pool.
+ * The engine of an environment holds one pool for all its state machine instances. Since every call runs in a fresh
+ * namespace, a session is not tied to an instance. Without the feature TrueParallel the calls come one after the other
+ * and one session serves them all. With it, the pool grows to the number of branches that wait for Python at the same
+ * moment. The pool has no further bound, because a branch that waited for the session of another branch would lose
+ * what TrueParallel is for. Sessions are reused across ticks, instances, splits and joins, so a state machine that
+ * splits again and again does not start a new Python process each time.
+ *
+ * [close] ends every session. A session that a call still uses is aborted, which fails that call, because a call that
+ * hangs would otherwise keep its process for as long as the JVM runs. A call after [close] fails, so no Python process
+ * outlives the engine that closed the pool.
  *
  * @property newSession creates a session; the session may start its process lazily on its first call.
  */
@@ -66,11 +86,11 @@ class PythonSessionPool(private val newSession: () -> PythonSession) {
         @Synchronized get() = created
 
     /**
-     * Runs [code] in a session that no other call uses meanwhile and returns its output.
+     * Runs [code] in a session that no other call uses meanwhile and returns its answer.
      *
      * @throws IllegalStateException when the pool is closed.
      */
-    fun execute(code: String): String? {
+    fun execute(code: String): PythonAnswer {
         val session = borrow()
         try {
             return session.execute(code)
@@ -79,33 +99,25 @@ class PythonSessionPool(private val newSession: () -> PythonSession) {
         }
     }
 
-    /** Ends every session; idle ones at once, busy ones when their call gives them back. */
+    /**
+     * Ends every session: closes the idle ones and aborts the busy ones, so a call that waits for Python fails at once
+     * instead of holding its process. The engine calls it when it ends for good, whatever state its threads are in.
+     * An aborted session is closed again when its call gives it back.
+     */
     fun close() {
-        val toClose = synchronized(this) {
+        val (toClose, toAbort) = synchronized(this) {
             closed = true
             created -= idle.size
-            idle.toList().also { idle.clear() }
+            (idle.toList() to busy.toList()).also { idle.clear() }
         }
         toClose.forEach { it.close() }
-    }
-
-    /**
-     * Ends every session at once, the busy ones too, so a call that waits for Python fails instead of holding up the
-     * end of the engine; used when the engine ends for good and a tick does not end on its own.
-     */
-    fun abort() {
-        val toAbort = synchronized(this) {
-            closed = true
-            created -= idle.size
-            (idle.toList() + busy).also { idle.clear() }
-        }
         toAbort.forEach { it.abort() }
     }
 
     /** Takes the most recently used idle session, or creates one. */
     @Synchronized
     private fun borrow(): PythonSession {
-        check(!closed) { "The Python sessions of this state machine are closed" }
+        check(!closed) { "The Python sessions of this environment are closed" }
         val session = idle.removeLastOrNull() ?: newSession().also { created++ }
         busy += session
         return session

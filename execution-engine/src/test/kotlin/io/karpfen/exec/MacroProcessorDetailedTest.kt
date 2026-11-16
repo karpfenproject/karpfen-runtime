@@ -181,19 +181,19 @@ class MacroProcessorDetailedTest {
         )
     }
 
-    // ---- runPythonCode with real subprocess ----
+    // ---- runPython with real subprocess ----
 
     @Test
     fun `python subprocess returns integer`() {
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
-        val result = processor.runPythonCode("print(2 + 3)")
+        val result = processor.runPython("__karpfen_result__ = 2 + 3")
         assertEquals("5", result)
     }
 
     @Test
     fun `python subprocess returns float`() {
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
-        val result = processor.runPythonCode("print(3.14)")
+        val result = processor.runPython("__karpfen_result__ = 3.14")
         assertEquals("3.14", result)
     }
 
@@ -202,9 +202,9 @@ class MacroProcessorDetailedTest {
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
         val code = """
 import json
-print(json.dumps({"x": 1.5, "y": 2.5}))
+__karpfen_result__ = json.dumps({"x": 1.5, "y": 2.5})
         """.trimIndent()
-        val result = processor.runPythonCode(code)?.toString()
+        val result = processor.runPython(code)?.toString()
         assertNotNull(result)
         assertTrue(result!!.contains("\"x\""))
         assertTrue(result.contains("1.5"))
@@ -215,9 +215,9 @@ print(json.dumps({"x": 1.5, "y": 2.5}))
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
         val code = """
 import json
-print(json.dumps(True))
+__karpfen_result__ = json.dumps(True)
         """.trimIndent()
-        val result = processor.runPythonCode(code)
+        val result = processor.runPython(code)
         assertEquals("true", result)
     }
 
@@ -226,16 +226,16 @@ print(json.dumps(True))
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
         val code = """
 import json
-print(json.dumps(False))
+__karpfen_result__ = json.dumps(False)
         """.trimIndent()
-        val result = processor.runPythonCode(code)
+        val result = processor.runPython(code)
         assertEquals("false", result)
     }
 
     @Test
     fun `python subprocess returns string`() {
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
-        val result = processor.runPythonCode("print('hello world')")
+        val result = processor.runPython("__karpfen_result__ = 'hello world'")
         assertEquals("hello world", result)
     }
 
@@ -244,16 +244,16 @@ print(json.dumps(False))
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
         val code = """
 import math
-print(math.sqrt(9))
+__karpfen_result__ = math.sqrt(9)
         """.trimIndent()
-        val result = processor.runPythonCode(code)
+        val result = processor.runPython(code)
         assertEquals("3.0", result)
     }
 
     @Test
     fun `python subprocess returns null for no output`() {
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
-        val result = processor.runPythonCode("x = 42")
+        val result = processor.runPython("x = 42")
         assertNull(result)
     }
 
@@ -261,7 +261,7 @@ print(math.sqrt(9))
     fun `python subprocess throws on syntax error`() {
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
         assertThrows(RuntimeException::class.java) {
-            processor.runPythonCode("def def def")
+            processor.runPython("def def def")
         }
     }
 
@@ -269,7 +269,7 @@ print(math.sqrt(9))
     fun `python subprocess throws on runtime error`() {
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
         assertThrows(RuntimeException::class.java) {
-            processor.runPythonCode("print(1/0)")
+            processor.runPython("__karpfen_result__ = 1/0")
         }
     }
 
@@ -279,9 +279,9 @@ print(math.sqrt(9))
         val code = """
 import json
 result = {"x": 1.0, "y": 2.0}
-print(json.dumps(result))
+__karpfen_result__ = json.dumps(result)
         """.trimIndent()
-        val result = processor.runPythonCode(code)?.toString()
+        val result = processor.runPython(code)?.toString()
         assertNotNull(result)
         assertTrue(result!!.startsWith("{"))
     }
@@ -544,11 +544,11 @@ print(json.dumps(result))
     }
 
     @Test
-    fun `parseResult blank returns null`() {
+    fun `parseResult blank returns null except for a string, which keeps its whitespace`() {
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
         assertNull(processor.parseResult("", "number"))
         assertNull(processor.parseResult("   ", "boolean"))
-        assertNull(processor.parseResult("  \n  ", "string"))
+        assertEquals("  \n  ", processor.parseResult("  \n  ", "string"))
     }
 
     // ---- Complex type (DataObject) parsing ----

@@ -69,6 +69,15 @@ object EnvironmentHandler {
     /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
     var defaultEventConsumptionOnFire: Boolean = true
 
+    /** Whether new environments answer repeated code from their result cache, loaded from application.conf. */
+    var defaultResultCaching: Boolean = true
+
+    /** The most results the cache of an environment holds, loaded from application.conf. */
+    var resultCacheMaxEntries: Int = 10_000
+
+    /** The most memory in bytes the results of the cache of an environment may take, loaded from application.conf. */
+    var resultCacheMaxBytes: Long = 64L * 1024 * 1024
+
     /** Creates an environment under [key] with the configured defaults, replacing any environment of that key. */
     fun createEnv(key: String): Environment {
         val env = newEnvironment(key)
@@ -101,6 +110,9 @@ object EnvironmentHandler {
             tickDelayMS = defaultTickDelayMs,
             eventTtlMs = defaultEventTtlMs,
             eventConsumptionOnFire = defaultEventConsumptionOnFire,
+            resultCaching = defaultResultCaching,
+            resultCacheMaxEntries = resultCacheMaxEntries,
+            resultCacheMaxBytes = resultCacheMaxBytes,
             featureManager = FeatureManager()
         )
 

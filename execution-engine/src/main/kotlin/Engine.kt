@@ -27,6 +27,7 @@ import io.karpfen.io.karpfen.features.runtime.event.EventInjectionFeature
 import io.karpfen.io.karpfen.features.runtime.event.EventRecordingFeature
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
+import io.karpfen.io.karpfen.metrics.RunMetrics
 import io.karpfen.dsl.meta.Metamodel
 import io.karpfen.dsl.states.JoinTransition
 import io.karpfen.dsl.states.StateMachine
@@ -93,6 +94,17 @@ class Engine(
      * Every `behaves after` of [metamodel] must name one that lists its type; otherwise the engine is not built.
      */
     stateMachineDefinitions: Map<String, StateMachine> = emptyMap(),
+    /**
+     * The numbers of this engine: its ticks and the calls of code of its instances. The engine reports every tick to
+     * it and hands it to the macro processor of every instance it builds; readers on any thread take a
+     * [RunMetrics.snapshot].
+     */
+    val metrics: RunMetrics = RunMetrics(),
+    /**
+     * The results of earlier Python calls of the environment, which answer the same code text again without Python.
+     * Every instance consults it before it runs code in Python. [ResultCache.NONE], the default, stores nothing.
+     */
+    val resultCache: ResultCache = ResultCache.NONE,
 ) {
 
     /** Parses incoming event payloads into the runtime object model against [eventMetamodel]. */
@@ -208,10 +220,19 @@ class Engine(
         }
     }
 
+    /**
+     * The Python processes of the environment. Every state machine instance runs its code in them, so their number
+     * follows the calls that run at the same time and not the number of instances; see [PythonSessionPool]. They end
+     * with the engine in [close].
+     */
+    private val pythonSessions = PythonSessionPool(::PersistentPythonSession)
+
     /** The owner of the state machine instances; see [StateMachineLifecycle]. */
     private val lifecycle = StateMachineLifecycle(
         definitions,
-        StateMachineInstanceFactory(metamodel, model, modelQueryProcessor, eventBus, engineId),
+        StateMachineInstanceFactory(
+            metamodel, model, modelQueryProcessor, eventBus, engineId, metrics, pythonSessions, resultCache
+        ),
         model,
         modelQueryProcessor,
         InstanceReporter()
@@ -406,7 +427,11 @@ class Engine(
             tickCount++
             val tickStart = System.currentTimeMillis()
 
-            tickGate.duringTick { runTick(tickCount) }
+            tickGate.duringTick {
+                val start = System.nanoTime()
+                runTick(tickCount)
+                metrics.tickEnded(System.nanoTime() - start)
+            }
 
             val elapsed = System.currentTimeMillis() - tickStart
             val remaining = tickDelayMS.toLong() - elapsed
@@ -556,11 +581,24 @@ class Engine(
         for (join in ctx.stateMachine.joinTransitions()) {
             if (!branchesMatchJoin(join.fromStates, ctx.branches)) continue
             val fireable = ctx.transitionProcessor.evaluateJoin(
-                join, ctx.joinEventProcessor, ctx.branches.map { it.stateStack }
+                join, ctx.joinEventProcessor, ctx.branches.map { it.stateStack }, joinConditionErrors(ctx)
             )
             if (fireable != null) return fireable
         }
         return null
+    }
+
+    /**
+     * Writes the errors of the clauses of a join of [ctx] to the trace log as `CONDITION_ERROR`, with the paths of the
+     * branches the join would merge, the way `JOIN_START` names them.
+     */
+    private fun joinConditionErrors(ctx: SMContext) = ConditionErrorListener { state, message ->
+        traceLogger?.log(
+            ctx.modelElementId,
+            EngineTraceLogger.TraceEventType.CONDITION_ERROR,
+            "Error in a condition of a transition from '$state': $message",
+            mapOf("paths" to ctx.pathList(), "state" to state)
+        )
     }
 
     /**
@@ -824,8 +862,10 @@ class Engine(
      * Ends the engine for good: stops the run, releases a thread held by [stop] and the pause of [TickByTickFeature] so
      * that the thread can end, and waits for it: the running tick ends, and the threads of branches end with the engine
      * thread. A thread that has not ended within 5 s, as one whose EVAL waits for Python, first loses its Python
-     * sessions, which ends that wait, and is then interrupted. At the end the Python sessions and the trace log are
-     * closed; the trace file stays on disk. The engine does not start again.
+     * sessions, which ends that wait, and is then interrupted. At the end the Python sessions are closed whatever state
+     * the threads are in. This also aborts a call that still waits in the thread of a branch which a [stop] left behind
+     * when the engine thread ended, because that call would otherwise keep its process until the JVM ends. Then the trace
+     * log is closed; the trace file stays on disk. The engine does not start again.
      */
     fun close() = synchronized(lifeLock) {
         closed = true
@@ -836,7 +876,7 @@ class Engine(
             try {
                 t.join(STOP_WAIT_MS)
                 if (t.isAlive) {
-                    lifecycle.abort()
+                    pythonSessions.close()
                     t.interrupt()
                     t.join(STOP_WAIT_MS)
                 }
@@ -844,7 +884,7 @@ class Engine(
                 Thread.currentThread().interrupt()
             }
         }
-        lifecycle.close()
+        pythonSessions.close()
         traceLogger?.close()
     }
 

@@ -42,6 +42,24 @@ fun Condition.leafClauses(): List<Condition> =
     if (this is CompositeCondition) clauses else listOf(this)
 
 /**
+ * Learns every error of an `EVAL` or `VALUE` clause of a transition. The error makes its clause false and the run goes
+ * on, so the listener is the only place where the error shows.
+ */
+fun interface ConditionErrorListener {
+
+    /**
+     * A clause of a transition from [state] failed with [message]. For a join, [state] names its source states, separated
+     * by commas.
+     */
+    fun failed(state: String, message: String)
+
+    companion object {
+        /** A listener that drops every error, for callers without a trace log. */
+        val NONE = ConditionErrorListener { _, _ -> }
+    }
+}
+
+/**
  * Evaluates transition conditions. It is intentionally stateless with respect to *which* branch is
  * being evaluated: the relevant [EventProcessor] and ambient (scoped) event are passed in per call, so
  * one processor instance serves every branch of a parallel context.
@@ -66,18 +84,20 @@ class TransitionProcessor(
      * @param ambientEvent   The scoped event payload, for guard clauses on transitions without an EVENT clause.
      * @param eventProcessor The branch's event processor, used to find candidate events.
      * @param includeSplits  Whether split transitions are eligible (false while already parallel).
+     * @param errors         Learns the error of every clause that fails.
      */
     fun findFireable(
         currentState: String,
         stateStack: List<String>,
         ambientEvent: DataObject?,
         eventProcessor: EventProcessor,
-        includeSplits: Boolean
+        includeSplits: Boolean,
+        errors: ConditionErrorListener = ConditionErrorListener.NONE
     ): Sequence<Fireable> = sequence {
         val done = { stateMachineQueryHelper.hasReachedFinalState(currentState, stateStack) }
         for (transition in stateMachine.outgoingFrom(currentState)) {
             if (transition is SplitTransition && !includeSplits) continue
-            val match = evaluateCondition(transition.condition, ambientEvent, eventProcessor, done)
+            val match = evaluateCondition(transition.condition, ambientEvent, eventProcessor, done, Failure(currentState, errors))
             if (match != null) yield(Fireable(transition, match.event))
         }
     }
@@ -90,11 +110,13 @@ class TransitionProcessor(
      * branches of [stateStacks] that stand in it. Sources that are no container states do not count for it.
      *
      * @param stateStacks the stacks of the branches of the instance.
+     * @param errors learns the error of every clause that fails.
      */
     fun evaluateJoin(
         join: io.karpfen.dsl.states.JoinTransition,
         eventProcessor: EventProcessor,
-        stateStacks: List<List<String>>
+        stateStacks: List<List<String>>,
+        errors: ConditionErrorListener = ConditionErrorListener.NONE
     ): Fireable? {
         val done = {
             join.fromStates
@@ -105,7 +127,8 @@ class TransitionProcessor(
                         standing.all { stateMachineQueryHelper.hasReachedFinalState(container, it) }
                 }
         }
-        val match = evaluateCondition(join.condition, null, eventProcessor, done) ?: return null
+        val failure = Failure(join.fromStates.joinToString(","), errors)
+        val match = evaluateCondition(join.condition, null, eventProcessor, done, failure) ?: return null
         return Fireable(join, match.event)
     }
 
@@ -119,7 +142,8 @@ class TransitionProcessor(
         condition: Condition,
         ambientEvent: DataObject?,
         eventProcessor: EventProcessor,
-        done: () -> Boolean
+        done: () -> Boolean,
+        failure: Failure
     ): MatchResult? {
         val clauses = condition.leafClauses()
         if (clauses.any { it is DoneCondition } && !done()) return null
@@ -127,34 +151,49 @@ class TransitionProcessor(
         val guardClauses = clauses.filter { it !is EventCondition && it !is DoneCondition }
 
         if (eventClause == null) {
-            return if (guardClauses.all { evaluateGuard(it, ambientEvent) }) MatchResult(null) else null
+            return if (guardClauses.all { evaluateGuard(it, ambientEvent, failure) }) MatchResult(null) else null
         }
 
         for (event in eventProcessor.getEvents(eventClause.eventDomain, eventClause.eventValue)) {
             val eventObj = event.payloadObject
-            if (guardClauses.all { evaluateGuard(it, eventObj) }) {
+            if (guardClauses.all { evaluateGuard(it, eventObj, failure) }) {
                 return MatchResult(event)
             }
         }
         return null
     }
 
-    /** Evaluates a single guard clause (EVAL or VALUE) with [eventObj] bound as the event in scope. */
-    private fun evaluateGuard(clause: Condition, eventObj: DataObject?): Boolean {
+    /**
+     * Evaluates a single guard clause (EVAL or VALUE) with [eventObj] bound as the event in scope. A clause that fails
+     * is false, and its error goes to [failure].
+     */
+    private fun evaluateGuard(clause: Condition, eventObj: DataObject?, failure: Failure): Boolean {
         return when (clause) {
             is EvalCondition -> try {
                 macroProcessor.executeInlineMacro(clause.code, "boolean", ModelQueryProcessor.eventScope(eventObj)) == true
             } catch (e: Exception) {
-                System.err.println("[TransitionProcessor] EVAL condition failed: ${e.message}")
-                false
+                failure.report(e)
             }
             is ValueCondition -> try {
                 evaluateValueCondition(clause, eventObj)
             } catch (e: Exception) {
-                System.err.println("[TransitionProcessor] VALUE condition failed: ${e.message}")
-                false
+                failure.report(e)
             }
             else -> false
+        }
+    }
+
+    /**
+     * Where the errors of the clauses of one transition go: to the console and to [errors], with [state], the state the
+     * transition leaves, or the source states of a join separated by commas.
+     */
+    private class Failure(val state: String, val errors: ConditionErrorListener) {
+
+        /** Reports [e] and gives false, the value of a clause that failed. */
+        fun report(e: Exception): Boolean {
+            System.err.println("[TransitionProcessor] Condition of a transition from '$state' failed: ${e.message}")
+            errors.failed(state, e.message ?: e::class.simpleName.orEmpty())
+            return false
         }
     }
 
