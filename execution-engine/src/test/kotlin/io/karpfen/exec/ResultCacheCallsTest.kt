@@ -15,6 +15,7 @@
  */
 package io.karpfen.exec
 
+import io.karpfen.dsl.instance.DataObject
 import io.karpfen.io.karpfen.exec.CodeOutput
 import io.karpfen.io.karpfen.exec.LruResultCache
 import io.karpfen.io.karpfen.exec.MacroProcessor
@@ -32,7 +33,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * How a [MacroProcessor] uses its [ResultCache]: a code text that ran in Python before is answered from the cache, a
- * changed value is a new text, a failed call is not stored, and without a cache every call runs Python.
+ * changed value is a new text, a hit is read for the target type of its call and builds a new object each time, a failed
+ * call is not stored, and without a cache every call runs Python.
  */
 @Tag("python")
 class ResultCacheCallsTest {
@@ -116,6 +118,32 @@ class ResultCacheCallsTest {
 
         assertEquals(1L, count(CodeWay.OPEN_PROCESS))
         assertEquals(1L, count(CodeWay.CACHE))
+    }
+
+    @Test
+    fun `a hit is read for the target type of the call that hits`() {
+        val processor = processor(LruResultCache(100, 1_000_000))
+
+        assertEquals(4.0, processor.executeInlineMacro("return abs(-4)", "number"))
+        assertEquals("4", processor.executeInlineMacro("return abs(-4)", "string"))
+
+        assertEquals(1L, count(CodeWay.OPEN_PROCESS))
+        assertEquals(1L, count(CodeWay.CACHE))
+    }
+
+    @Test
+    fun `a hit whose result is a new object gives a new object with a fresh id each time`() {
+        val processor = processor(LruResultCache(100, 1_000_000))
+
+        val objects = List(3) {
+            processor.executeInlineMacro("return {'label': 'made'}", "Bulb") as DataObject
+        }
+
+        assertEquals(listOf("made", "made", "made"), objects.map { it.getProp("label").single() })
+        assertEquals(3, objects.map { it.id }.toSet().size, "ids: ${objects.map { it.id }}")
+        assertEquals(3, objects.map { System.identityHashCode(it) }.toSet().size)
+        assertEquals(1L, count(CodeWay.OPEN_PROCESS))
+        assertEquals(2L, count(CodeWay.CACHE))
     }
 
     private fun count(way: CodeWay): Long = metrics.snapshot().calls.getValue(way).count
