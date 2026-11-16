@@ -160,16 +160,26 @@ class BranchRunner(
      */
     private fun findFireable(ctx: SMContext, branch: Branch, allowSplit: Boolean): Fireable? {
         val ambient = branch.currentScopedEvent()?.payloadObject
+        val errors = conditionErrors(ctx, branch)
         for (i in branch.stateStack.indices.reversed()) {
             val stateName = branch.stateStack[i]
             val candidates = ctx.transitionProcessor.findFireable(
-                stateName, branch.stateStack, ambient, branch.eventProcessor, allowSplit
+                stateName, branch.stateStack, ambient, branch.eventProcessor, allowSplit, errors
             )
             for (fireable in candidates) {
                 if (shouldFire(ctx, branch, fireable.transition)) return fireable
             }
         }
         return null
+    }
+
+    /**
+     * Writes the errors of the clauses of the transitions of [branch] to the trace log as `CONDITION_ERROR`, with the
+     * path and the stack of the branch, the way an error of an action is written as `ACTION_ERROR`.
+     */
+    private fun conditionErrors(ctx: SMContext, branch: Branch) = ConditionErrorListener { state, message ->
+        trace(ctx, branch, EngineTraceLogger.TraceEventType.CONDITION_ERROR,
+            "Error in a condition of a transition from '$state': $message", mapOf("state" to state))
     }
 
     private fun shouldFire(ctx: SMContext, branch: Branch, transition: TransitionLike): Boolean {

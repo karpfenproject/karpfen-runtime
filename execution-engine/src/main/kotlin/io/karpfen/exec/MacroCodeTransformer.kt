@@ -36,6 +36,13 @@ class MacroCodeTransformer(
 
         /** Regex for matching @macroName(arg1, arg2, ...) macro calls */
         val MACRO_CALL_PATTERN = Regex("""@(\w+)\(([^)]*)\)""")
+
+        /**
+         * The last line of every code text: it hands the value of `__karpfen_main__` to the process as the result of
+         * the call. Because [PersistentPythonSession] reads the result from this global, what the code prints never
+         * mixes with the result.
+         */
+        const val RESULT_LINE = "__karpfen_result__ = __karpfen_main__()"
     }
 
     /**
@@ -61,20 +68,11 @@ class MacroCodeTransformer(
             sb.appendLine()
         }
 
-        // Wrap the inline code in a main block that prints the result as JSON
+        // Wrap the inline code in a main function whose value is the result
         sb.appendLine("def __karpfen_main__():")
         sb.appendLine(rewrittenCode)
         sb.appendLine()
-        sb.appendLine("__result__ = __karpfen_main__()")
-        sb.appendLine("if __result__ is not None:")
-        sb.appendLine("    if isinstance(__result__, dict):")
-        sb.appendLine("        print(json.dumps(__result__))")
-        sb.appendLine("    elif isinstance(__result__, list):")
-        sb.appendLine("        print(json.dumps(__result__))")
-        sb.appendLine("    elif isinstance(__result__, bool):")
-        sb.appendLine("        print(json.dumps(__result__))")
-        sb.appendLine("    else:")
-        sb.appendLine("        print(__result__)")
+        sb.appendLine(RESULT_LINE)
 
         return sb.toString()
     }
@@ -105,16 +103,7 @@ class MacroCodeTransformer(
         sb.appendLine("def __karpfen_main__():")
         sb.appendLine(rewrittenCode)
         sb.appendLine()
-        sb.appendLine("__result__ = __karpfen_main__()")
-        sb.appendLine("if __result__ is not None:")
-        sb.appendLine("    if isinstance(__result__, dict):")
-        sb.appendLine("        print(json.dumps(__result__))")
-        sb.appendLine("    elif isinstance(__result__, list):")
-        sb.appendLine("        print(json.dumps(__result__))")
-        sb.appendLine("    elif isinstance(__result__, bool):")
-        sb.appendLine("        print(json.dumps(__result__))")
-        sb.appendLine("    else:")
-        sb.appendLine("        print(__result__)")
+        sb.appendLine(RESULT_LINE)
 
         return sb.toString()
     }

@@ -28,18 +28,16 @@ import org.openjdk.jmh.annotations.OperationsPerInvocation
  * - `longList`: a meter object with a list of 10000 numbers;
  * - `manyObjects`: a wing whose `$(wing)` reaches 200 lamps with a bulb each.
  *
- * The code measures the length of the text of the value, so Python reads all of it. With `chosen` the runtime
- * chooses the way as it does for any code: a new process, or the process that stays open once the code with the value
- * written in is longer than 8000 characters, which the long list and the many objects are. With `openProcess` the code
- * also calls a macro, so it runs in the process that stays open for every value. The score is the time of one tick.
+ * The code measures the length of the text of the value, so Python reads all of it. With `plain` the code calls no
+ * macro, with `macro` it also calls one. The score is the time of one tick.
  */
 open class ValueSizeBenchmark : EngineBenchmark() {
 
     @Param("number", "string", "smallObject", "longList", "manyObjects")
     var value: String = "number"
 
-    @Param("chosen", "openProcess")
-    var way: String = "chosen"
+    @Param("plain", "macro")
+    var way: String = "plain"
 
     override fun scenario(): Scenario {
         val path = when (value) {
@@ -50,7 +48,7 @@ open class ValueSizeBenchmark : EngineBenchmark() {
             "manyObjects" -> "$(wing)"
             else -> throw IllegalArgumentException("Unknown value: $value")
         }
-        val code = if (way == "openProcess") "return len(str($path)) < @zero()" else "return len(str($path)) < 0"
+        val code = if (way == "macro") "return len(str($path)) < @zero()" else "return len(str($path)) < 0"
         return Scenario(METAMODEL, MODEL, mapOf("house" to house(code)))
     }
 

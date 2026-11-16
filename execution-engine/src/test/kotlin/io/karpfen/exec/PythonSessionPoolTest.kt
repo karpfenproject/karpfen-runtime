@@ -15,6 +15,7 @@
  */
 package io.karpfen.exec
 
+import io.karpfen.io.karpfen.exec.PythonAnswer
 import io.karpfen.io.karpfen.exec.PythonSession
 import io.karpfen.io.karpfen.exec.PythonSessionPool
 import org.junit.jupiter.api.Test
@@ -44,8 +45,8 @@ class PythonSessionPoolTest {
 
     @Test
     fun `calls one after the other share one session`() {
-        assertEquals("1", pool.execute("first"))
-        assertEquals("1", pool.execute("second"))
+        assertEquals("1", pool.execute("first").result)
+        assertEquals("1", pool.execute("second").result)
         assertEquals(1, pool.size)
     }
 
@@ -97,7 +98,7 @@ class PythonSessionPoolTest {
     private fun PythonSessionPool.execute(code: String, inside: () -> Unit): String? {
         FakeSession.inside.set(inside)
         try {
-            return execute(code)
+            return execute(code).result
         } finally {
             FakeSession.inside.remove()
         }
@@ -108,9 +109,9 @@ class PythonSessionPoolTest {
         @Volatile
         var closed = false
 
-        override fun execute(code: String): String {
+        override fun execute(code: String): PythonAnswer {
             inside.get()?.invoke()
-            return number.toString()
+            return PythonAnswer(number.toString(), "")
         }
 
         override fun close() {

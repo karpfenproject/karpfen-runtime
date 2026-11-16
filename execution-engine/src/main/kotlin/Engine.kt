@@ -215,10 +215,19 @@ class Engine(
         }
     }
 
+    /**
+     * The Python processes of the environment. Every state machine instance runs its code in them, so their number
+     * follows the calls that run at the same time and not the number of instances; see [PythonSessionPool]. They end
+     * with the engine in [close].
+     */
+    private val pythonSessions = PythonSessionPool(::PersistentPythonSession)
+
     /** The owner of the state machine instances; see [StateMachineLifecycle]. */
     private val lifecycle = StateMachineLifecycle(
         definitions,
-        StateMachineInstanceFactory(metamodel, model, modelQueryProcessor, eventBus, engineId, metrics),
+        StateMachineInstanceFactory(
+            metamodel, model, modelQueryProcessor, eventBus, engineId, metrics, pythonSessions
+        ),
         model,
         modelQueryProcessor,
         InstanceReporter()
@@ -567,11 +576,24 @@ class Engine(
         for (join in ctx.stateMachine.joinTransitions()) {
             if (!branchesMatchJoin(join.fromStates, ctx.branches)) continue
             val fireable = ctx.transitionProcessor.evaluateJoin(
-                join, ctx.joinEventProcessor, ctx.branches.map { it.stateStack }
+                join, ctx.joinEventProcessor, ctx.branches.map { it.stateStack }, joinConditionErrors(ctx)
             )
             if (fireable != null) return fireable
         }
         return null
+    }
+
+    /**
+     * Writes the errors of the clauses of a join of [ctx] to the trace log as `CONDITION_ERROR`, with the paths of the
+     * branches the join would merge, the way `JOIN_START` names them.
+     */
+    private fun joinConditionErrors(ctx: SMContext) = ConditionErrorListener { state, message ->
+        traceLogger?.log(
+            ctx.modelElementId,
+            EngineTraceLogger.TraceEventType.CONDITION_ERROR,
+            "Error in a condition of a transition from '$state': $message",
+            mapOf("paths" to ctx.pathList(), "state" to state)
+        )
     }
 
     /**
@@ -847,7 +869,7 @@ class Engine(
             try {
                 t.join(STOP_WAIT_MS)
                 if (t.isAlive) {
-                    lifecycle.abort()
+                    pythonSessions.abort()
                     t.interrupt()
                     t.join(STOP_WAIT_MS)
                 }
@@ -855,7 +877,7 @@ class Engine(
                 Thread.currentThread().interrupt()
             }
         }
-        lifecycle.close()
+        pythonSessions.close()
         traceLogger?.close()
     }
 

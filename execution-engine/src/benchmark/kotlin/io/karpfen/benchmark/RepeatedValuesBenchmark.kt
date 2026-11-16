@@ -22,13 +22,13 @@ import org.openjdk.jmh.annotations.OperationsPerInvocation
 /**
  * The same condition with the same values in every tick, which a store of results could answer, against values that
  * change in every tick, which it could not. A computed action in the DO block adds 0 or 1 to the value the condition
- * reads, so both variants do the same work besides the condition. The condition runs in a new Python process or in the
- * process that stays open. The score is the time of one tick.
+ * reads, so both variants do the same work besides the condition. The condition runs in Python as plain code or as code
+ * that calls a macro. The score is the time of one tick.
  */
 open class RepeatedValuesBenchmark : EngineBenchmark() {
 
-    @Param("newProcess", "openProcess")
-    var way: String = "newProcess"
+    @Param("plain", "macro")
+    var way: String = "plain"
 
     @Param("unchanged", "changing")
     var values: String = "unchanged"

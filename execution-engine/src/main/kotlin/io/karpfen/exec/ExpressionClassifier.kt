@@ -16,15 +16,13 @@
 package io.karpfen.io.karpfen.exec
 
 /**
- * Execution tiers for macro code, ordered from fastest to slowest.
+ * The two ways code of an `EVAL` block or a macro can run.
  *
- * - [SIMPLE]: Pure arithmetic/boolean expression — evaluated natively in Kotlin.
- * - [MEDIUM]: Self-contained Python code without imports — executed via `python -c` (no temp file).
- * - [COMPLEX]: Code with imports, function definitions, or large size — executed via
- *   a persistent interactive Python session.
+ * - [SIMPLE]: one `return` of a pure arithmetic or boolean expression, which the runtime may compute in Kotlin.
+ * - [PYTHON]: everything else, which runs in a Python process of the environment.
  */
 enum class ExecutionTier {
-    SIMPLE, MEDIUM, COMPLEX
+    SIMPLE, PYTHON
 }
 
 /**
@@ -60,14 +58,6 @@ object ExpressionClassifier {
         """(\d+\.?\d*(?:[eE][+-]?\d+)?|True|False|and|or|not|[+\-*/%<>=!()]+|\s+)"""
     )
 
-    /** Patterns that indicate COMPLEX code (needs full Python with imports). */
-    private val IMPORT_PATTERN = Regex("""^\s*import\s+""", RegexOption.MULTILINE)
-    private val FROM_IMPORT_PATTERN = Regex("""^\s*from\s+\w+\s+import\s+""", RegexOption.MULTILINE)
-    private val DEF_PATTERN = Regex("""^\s*def\s+""", RegexOption.MULTILINE)
-
-    /** Maximum code length for MEDIUM tier (python -c has command-line length limits). */
-    private const val MEDIUM_MAX_LENGTH = 8000
-
     /**
      * Classifies the given transformed Python code into an [ExecutionTier].
      *
@@ -75,61 +65,15 @@ object ExpressionClassifier {
      * @return The appropriate execution tier.
      */
     fun classify(transformedCode: String): ExecutionTier {
-        val body = extractFunctionBody(transformedCode) ?: return ExecutionTier.COMPLEX
-
-        // Check if body is a single return statement with a simple expression
+        val body = extractFunctionBody(transformedCode) ?: return ExecutionTier.PYTHON
         val simpleExpr = extractSimpleReturnExpression(body)
-        if (simpleExpr != null && isSimpleExpression(simpleExpr)) {
-            return ExecutionTier.SIMPLE
-        }
-
-        // Extract user-authored code (imports + helper functions) that appears between
-        // the standard `import json` and `def __karpfen_main__():`. The standard
-        // boilerplate is always present and should not trigger COMPLEX classification.
-        val userPreamble = extractUserPreamble(transformedCode)
-
-        // Check for user-defined import/def statements → COMPLEX
-        if (IMPORT_PATTERN.containsMatchIn(userPreamble) ||
-            FROM_IMPORT_PATTERN.containsMatchIn(userPreamble) ||
-            DEF_PATTERN.containsMatchIn(userPreamble)
-        ) {
-            return ExecutionTier.COMPLEX
-        }
-
-        // Check code length for MEDIUM viability
-        if (transformedCode.length > MEDIUM_MAX_LENGTH) {
-            return ExecutionTier.COMPLEX
-        }
-
-        return ExecutionTier.MEDIUM
-    }
-
-    /**
-     * Extracts user-authored code between the standard `import json` line
-     * and the `def __karpfen_main__():` line. This is where user-defined imports
-     * and helper function definitions appear. The standard boilerplate
-     * (`import json`, `def __karpfen_main__`, result-printing block) is excluded.
-     */
-    private fun extractUserPreamble(transformedCode: String): String {
-        val lines = transformedCode.lines()
-        val defIndex = lines.indexOfFirst { it.trimStart().startsWith("def __karpfen_main__():") }
-        if (defIndex == -1) return transformedCode
-
-        // Collect lines between the standard `import json` and the main def.
-        // Skip `import json` and blank lines at the top.
-        val preambleLines = mutableListOf<String>()
-        for (i in 0 until defIndex) {
-            val trimmed = lines[i].trim()
-            if (trimmed == "import json" || trimmed.isEmpty()) continue
-            preambleLines.add(lines[i])
-        }
-        return preambleLines.joinToString("\n")
+        return if (simpleExpr != null && isSimpleExpression(simpleExpr)) ExecutionTier.SIMPLE else ExecutionTier.PYTHON
     }
 
     /**
      * Extracts the body of `def __karpfen_main__():` from the transformed code.
      * The body consists of all indented lines following the function definition,
-     * up to the next unindented line (the result-printing block).
+     * up to the next unindented line (the result line).
      *
      * @return The function body as a string, or null if the pattern is not found.
      */
@@ -141,7 +85,7 @@ object ExpressionClassifier {
         val bodyLines = mutableListOf<String>()
         for (i in (defIndex + 1) until lines.size) {
             val line = lines[i]
-            // Stop at the result-printing block (unindented lines after the function body)
+            // Stop at the result line, the first unindented line after the function body
             if (line.isNotBlank() && !line.startsWith("\t") && !line.startsWith("    ")) {
                 break
             }

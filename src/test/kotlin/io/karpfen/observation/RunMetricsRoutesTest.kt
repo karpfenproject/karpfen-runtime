@@ -77,8 +77,8 @@ class RunMetricsRoutesTest {
         assertEquals(
             "{\"environmentKey\":\"$ENV\",\"phase\":\"stopped\",\"ticks\":3," +
                 "\"tickMs\":{\"total\":31.5,\"mean\":10.5,\"max\":20,\"recent\":[1.5,10,20]}," +
-                "\"pythonMs\":17.000001,\"outsidePythonMs\":14.499999," +
-                "\"calls\":{\"computed\":{\"count\":4,\"ms\":0.012},\"newProcess\":{\"count\":1,\"ms\":15}," +
+                "\"pythonMs\":2.000001,\"outsidePythonMs\":29.499999," +
+                "\"calls\":{\"computed\":{\"count\":4,\"ms\":0.012}," +
                 "\"openProcess\":{\"count\":2,\"ms\":2.000001},\"cache\":{\"count\":0,\"ms\":0}}}",
             response.bodyAsText()
         )
@@ -93,7 +93,7 @@ class RunMetricsRoutesTest {
             HttpStatusCode.OK,
             "{\"environmentKey\":\"$ENV\",\"phase\":\"activated\",\"ticks\":0," +
                 "\"tickMs\":{\"total\":0,\"mean\":0,\"max\":0,\"recent\":[]},\"pythonMs\":0,\"outsidePythonMs\":0," +
-                "\"calls\":{\"computed\":{\"count\":0,\"ms\":0},\"newProcess\":{\"count\":0,\"ms\":0}," +
+                "\"calls\":{\"computed\":{\"count\":0,\"ms\":0}," +
                 "\"openProcess\":{\"count\":0,\"ms\":0},\"cache\":{\"count\":0,\"ms\":0}}}",
             client.get("/observatory/metrics?envKey=$ENV")
         )
@@ -123,10 +123,9 @@ class RunMetricsRoutesTest {
             tickNanos = 31_500_000,
             maxTickNanos = 20_000_000,
             recentTickNanos = listOf(1_500_000, 10_000_000, 20_000_000),
-            outsidePythonNanos = 14_499_999,
+            outsidePythonNanos = 29_499_999,
             calls = mapOf(
                 CodeWay.COMPUTED to CodeCalls(4, 12_000),
-                CodeWay.NEW_PROCESS to CodeCalls(1, 15_000_000),
                 CodeWay.OPEN_PROCESS to CodeCalls(2, 2_000_001),
                 CodeWay.CACHE to CodeCalls(0, 0)
             )

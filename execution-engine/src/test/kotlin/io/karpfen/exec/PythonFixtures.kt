@@ -22,6 +22,7 @@ import io.karpfen.dsl.reader.kmeta.KmetaReader
 import io.karpfen.dsl.reader.kmodel.KmodelReader
 import io.karpfen.dsl.reader.kstates.KstatesReader
 import io.karpfen.dsl.states.StateMachine
+import io.karpfen.io.karpfen.exec.CodeOutput
 import io.karpfen.io.karpfen.exec.MacroProcessor
 import io.karpfen.io.karpfen.exec.ModelQueryProcessor
 import kotlin.test.assertTrue
@@ -114,12 +115,21 @@ object PythonFixtures {
     /** Reads a state machine text. */
     fun stateMachine(text: String): StateMachine = accept(KstatesReader().read(text.trimIndent()))
 
-    /** A macro processor on a fresh model whose context object is [context], with the macros of [stateMachine]. */
-    fun processor(context: String = "a", stateMachine: String? = null): MacroProcessor {
+    /**
+     * A macro processor on a fresh model whose context object is [context], with the macros of [stateMachine], that
+     * hands what code prints to [output].
+     */
+    fun processor(
+        context: String = "a",
+        stateMachine: String? = null,
+        output: CodeOutput = CodeOutput.CONSOLE
+    ): MacroProcessor {
         val metamodel = metamodel()
         val model = model(metamodel)
         val macros = stateMachine?.let { stateMachine(it).macros } ?: emptyList()
-        return MacroProcessor(metamodel, model, macros, context, ModelQueryProcessor(metamodel, model))
+        return MacroProcessor(
+            metamodel, model, macros, context, ModelQueryProcessor(metamodel, model), output = output
+        )
     }
 
     /** The process ids of the Python processes this JVM started and that still run. */

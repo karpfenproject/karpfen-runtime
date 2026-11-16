@@ -56,28 +56,26 @@ class RunMetricsTest {
     }
 
     @Test
-    fun `calls are counted and timed per way, and only new and open processes count as Python`() {
+    fun `calls are counted and timed per way, and only the calls in a Python process count as Python`() {
         val metrics = RunMetrics()
 
         metrics.codeRan(CodeWay.COMPUTED, 2)
         metrics.codeRan(CodeWay.COMPUTED, 3)
-        metrics.codeRan(CodeWay.NEW_PROCESS, 100)
         metrics.codeRan(CodeWay.OPEN_PROCESS, 40)
         metrics.codeRan(CodeWay.CACHE, 1)
         val snapshot = metrics.snapshot()
 
         assertEquals(CodeCalls(2, 5), snapshot.calls[CodeWay.COMPUTED])
-        assertEquals(CodeCalls(1, 100), snapshot.calls[CodeWay.NEW_PROCESS])
         assertEquals(CodeCalls(1, 40), snapshot.calls[CodeWay.OPEN_PROCESS])
         assertEquals(CodeCalls(1, 1), snapshot.calls[CodeWay.CACHE])
-        assertEquals(140, snapshot.pythonNanos)
+        assertEquals(40, snapshot.pythonNanos)
     }
 
     @Test
     fun `the time outside Python of a tick is its duration minus the Python calls since the tick before`() {
         val metrics = RunMetrics()
 
-        metrics.codeRan(CodeWay.NEW_PROCESS, 30)
+        metrics.codeRan(CodeWay.OPEN_PROCESS, 30)
         metrics.codeRan(CodeWay.COMPUTED, 5)
         metrics.tickEnded(100)
         metrics.tickEnded(20)
@@ -91,10 +89,10 @@ class RunMetricsTest {
     @Test
     fun `the difference of two snapshots holds the ticks and calls between them`() {
         val metrics = RunMetrics()
-        metrics.codeRan(CodeWay.NEW_PROCESS, 10)
+        metrics.codeRan(CodeWay.OPEN_PROCESS, 10)
         metrics.tickEnded(40)
         val earlier = metrics.snapshot()
-        metrics.codeRan(CodeWay.NEW_PROCESS, 5)
+        metrics.codeRan(CodeWay.OPEN_PROCESS, 5)
         metrics.tickEnded(8)
         metrics.tickEnded(12)
 
@@ -104,7 +102,7 @@ class RunMetricsTest {
         assertEquals(20, between.tickNanos)
         assertEquals(10.0, between.meanTickNanos)
         assertEquals(15, between.outsidePythonNanos)
-        assertEquals(CodeCalls(1, 5), between.calls[CodeWay.NEW_PROCESS])
+        assertEquals(CodeCalls(1, 5), between.calls[CodeWay.OPEN_PROCESS])
         assertEquals(CodeCalls(0, 0), between.calls[CodeWay.COMPUTED])
     }
 

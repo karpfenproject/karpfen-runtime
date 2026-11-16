@@ -26,8 +26,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 /**
- * Hands values to Python and back in both ways code runs in Python: in a new process (plain code) and in the process
- * that stays open (code that calls a macro with `@name`, or code longer than 8000 characters). Every text of
+ * Hands values to Python and back, for plain code and for code that calls a macro with `@name`, both of which run in
+ * the Python process that stays open. Every text of
  * [PythonFixtures.HARD_TEXTS] must arrive in Python as it is in the model and come back unchanged: as a property, inside
  * an object handed over as `$(object)`, as a macro argument, and as the value code returns. Large values and long code
  * cross the limit of 8000 characters.
@@ -39,20 +39,20 @@ class PythonValuesTest {
 
     @AfterEach
     fun close() {
-        processors.forEach { it.close() }
+        processors.forEach { it.pythonSessions.close() }
     }
 
     private fun processor(stateMachine: String? = MACROS): MacroProcessor =
         PythonFixtures.processor(stateMachine = stateMachine).also { processors += it }
 
     @Test
-    fun `a hard text read as a property arrives and returns unchanged in both ways`() {
+    fun `a hard text read as a property arrives and returns unchanged with and without a macro`() {
         val processor = processor()
         for (text in PythonFixtures.HARD_TEXTS) {
             processor.modelQueryProcessor.setScalar("a", "label", text)
 
-            assertEquals(text, processor.executeInlineMacro("return $(label)", "string"), "new process: $text")
-            assertEquals(text, processor.executeInlineMacro("return @echo($(label))", "string"), "open process: $text")
+            assertEquals(text, processor.executeInlineMacro("return $(label)", "string"), "inline: $text")
+            assertEquals(text, processor.executeInlineMacro("return @echo($(label))", "string"), "macro: $text")
             assertEquals(
                 text.codePointCount(0, text.length).toDouble(),
                 processor.executeInlineMacro("return len($(label))", "number"),
@@ -115,7 +115,7 @@ class PythonValuesTest {
     }
 
     @Test
-    fun `the same code runs in a new process below 8000 characters and in the open process above`() {
+    fun `code below and above 8000 characters runs in Python alike`() {
         val processor = processor()
         val transformer = MacroCodeTransformer(processor.modelQueryProcessor, emptyList())
         val tiers = HashSet<ExecutionTier>()
@@ -126,11 +126,11 @@ class PythonValuesTest {
 
             assertEquals(size.toDouble(), processor.executeInlineMacro("return len($(readings))", "number"))
         }
-        assertEquals(setOf(ExecutionTier.MEDIUM, ExecutionTier.COMPLEX), tiers)
+        assertEquals(setOf(ExecutionTier.PYTHON), tiers)
     }
 
     @Test
-    fun `a large object and a long code text are handed over in both ways`() {
+    fun `a large object and a long code text are handed over with and without a macro`() {
         val processor = processor()
         val log = (1..5_000).map { "entry $it with \"quotes\" and ü" }
         processor.modelQueryProcessor.setSimpleList("a", "log", log)
@@ -167,7 +167,7 @@ class PythonValuesTest {
     }
 
     private companion object {
-        /** Macros that hand their argument back; calling them with `@name` runs the code in the open process. */
+        /** Macros that hand their argument back; calling them with `@name` puts their code into the code text as a function. */
         val MACROS = """
             STATEMACHINE ATTACHED TO "Lamp" {
                 STATES { INITIAL STATE "off" { } }

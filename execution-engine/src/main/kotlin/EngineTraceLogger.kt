@@ -98,6 +98,7 @@ class EngineTraceLogger(
         EVENT_RECEIVED,
         EVENT_CONSUMED,
         ACTION_ERROR,
+        CONDITION_ERROR,
         ENGINE_ERROR,
         STATE_MACHINE_ATTACHED,
         STATE_MACHINE_DETACHED,
@@ -208,7 +209,8 @@ class EngineTraceLogger(
      */
     fun errors(): List<TraceEntry> =
         synchronized(_tracesLock) {
-            _traces.filter { it.eventType == TraceEventType.ACTION_ERROR || it.eventType == TraceEventType.ENGINE_ERROR }
+            _traces.filter { it.eventType == TraceEventType.ACTION_ERROR || it.eventType == TraceEventType.CONDITION_ERROR ||
+                    it.eventType == TraceEventType.ENGINE_ERROR }
         }
 
     fun close() {

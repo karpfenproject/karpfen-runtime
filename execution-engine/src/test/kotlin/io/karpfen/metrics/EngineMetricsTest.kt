@@ -52,7 +52,6 @@ class EngineMetricsTest {
         """)
 
         assertEquals(numbers.ticks, numbers.calls.getValue(CodeWay.COMPUTED).count)
-        assertEquals(CodeCalls(0, 0), numbers.calls[CodeWay.NEW_PROCESS])
         assertEquals(CodeCalls(0, 0), numbers.calls[CodeWay.OPEN_PROCESS])
         assertEquals(CodeCalls(0, 0), numbers.calls[CodeWay.CACHE])
         assertEquals(0, numbers.pythonNanos)
@@ -63,7 +62,7 @@ class EngineMetricsTest {
 
     @Test
     @Tag("python")
-    fun `code in a new process and in the open process counts in its own way with its time in Python`() {
+    fun `code in Python counts in its own way with its time in Python, also the code the runtime hands on`() {
         val numbers = runFor(ticks = 10, stateMachine = """
             STATEMACHINE ATTACHED TO "Lamp" {
                 STATES { INITIAL STATE "on" { } STATE "off" { } }
@@ -85,10 +84,8 @@ class EngineMetricsTest {
 
         val ticks = numbers.ticks
         assertEquals(ticks, numbers.calls.getValue(CodeWay.COMPUTED).count)
-        assertEquals(2 * ticks, numbers.calls.getValue(CodeWay.NEW_PROCESS).count, "abs() and the fallback of 2")
-        assertEquals(ticks, numbers.calls.getValue(CodeWay.OPEN_PROCESS).count)
+        assertEquals(3 * ticks, numbers.calls.getValue(CodeWay.OPEN_PROCESS).count, "abs(), the fallback of 2 and the macro")
         assertEquals(CodeCalls(0, 0), numbers.calls[CodeWay.CACHE])
-        assertTrue(numbers.calls.getValue(CodeWay.NEW_PROCESS).nanos > 0)
         assertTrue(numbers.calls.getValue(CodeWay.OPEN_PROCESS).nanos > 0)
         assertTrue(numbers.pythonNanos <= numbers.tickNanos)
         assertEquals(numbers.tickNanos - numbers.pythonNanos, numbers.outsidePythonNanos)
@@ -107,9 +104,9 @@ class EngineMetricsTest {
             }
         """)
 
-        val newProcesses = numbers.calls.getValue(CodeWay.NEW_PROCESS)
-        assertEquals(0L, newProcesses.count % 4, "every branch calls once per tick")
-        assertTrue(newProcesses.count >= 4 * (numbers.ticks - 1), "four branches in every tick after the split")
+        val inPython = numbers.calls.getValue(CodeWay.OPEN_PROCESS)
+        assertEquals(0L, inPython.count % 4, "every branch calls once per tick")
+        assertTrue(inPython.count >= 4 * (numbers.ticks - 1), "four branches in every tick after the split")
         assertTrue(numbers.outsidePythonNanos <= numbers.tickNanos)
     }
 

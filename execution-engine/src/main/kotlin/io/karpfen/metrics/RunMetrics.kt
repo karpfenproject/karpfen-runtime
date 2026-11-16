@@ -77,8 +77,7 @@ class RunMetrics(private val recentTicks: Int = RECENT_TICKS) : RunMetricsRecord
         )
     }
 
-    private fun pythonNanos(): Long =
-        codeNanos[CodeWay.NEW_PROCESS.ordinal] + codeNanos[CodeWay.OPEN_PROCESS.ordinal]
+    private fun pythonNanos(): Long = CodeWay.entries.filter { it.waitsForPython }.sumOf { codeNanos[it.ordinal] }
 
     companion object {
         /** The number of recent tick durations kept by default. */

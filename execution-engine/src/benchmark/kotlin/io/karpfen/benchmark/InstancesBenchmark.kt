@@ -21,8 +21,8 @@ import org.openjdk.jmh.annotations.OperationsPerInvocation
 
 /**
  * Many state machine instances: a room with ten, fifty or two hundred lamps whose type `behaves after` the attachable
- * state machine `glowing`, so every lamp runs an instance of its own. Each instance looks at one condition in a new
- * Python process in every tick. The score is the time of one tick of all instances.
+ * state machine `glowing`, so every lamp runs an instance of its own. Each instance looks at one condition in Python
+ * in every tick. The score is the time of one tick of all instances.
  */
 open class InstancesBenchmark : EngineBenchmark() {
 
@@ -63,7 +63,7 @@ open class InstancesBenchmark : EngineBenchmark() {
                     STATE "off" { }
                 }
                 TRANSITIONS {
-                    TRANSITION "on" -> "off" { CONDITION { ${LampWorld.condition("newProcess")} } }
+                    TRANSITION "on" -> "off" { CONDITION { ${LampWorld.condition("plain")} } }
                 }
             }
         """

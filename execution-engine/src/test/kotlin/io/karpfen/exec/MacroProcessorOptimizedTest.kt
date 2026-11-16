@@ -121,7 +121,7 @@ class MacroProcessorOptimizedTest {
 
     @AfterEach
     fun tearDown() {
-        processor.close()
+        processor.pythonSessions.close()
     }
 
     // ---- SIMPLE tier: inline EVAL expressions (robot demo patterns) ----
@@ -270,45 +270,45 @@ class MacroProcessorOptimizedTest {
         assertEquals(200.0, (result as Number).toDouble(), 0.001)
     }
 
-    // ---- runPythonCodeDirect (MEDIUM tier) ----
+    // ---- runPython ----
 
     @Test
-    fun `runPythonCodeDirect executes simple code`() {
-        val result = processor.runPythonCodeDirect("print(42)")
+    fun `runPython executes simple code`() {
+        val result = processor.runPython("__karpfen_result__ = 42")
         assertEquals("42", result)
     }
 
     @Test
-    fun `runPythonCodeDirect executes multi-line code`() {
+    fun `runPython executes multi-line code`() {
         val code = """
             x = 5 + 3
-            print(x * 2)
+            __karpfen_result__ = x * 2
         """.trimIndent()
-        val result = processor.runPythonCodeDirect(code)
+        val result = processor.runPython(code)
         assertEquals("16", result)
     }
 
     @Test
-    fun `runPythonCodeDirect returns null for no output`() {
-        val result = processor.runPythonCodeDirect("x = 42")
+    fun `runPython returns null for no output`() {
+        val result = processor.runPython("x = 42")
         assertNull(result)
     }
 
-    // ---- runPythonCodeViaSession (COMPLEX tier) ----
+    // ---- runPython with imports ----
 
     @Test
-    fun `runPythonCodeViaSession executes code`() {
-        val result = processor.runPythonCodeViaSession("print(42)")
+    fun `runPython executes code`() {
+        val result = processor.runPython("__karpfen_result__ = 42")
         assertEquals("42", result)
     }
 
     @Test
-    fun `runPythonCodeViaSession handles imports`() {
+    fun `runPython handles imports`() {
         val code = """
             import math
-            print(math.sqrt(16.0))
+            __karpfen_result__ = math.sqrt(16.0)
         """.trimIndent()
-        val result = processor.runPythonCodeViaSession(code)
+        val result = processor.runPython(code)
         assertEquals("4.0", result)
     }
 
@@ -316,9 +316,9 @@ class MacroProcessorOptimizedTest {
 
     @Test
     fun `equivalence - simple arithmetic gives same result as Python`() {
-        // Use runPythonCode (original path) for reference, then executeInlineMacro (optimized)
-        val pythonResult = processor.runPythonCode(
-            "print(5.0 + 0.3 * 1.0)"
+        // Use runPython (original path) for reference, then executeInlineMacro (optimized)
+        val pythonResult = processor.runPython(
+            "__karpfen_result__ = 5.0 + 0.3 * 1.0"
         )
         assertEquals("5.3", pythonResult)
 
@@ -329,32 +329,32 @@ class MacroProcessorOptimizedTest {
 
     @Test
     fun `equivalence - boolean condition gives same result as Python`() {
-        val pythonResult = processor.runPythonCode(
-            "print(100.0 >= 1.0 and 100.0 >= 1.0)"
+        val pythonResult = processor.runPython(
+            "__karpfen_result__ = 100.0 >= 1.0 and 100.0 >= 1.0"
         )
-        assertEquals("True", pythonResult)
+        assertEquals("true", pythonResult)
 
         val code = "return \$(d_closest_obstacle) >= 1.0 and \$(d_closest_wall) >= 1.0"
         val optimizedResult = processor.executeInlineMacro(code, "boolean")
         assertEquals(true, optimizedResult)
     }
 
-    // ---- Original runPythonCode still works ----
+    // ---- Original runPython still works ----
 
     @Test
-    fun `runPythonCode legacy path still works`() {
-        val result = processor.runPythonCode("print(3 + 4 * 2)")
+    fun `runPython still works`() {
+        val result = processor.runPython("__karpfen_result__ = 3 + 4 * 2")
         assertEquals("11", result)
     }
 
     @Test
-    fun `runPythonCode legacy path handles json`() {
+    fun `runPython handles json`() {
         val code = """
             import json
             result = {"x": 1.0, "y": 2.0}
-            print(json.dumps(result))
+            __karpfen_result__ = json.dumps(result)
         """.trimIndent()
-        val result = processor.runPythonCode(code)
+        val result = processor.runPython(code)
         assertNotNull(result)
         assertTrue(result.toString().contains("\"x\""))
         assertTrue(result.toString().contains("\"y\""))

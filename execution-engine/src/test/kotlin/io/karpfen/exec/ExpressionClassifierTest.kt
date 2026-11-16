@@ -105,20 +105,20 @@ class ExpressionClassifierTest {
         assertEquals(ExecutionTier.SIMPLE, ExpressionClassifier.classify(code))
     }
 
-    // ---- MEDIUM classification ----
+    // ---- PYTHON classification: code without imports ----
 
     @Test
-    fun `classifies multi-line code without imports as MEDIUM`() {
+    fun `classifies multi-line code without imports as PYTHON`() {
         val body = """
             x = 5 + 3
             return x * 2
         """.trimIndent()
         val code = wrapInPython(body)
-        assertEquals(ExecutionTier.MEDIUM, ExpressionClassifier.classify(code))
+        assertEquals(ExecutionTier.PYTHON, ExpressionClassifier.classify(code))
     }
 
     @Test
-    fun `classifies code with conditionals as MEDIUM`() {
+    fun `classifies code with conditionals as PYTHON`() {
         val body = """
             if 5 > 3:
                 return True
@@ -126,11 +126,11 @@ class ExpressionClassifierTest {
                 return False
         """.trimIndent()
         val code = wrapInPython(body)
-        assertEquals(ExecutionTier.MEDIUM, ExpressionClassifier.classify(code))
+        assertEquals(ExecutionTier.PYTHON, ExpressionClassifier.classify(code))
     }
 
     @Test
-    fun `classifies code with for loop as MEDIUM`() {
+    fun `classifies code with for loop as PYTHON`() {
         val body = """
             total = 0
             for i in range(10):
@@ -138,41 +138,41 @@ class ExpressionClassifierTest {
             return total
         """.trimIndent()
         val code = wrapInPython(body)
-        assertEquals(ExecutionTier.MEDIUM, ExpressionClassifier.classify(code))
+        assertEquals(ExecutionTier.PYTHON, ExpressionClassifier.classify(code))
     }
 
-    // ---- COMPLEX classification ----
+    // ---- PYTHON classification: imports and function definitions ----
 
     @Test
-    fun `classifies code with import math as COMPLEX`() {
+    fun `classifies code with import math as PYTHON`() {
         val code = wrapInPython("return math.sqrt(9.0)", imports = "import math")
-        assertEquals(ExecutionTier.COMPLEX, ExpressionClassifier.classify(code))
+        assertEquals(ExecutionTier.PYTHON, ExpressionClassifier.classify(code))
     }
 
     @Test
-    fun `classifies code with import numpy as COMPLEX`() {
+    fun `classifies code with import numpy as PYTHON`() {
         val code = wrapInPython(
             "q = np.array([1.0, 2.0])\nreturn np.linalg.norm(q)",
             imports = "import numpy as np"
         )
-        assertEquals(ExecutionTier.COMPLEX, ExpressionClassifier.classify(code))
+        assertEquals(ExecutionTier.PYTHON, ExpressionClassifier.classify(code))
     }
 
     @Test
-    fun `classifies code with function definitions as COMPLEX`() {
+    fun `classifies code with function definitions as PYTHON`() {
         val funcDef = """
             def point_to_point_distance(p1, p2):
             	import math
             	return math.sqrt((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2)
         """.trimIndent()
         val code = wrapInPython("return point_to_point_distance(a, b)", functionDefs = funcDef)
-        assertEquals(ExecutionTier.COMPLEX, ExpressionClassifier.classify(code))
+        assertEquals(ExecutionTier.PYTHON, ExpressionClassifier.classify(code))
     }
 
     @Test
-    fun `classifies code with from import as COMPLEX`() {
+    fun `classifies code with from import as PYTHON`() {
         val code = wrapInPython("return sqrt(9)", imports = "from math import sqrt")
-        assertEquals(ExecutionTier.COMPLEX, ExpressionClassifier.classify(code))
+        assertEquals(ExecutionTier.PYTHON, ExpressionClassifier.classify(code))
     }
 
     // ---- extractFunctionBody ----

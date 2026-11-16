@@ -20,7 +20,6 @@ package io.karpfen.io.karpfen.exec
  * the call. The message is what a modeler reads in the trace log and the console, so it is one line:
  * - `Python error: <type>: <message>` for an exception, the last line Python writes for it, such as
  *   `Python error: ZeroDivisionError: division by zero` or `Python error: SyntaxError: invalid syntax`;
- * - `Python ended with exit code <n>` for a process that ended without saying why;
  * - `The Python process ended during the call` for a persistent process that is gone.
  *
  * Action processing reports it as an error of the action, a condition takes it as false.
@@ -34,15 +33,5 @@ class PythonExecutionException(message: String) : RuntimeException(message) {
 
         /** The exception for an exception in Python whose last line of text is [lastLine]. */
         fun raised(lastLine: String) = PythonExecutionException(ERROR_PREFIX + lastLine)
-
-        /**
-         * The exception for a process that ended with [exitCode] after writing [stderr]: the last line of [stderr]
-         * when it has one, which for an uncaught exception is its type and message, the exit code otherwise.
-         */
-        fun ended(exitCode: Int, stderr: String): PythonExecutionException =
-            lastLine(stderr)?.let(::raised) ?: PythonExecutionException("Python ended with exit code $exitCode")
-
-        /** The last line of [text] that holds more than white space, trimmed, or null. */
-        fun lastLine(text: String): String? = text.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }
     }
 }

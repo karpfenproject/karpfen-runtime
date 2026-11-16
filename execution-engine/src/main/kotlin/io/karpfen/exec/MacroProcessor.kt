@@ -25,12 +25,20 @@ import org.json.JSONObject
 import io.karpfen.dsl.states.Macro
 import io.karpfen.io.karpfen.metrics.CodeWay
 import io.karpfen.io.karpfen.metrics.RunMetricsRecorder
-import java.nio.file.Files
 
 /**
  * Runs the `EVAL` blocks and macros of one state machine instance in the way their code needs, and reports every call
  * with its way and duration to [metrics]: only the run of the code counts, not the writing of the code before it and
  * not the reading of its result after it.
+ *
+ * Code that the runtime can compute itself is computed in Kotlin. All other code runs in a Python process of
+ * [pythonSessions], which stays open and gives every call a fresh namespace. What the code prints goes to [output],
+ * never into its result.
+ *
+ * @property pythonSessions the Python processes the code runs in. The engine hands every instance of an environment the
+ *   same pool and closes it when the environment ends. A processor built without one gets a pool of its own, which its
+ *   user ends with [PythonSessionPool.close].
+ * @property output receives the text that code printed, with the key of the object of the instance.
  */
 class MacroProcessor(
     val metamodel: Metamodel,
@@ -38,7 +46,9 @@ class MacroProcessor(
     val macros: List<Macro>,
     val currentContextModelElement: String,
     val modelQueryProcessor: ModelQueryProcessor,
-    private val metrics: RunMetricsRecorder = RunMetricsRecorder.NONE
+    private val metrics: RunMetricsRecorder = RunMetricsRecorder.NONE,
+    val pythonSessions: PythonSessionPool = PythonSessionPool(::PersistentPythonSession),
+    private val output: CodeOutput = CodeOutput.CONSOLE
 ) {
 
     private companion object {
@@ -48,17 +58,6 @@ class MacroProcessor(
 
     val context: DataObject = modelQueryProcessor.getDataObjectById(currentContextModelElement)
     private val codeTransformer = MacroCodeTransformer(modelQueryProcessor, macros)
-
-    /**
-     * The persistent Python sessions for COMPLEX-tier code. One session serves one call at a time; while the branches
-     * of a split state machine run on threads of their own (feature TrueParallel), each concurrent call gets a session
-     * of its own, so calls never interleave and a branch that waits for Python holds up no other branch. Without that
-     * feature one session serves every call, as the calls come one after the other.
-     */
-    private val pythonSessions = PythonSessionPool { PersistentPythonSession() }
-
-    /** Cached Python command to avoid probing the PATH on every invocation. */
-    private val cachedPythonCommand: String by lazy { findPythonCommand() }
 
     /**
      * Executes an inline macro (EVAL block) with the given code.
@@ -78,36 +77,20 @@ class MacroProcessor(
     }
 
     /**
-     * Dispatches the transformed Python code to the appropriate execution tier:
-     * - SIMPLE: Evaluated natively in Kotlin (no Python subprocess), when [simpleResult] gives the result Python would
-     *   give; otherwise the code runs like MEDIUM-tier code.
-     * - MEDIUM: Executed in a new Python process that reads the code from stdin.
-     * - COMPLEX: Executed via a persistent interactive Python session.
+     * Runs the finished code text [pythonCode]: in Kotlin when it is [ExecutionTier.SIMPLE] and [simpleResult] gives
+     * the result Python would give, and in Python otherwise.
      */
     private fun executeWithTieredStrategy(pythonCode: String, expectedTarget: String): Any? {
-        val tier = ExpressionClassifier.classify(pythonCode)
-
-        return when (tier) {
-            ExecutionTier.SIMPLE -> {
-                val start = System.nanoTime()
-                val computed = simpleResult(pythonCode, expectedTarget)
-                if (computed != null) {
-                    metrics.codeRan(CodeWay.COMPUTED, System.nanoTime() - start)
-                    computed
-                } else {
-                    val rawResult = timed(CodeWay.NEW_PROCESS) { runPythonCodeDirect(pythonCode) } ?: return null
-                    parseResultInModel(rawResult, expectedTarget)
-                }
-            }
-            ExecutionTier.MEDIUM -> {
-                val rawResult = timed(CodeWay.NEW_PROCESS) { runPythonCodeDirect(pythonCode) } ?: return null
-                parseResultInModel(rawResult, expectedTarget)
-            }
-            ExecutionTier.COMPLEX -> {
-                val rawResult = timed(CodeWay.OPEN_PROCESS) { runPythonCodeViaSession(pythonCode) } ?: return null
-                parseResultInModel(rawResult, expectedTarget)
+        if (ExpressionClassifier.classify(pythonCode) == ExecutionTier.SIMPLE) {
+            val start = System.nanoTime()
+            val computed = simpleResult(pythonCode, expectedTarget)
+            if (computed != null) {
+                metrics.codeRan(CodeWay.COMPUTED, System.nanoTime() - start)
+                return computed
             }
         }
+        val rawResult = timed(CodeWay.OPEN_PROCESS) { runPython(pythonCode) } ?: return null
+        return parseResultInModel(rawResult, expectedTarget)
     }
 
     /** Runs [call] and reports it to [metrics] as a call in the way [way], also when it fails. */
@@ -127,9 +110,9 @@ class MacroProcessor(
      * and a finite number for the target `number`. Everything else goes to Python, which then decides as for any other
      * code: an expression the evaluator does not take (such as a chained comparison), a division or modulo by zero and
      * any other case the evaluator refuses (see [SimpleExpressionEvaluator.NotSimpleException]), a number where a
-     * boolean is expected and the other way round, and an infinite result. So for these two targets the way the code
-     * runs never changes its result or its error. For every other target the Kotlin result is taken as it is, a number
-     * or a boolean, where Python would give its text.
+     * boolean is expected and the other way round, and an infinite result. Every other target goes to Python as well,
+     * because the evaluator does not know whether Python would write a number as `4` or as `4.0`. The way the code runs
+     * therefore never changes its result or its error.
      */
     private fun simpleResult(pythonCode: String, expectedTarget: String): Any? {
         val body = ExpressionClassifier.extractFunctionBody(pythonCode) ?: return null
@@ -144,7 +127,7 @@ class MacroProcessor(
         return when (expectedTarget.lowercase()) {
             "boolean" -> result as? Boolean
             "number" -> (result as? Double)?.takeIf { it.isFinite() }
-            else -> result
+            else -> null
         }
     }
 
@@ -185,55 +168,16 @@ class MacroProcessor(
     }
 
     /**
-     * Runs the given Python code from a temporary file in a new process and returns what it printed, as
-     * [PythonProcess.run] does.
+     * Runs the complete code text [code] in a Python process of [pythonSessions] and returns its result as text, or
+     * null when it left none. What the code printed goes to [output], also when the code failed.
      *
-     * @param code The complete Python code to execute.
-     * @return The stdout output as a trimmed string, or null if no output.
-     * @throws PythonExecutionException when the code fails.
+     * @throws PythonExecutionException when the code fails or its process ends during the call.
      */
-    fun runPythonCode(code: String): Any? {
-        val tempFile = Files.createTempFile("karpfen_macro_", ".py").toFile()
-        try {
-            tempFile.writeText(code)
-            return PythonProcess.run(listOf(cachedPythonCommand, tempFile.absolutePath), stdin = null)
-        } finally {
-            tempFile.delete()
-        }
-    }
-
-    /**
-     * Runs the given Python code in a new process that reads it from stdin, as [PythonProcess.run] does. Used for
-     * MEDIUM-tier code. The code goes through stdin rather than `python -c`, which avoids the escaping rules of the
-     * command lines of the platforms.
-     *
-     * @param code The complete Python code to execute.
-     * @return The stdout output as a trimmed string, or null if no output.
-     * @throws PythonExecutionException when the code fails.
-     */
-    fun runPythonCodeDirect(code: String): String? =
-        PythonProcess.run(listOf(cachedPythonCommand, "-u", "-"), stdin = code)
-
-    /**
-     * Executes Python code via a persistent interactive Python session of [pythonSessions].
-     * Used for COMPLEX-tier code. A session is started on first use and reused afterwards.
-     *
-     * @param code The complete Python code to execute.
-     * @return The stdout output as a trimmed string, or null if no output.
-     */
-    fun runPythonCodeViaSession(code: String): String? = pythonSessions.execute(code)
-
-    /**
-     * Closes every persistent Python session that was started. Should be called when the engine shuts down; a later
-     * COMPLEX-tier call fails instead of starting a new process.
-     */
-    fun close() {
-        pythonSessions.close()
-    }
-
-    /** Ends every Python session of this processor at once, also one a call waits for; see [PythonSessionPool.abort]. */
-    fun abort() {
-        pythonSessions.abort()
+    fun runPython(code: String): String? {
+        val answer = pythonSessions.execute(code)
+        if (answer.printed.isNotEmpty()) output.printed(currentContextModelElement, answer.printed)
+        answer.error?.let { throw PythonExecutionException.raised(it) }
+        return answer.result
     }
 
     /**
@@ -576,25 +520,4 @@ class MacroProcessor(
             SimplePropertyType.STRING -> ""
         }
     }
-
-    /**
-     * Finds the Python command available on the system.
-     * Tries 'python3' first, then 'python'.
-     */
-    private fun findPythonCommand(): String {
-        for (cmd in listOf("python3", "python", "py")) {
-            try {
-                val process = ProcessBuilder(cmd, "--version")
-                    .redirectErrorStream(true)
-                    .start()
-                process.waitFor()
-                if (process.exitValue() == 0) return cmd
-            } catch (_: Exception) { }
-        }
-
-        throw RuntimeException(
-            "No Python interpreter found. Please ensure 'python3', 'python' or 'py' is available on the system PATH."
-        )
-    }
-
 }

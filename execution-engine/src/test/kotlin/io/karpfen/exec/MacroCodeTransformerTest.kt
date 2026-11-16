@@ -93,7 +93,7 @@ class MacroCodeTransformerTest {
         val result = transformer.transformInlineCode(code, turtle)
 
         assertTrue(result.contains("def __karpfen_main__():"))
-        assertTrue(result.contains("__result__ = __karpfen_main__()"))
+        assertTrue(result.trimEnd().endsWith(MacroCodeTransformer.RESULT_LINE))
     }
 
     @Test
@@ -106,13 +106,13 @@ class MacroCodeTransformerTest {
     }
 
     @Test
-    fun `transformInlineCode handles boolean return value printing`() {
+    fun `transformInlineCode hands a boolean to the result global without printing it`() {
         val turtle = mqp.getDataObjectById("turtle")
         val code = "return \$(d_closest_obstacle) < 1.0"
         val result = transformer.transformInlineCode(code, turtle)
 
-        assertTrue(result.contains("isinstance(__result__, bool)"))
-        assertTrue(result.contains("json.dumps(__result__)"))
+        assertTrue(result.trimEnd().endsWith(MacroCodeTransformer.RESULT_LINE))
+        assertFalse(result.contains("print("))
     }
 
     @Test

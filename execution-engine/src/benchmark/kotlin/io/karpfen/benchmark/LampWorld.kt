@@ -46,7 +46,7 @@ object LampWorld {
         }
     """
 
-    /** The macro that code in the process that stays open calls. */
+    /** The macro that the conditions of the way `macro` call. */
     val MACROS = """
         MACROS {
             MACRO "negative" {
@@ -58,14 +58,14 @@ object LampWorld {
     """
 
     /**
-     * The code of a condition on [value] that never holds and runs in [way]: `computed` by the runtime itself,
-     * `newProcess` in a new Python process, or `openProcess` in the process that stays open. The values of the
-     * properties are not negative.
+     * The code of a condition on [value] that never holds, in the shape [way]: `computed`, which the runtime computes
+     * itself, `plain`, which runs in Python and calls no macro, or `macro`, which runs in Python and calls a macro. The
+     * values of the properties are not negative.
      */
     fun condition(way: String, value: String = "$(watts)"): String = when (way) {
         "computed" -> "EVAL { return $value < 0 }"
-        "newProcess" -> "EVAL { return abs($value) < 0 }"
-        "openProcess" -> "EVAL { return @negative($value) }"
+        "plain" -> "EVAL { return abs($value) < 0 }"
+        "macro" -> "EVAL { return @negative($value) }"
         else -> throw IllegalArgumentException("Unknown way: $way")
     }
 

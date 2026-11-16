@@ -20,13 +20,13 @@ import kotlinx.benchmark.Param
 import org.openjdk.jmh.annotations.OperationsPerInvocation
 
 /**
- * Conditions in each way code runs, looked at in every tick: computed by the runtime itself, in a new Python process,
- * and in the process that stays open, with one, five and twenty transitions that leave the active state. None of the
+ * Conditions in each shape of [LampWorld.condition], looked at in every tick: computed by the runtime itself, plain
+ * code in Python and code in Python that calls a macro, with one, five and twenty transitions that leave the active state. None of the
  * conditions holds, so every tick looks at all of them. The score is the time of one tick.
  */
 open class ConditionBenchmark : EngineBenchmark() {
 
-    @Param("computed", "newProcess", "openProcess")
+    @Param("computed", "plain", "macro")
     var way: String = "computed"
 
     @Param("1", "5", "20")

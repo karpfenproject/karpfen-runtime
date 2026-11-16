@@ -25,10 +25,7 @@ enum class CodeWay(val wireName: String) {
     /** The runtime computes the code itself, without Python. */
     COMPUTED("computed"),
 
-    /** A new Python process runs the code and ends. */
-    NEW_PROCESS("newProcess"),
-
-    /** The Python process that stays open for the state machine instance runs the code. */
+    /** A Python process of the environment, which stays open between calls, runs the code. */
     OPEN_PROCESS("openProcess"),
 
     /** A stored result of the same code with the same values answers the call; no code runs. */
@@ -36,7 +33,7 @@ enum class CodeWay(val wireName: String) {
 
     /** True for the ways in which the call waits for Python. */
     val waitsForPython: Boolean
-        get() = this == NEW_PROCESS || this == OPEN_PROCESS
+        get() = this == OPEN_PROCESS
 }
 
 /**

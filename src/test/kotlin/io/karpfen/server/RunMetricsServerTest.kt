@@ -84,7 +84,7 @@ class RunMetricsServerTest {
         val ticks = stopped.getInt("ticks")
         val calls = stopped.getJSONObject("calls")
         assertEquals(ticks, calls.getJSONObject("computed").getInt("count"), "one computed condition per tick")
-        for (way in listOf("newProcess", "openProcess", "cache")) {
+        for (way in listOf("openProcess", "cache")) {
             assertEquals(0, calls.getJSONObject(way).getInt("count"), way)
         }
         val tickMs = stopped.getJSONObject("tickMs")

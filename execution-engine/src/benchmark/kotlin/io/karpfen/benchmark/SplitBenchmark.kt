@@ -21,9 +21,9 @@ import kotlinx.benchmark.Param
 import org.openjdk.jmh.annotations.OperationsPerInvocation
 
 /**
- * A lamp that splits into four branches, each of which runs code in a new Python process in its DO block in every
- * tick, with the feature TrueParallel off, where the branches step one after the other, and on, where they step at
- * the same time on threads of their own. The score is the time of one tick.
+ * A lamp that splits into four branches, each of which runs code in Python in its DO block in every tick, with the
+ * feature TrueParallel off, where the branches step one after the other, and on, where they step at the same time on
+ * threads of their own. The score is the time of one tick.
  */
 open class SplitBenchmark : EngineBenchmark() {
 

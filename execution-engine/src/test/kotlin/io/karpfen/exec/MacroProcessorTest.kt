@@ -102,56 +102,56 @@ class MacroProcessorTest {
         macros = listOf(pointDistanceMacro, addVectorsMacro, scaleMacro, distanceWithDependencyMacro)
     }
 
-    // ---- runPythonCode ----
+    // ---- runPython ----
 
     @Test
-    fun `runPythonCode executes simple python and returns stdout`() {
+    fun `runPython executes simple python and returns stdout`() {
         val processor = MacroProcessor(
             mqp.metamodel, mqp.model, macros, "turtle", mqp
         )
-        val result = processor.runPythonCode("print(42)")
+        val result = processor.runPython("__karpfen_result__ = 42")
         assertEquals("42", result)
     }
 
     @Test
-    fun `runPythonCode executes arithmetic`() {
+    fun `runPython executes arithmetic`() {
         val processor = MacroProcessor(
             mqp.metamodel, mqp.model, macros, "turtle", mqp
         )
-        val result = processor.runPythonCode("print(3 + 4 * 2)")
+        val result = processor.runPython("__karpfen_result__ = 3 + 4 * 2")
         assertEquals("11", result)
     }
 
     @Test
-    fun `runPythonCode returns null for no output`() {
+    fun `runPython returns null for no output`() {
         val processor = MacroProcessor(
             mqp.metamodel, mqp.model, macros, "turtle", mqp
         )
-        val result = processor.runPythonCode("x = 42")
+        val result = processor.runPython("x = 42")
         assertNull(result)
     }
 
     @Test
-    fun `runPythonCode throws on invalid python`() {
+    fun `runPython throws on invalid python`() {
         val processor = MacroProcessor(
             mqp.metamodel, mqp.model, macros, "turtle", mqp
         )
         assertThrows(RuntimeException::class.java) {
-            processor.runPythonCode("this is not valid python!!!")
+            processor.runPython("this is not valid python!!!")
         }
     }
 
     @Test
-    fun `runPythonCode handles json output`() {
+    fun `runPython handles json output`() {
         val processor = MacroProcessor(
             mqp.metamodel, mqp.model, macros, "turtle", mqp
         )
         val code = """
             import json
             result = {"x": 1.0, "y": 2.0}
-            print(json.dumps(result))
+            __karpfen_result__ = json.dumps(result)
         """.trimIndent()
-        val result = processor.runPythonCode(code)
+        val result = processor.runPython(code)
         assertNotNull(result)
         assertTrue(result.toString().contains("\"x\""))
         assertTrue(result.toString().contains("\"y\""))

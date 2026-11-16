@@ -36,8 +36,8 @@ import kotlin.test.assertTrue
 
 /**
  * Runs code in Python through real engines: what an error in code does to an action, a condition and the trace log,
- * objects that know each other, event values with hard texts, the number of Python processes over many ticks and
- * instances and when they end, and branches that call Python at the same time with the feature TrueParallel.
+ * objects that know each other, event values with hard texts, the one Python process that all instances share over
+ * many ticks and when it ends, and branches that call Python at the same time with the feature TrueParallel.
  */
 @Tag("python")
 class PythonEngineTest {
@@ -54,7 +54,7 @@ class PythonEngineTest {
     private fun newPythonProcesses(): Set<Long> = PythonFixtures.pythonProcesses() - before
 
     @Test
-    fun `an error in code fails its action with the Python error in the trace, makes its condition false, and the engine goes on`() {
+    fun `an error in code fails its action with the Python error in the trace, makes its condition false with the error in the trace, and the engine goes on`() {
         val run = run(attached = mapOf("a" to FAILING_LAMP))
 
         run.awaitLog("a", "reached")
@@ -65,6 +65,10 @@ class PythonEngineTest {
                 "Error in onEntry for state 'failing': Python error: ValueError: in the open process"
             ),
             run.errors()
+        )
+        assertEquals(
+            "Error in a condition of a transition from 'broken': Python error: ValueError: no",
+            run.conditionErrors().first()
         )
         assertEquals("before", run.read { it.getDataObjectById("a").getProp("label").single() })
         assertTrue("wrong" !in run.enteredStates(), "a condition that raises is false")
@@ -100,19 +104,21 @@ class PythonEngineTest {
     }
 
     @Test
-    fun `each instance keeps one open Python process over many ticks, which ends when its object leaves or the engine closes`() {
+    fun `all instances share one Python process over many ticks, which ends only when the engine closes`() {
         val run = run(attached = mapOf("room" to DROPPING_ROOM), definitions = listOf(BUSY))
 
         PythonFixtures.await("thirty calls of every lamp") {
             listOf("a", "b", "c", "spare").all { id -> run.read { it.getDataObjectById(id).getProp("watts").single() as Double } >= 100.0 }
         }
-        assertEquals(4, newPythonProcesses().size)
+        assertEquals(1, newPythonProcesses().size)
         val ticks = run.engine.tickCount
         PythonFixtures.await("thirty more ticks") { run.engine.tickCount >= ticks + 30 }
-        assertEquals(4, newPythonProcesses().size)
+        assertEquals(1, newPythonProcesses().size)
 
         run.engine.receiveExternalEvent(Event("t", "drop"))
-        PythonFixtures.await("the process of the spare lamp ends") { newPythonProcesses().size == 3 }
+        val dropped = run.engine.tickCount
+        PythonFixtures.await("ten ticks after the spare lamp left") { run.engine.tickCount >= dropped + 10 }
+        assertEquals(1, newPythonProcesses().size)
 
         run.engine.close()
         PythonFixtures.await("every process ends with the engine") { newPythonProcesses().isEmpty() }
@@ -181,6 +187,10 @@ class PythonEngineTest {
         /** The messages of the action errors so far. */
         fun errors(): List<String> = entries.filter { it.eventType == TraceEventType.ACTION_ERROR }.map { it.message }
 
+        /** The messages of the condition errors so far. */
+        fun conditionErrors(): List<String> =
+            entries.filter { it.eventType == TraceEventType.CONDITION_ERROR }.map { it.message }
+
         /** The states whose ENTRY or DO ran so far, by the details of the trace. */
         fun enteredStates(): Set<String> = entries.mapNotNull { it.details["state"] }.toSet()
 
@@ -208,7 +218,7 @@ class PythonEngineTest {
             }
         """.trimIndent()
 
-        /** Macros whose code runs in the open process when code calls them with `@name`. */
+        /** Macros that code calls with `@name`. */
         val MACROS = """
             MACROS {
                 MACRO "plus_one" {
@@ -297,7 +307,7 @@ class PythonEngineTest {
             }
         """
 
-        /** Every lamp calls the open process once per tick. */
+        /** Every lamp calls Python once per tick. */
         val BUSY = """
             STATEMACHINE "busy" ATTACHABLE TO "Lamp" {
                 STATES {
@@ -320,7 +330,7 @@ class PythonEngineTest {
             }
         """
 
-        /** Splits into four branches that each call the open process and a new process in every tick. */
+        /** Splits into four branches that each call Python twice in every tick, with and without a macro. */
         val SPLITTING_LAMP = """
             STATEMACHINE ATTACHED TO "Lamp" {
                 STATES {
