@@ -68,31 +68,43 @@ import java.util.concurrent.TimeUnit
  *
  * Thread safety: [execute] and [close] are synchronized, so calls of several threads never interleave on one process. A
  * [PythonSessionPool] gives threads that call at the same time a session each.
+ *
+ * @property start starts the process with the loop; by default Python with [LOOP], unbuffered and with UTF-8 for its
+ *   streams. Tests of the handling of the process on the Kotlin side pass a process that answers from fixed text.
  */
-class PersistentPythonSession : PythonSession {
+class PersistentPythonSession(private val start: () -> Process = ::startPython) : PythonSession {
 
     @Volatile
     private var process: Process? = null
+
+    /** True once [abort] ran; the session then starts no process any more. */
+    @Volatile
+    private var aborted = false
     private var writer: BufferedWriter? = null
     private var reader: BufferedReader? = null
 
     /**
      * Runs [code] in a fresh namespace of the process, starting the process first when none runs.
      *
-     * @throws PythonExecutionException when the process ends during the call or answers outside the protocol.
+     * A call that does not end with a whole answer ends the process, whatever went wrong: the process ending, an answer
+     * outside the protocol, or an [Error] such as an [OutOfMemoryError] while the answer is read. Lines of the answer
+     * may still wait in the pipe then, and a later call on the same process would take them as its own answer.
+     *
+     * @throws PythonExecutionException when the process ends during the call, answers outside the protocol, or the
+     *   session was aborted.
      * @throws RuntimeException when no Python interpreter can be started.
      */
     @Synchronized
     override fun execute(code: String): PythonAnswer {
+        if (aborted) throw PythonExecutionException(ABORTED)
         ensureSessionAlive()
-        return try {
-            exchange(code)
+        var answered = false
+        try {
+            return exchange(code).also { answered = true }
         } catch (e: IOException) {
-            destroySession()
             throw PythonExecutionException(ENDED)
-        } catch (e: PythonExecutionException) {
-            destroySession()
-            throw e
+        } finally {
+            if (!answered) destroySession()
         }
     }
 
@@ -138,9 +150,13 @@ class PersistentPythonSession : PythonSession {
 
     /**
      * Kills the process at once without waiting for a running [execute], which then reads the end of the output and
-     * fails. Not synchronized, so it reaches a process whose answer another thread waits for.
+     * fails, and keeps the session from starting a process again. Not synchronized, so it reaches a process whose answer
+     * another thread waits for. A call that is about to start the process when the abort comes finds the mark after the
+     * start and kills its process itself, since the abort sets the mark before it looks at the process and the start
+     * sets the process before it looks at the mark.
      */
     override fun abort() {
+        aborted = true
         process?.destroyForcibly()
     }
 
@@ -157,16 +173,16 @@ class PersistentPythonSession : PythonSession {
         startSession()
     }
 
-    /** Starts the process with the loop of [LOOP], unbuffered and with UTF-8 for its streams. */
+    /** Starts the process through [start] and opens its streams. */
     private fun startSession() {
         destroySession()
-        val processBuilder = ProcessBuilder(PythonCommand.find(), "-u", "-c", LOOP)
-        processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD)
-        processBuilder.environment()["PYTHONIOENCODING"] = "utf-8"
-        processBuilder.environment()["PYTHONDONTWRITEBYTECODE"] = "1"
-
-        val proc = processBuilder.start()
+        val proc = start()
         process = proc
+        if (aborted) {
+            proc.destroyForcibly()
+            process = null
+            throw PythonExecutionException(ABORTED)
+        }
         writer = proc.outputStream.bufferedWriter(Charsets.UTF_8)
         reader = proc.inputStream.bufferedReader(Charsets.UTF_8)
     }
@@ -189,18 +205,29 @@ class PersistentPythonSession : PythonSession {
         reader = null
     }
 
-    private companion object {
-        const val SENTINEL = "__SENTINEL__"
-        const val ENDED = "The Python process ended during the call"
+    companion object {
+
+        /** Starts Python with the loop of [LOOP], unbuffered and with UTF-8 for its streams. */
+        fun startPython(): Process {
+            val processBuilder = ProcessBuilder(PythonCommand.find(), "-u", "-c", LOOP)
+            processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD)
+            processBuilder.environment()["PYTHONIOENCODING"] = "utf-8"
+            processBuilder.environment()["PYTHONDONTWRITEBYTECODE"] = "1"
+            return processBuilder.start()
+        }
+
+        private const val SENTINEL = "__SENTINEL__"
+        private const val ENDED = "The Python process ended during the call"
+        private const val ABORTED = "The Python sessions of this environment were ended"
 
         /** The most compiled code texts the loop keeps; see the class description. */
-        const val MAX_COMPILED = 256
+        private const val MAX_COMPILED = 256
 
         /** The longest encoded code text, in characters, whose compiled form the loop keeps. */
-        const val MAX_COMPILED_LINE = 16_384
+        private const val MAX_COMPILED_LINE = 16_384
 
         /** The loop the process runs; see the class description for its protocol. */
-        val LOOP = """
+        private val LOOP = """
 import sys, os, base64, io, json, traceback, builtins
 
 def __karpfen_encode__(text):

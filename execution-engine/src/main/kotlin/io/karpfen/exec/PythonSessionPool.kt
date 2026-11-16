@@ -41,8 +41,8 @@ interface PythonSession {
     fun close()
 
     /**
-     * Ends the process at once, also while another thread waits in [execute] for its answer; that call then fails.
-     * Called only when the engine ends for good.
+     * Ends the process at once, also while another thread waits in [execute] for its answer; that call then fails. The
+     * session starts no process after it, so every later call fails too. Called only when the engine ends for good.
      */
     fun abort() = close()
 }
