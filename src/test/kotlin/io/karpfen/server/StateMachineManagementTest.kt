@@ -96,7 +96,8 @@ class StateMachineManagementTest {
         )
         assertEquals(
             "A state machine without attachedTo must have the attachable form STATEMACHINE \"name\" ATTACHABLE TO " +
-                "\"Type\"; give attachedTo for a state machine ATTACHED TO a type",
+                "\"Type\" or the fragment form STATEMACHINE \"name\" FRAGMENT; give attachedTo for a state machine " +
+                "ATTACHED TO a type",
             attached.message
         )
         assertTrue(broken.message!!.startsWith("Upload of the attachable state machine rejected: 1 error\n"), broken.message)

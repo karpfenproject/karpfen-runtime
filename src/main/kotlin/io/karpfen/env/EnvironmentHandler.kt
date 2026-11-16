@@ -110,7 +110,9 @@ object EnvironmentHandler {
 
     /**
      * Activates the environment [key]: freezes its configuration into an [EnvironmentThread] that is set up and stored,
-     * ready to be started.
+     * ready to be started. The thread runs the state machines of the environment flattened with its fragments, see
+     * [ComposedStateMachines]; a state machine that does not flatten refuses the activation with an
+     * [IllegalStateException] before anything is claimed, so the environment stays configurable.
      *
      * Activation is atomic. The key is claimed in [activeEnvs] with `putIfAbsent`, so a second activation is refused
      * with an [IllegalStateException] and the first execution thread stays in charge. When building the trace logger
@@ -119,15 +121,15 @@ object EnvironmentHandler {
      */
     fun activeEnv(key: String) = synchronized(registryLock) {
         val env = envs[key] ?: throw IllegalArgumentException("Environment with key '$key' does not exist.")
+        if (activeEnvs.containsKey(key)) throw alreadyActive(key)
+        val stateMachines = ComposedStateMachines.of(env)
         if (activeEnvs.putIfAbsent(key, env) != null) {
-            throw IllegalStateException(
-                "Environment with key $key is already active and cannot be modified in the intended way."
-            )
+            throw alreadyActive(key)
         }
         var traceLogger: EngineTraceLogger? = null
         try {
             traceLogger = createTraceLogger(key)
-            val envThread = EnvironmentThread(env, traceLogger)
+            val envThread = EnvironmentThread(env, stateMachines, traceLogger)
             envThread.setup()
             executionThreads[key] = envThread
         } catch (e: Exception) {
@@ -136,6 +138,11 @@ object EnvironmentHandler {
             throw e
         }
     }
+
+    /** The refusal of a second activation of the environment [key]. */
+    private fun alreadyActive(key: String) = IllegalStateException(
+        "Environment with key $key is already active and cannot be modified in the intended way."
+    )
 
     /**
      * Builds the trace logger of the environment [key], writing to the trace directory when one is configured. The

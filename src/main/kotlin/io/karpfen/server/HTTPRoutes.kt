@@ -94,7 +94,7 @@ object HTTPRoutes {
                 try {
                     val envKey = call.request.queryParameters["envKey"]
                         ?: throw IllegalArgumentException("Missing required parameter: envKey")
-                    // With attachedTo the text is attached to that object, without it it is an attachable definition.
+                    // With attachedTo the text is attached to that object, without it it is an attachable definition or a fragment.
                     val attachedTo = call.request.queryParameters["attachedTo"]
                     val stateMachine = call.receiveText()
                     APIService.receiveStateMachine(envKey, attachedTo, stateMachine)

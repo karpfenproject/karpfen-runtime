@@ -43,10 +43,12 @@ import java.util.concurrent.LinkedBlockingQueue
  * the record of [activeStacks]; it answers the [phase] and the snapshots of model observation.
  *
  * @property environment the configured environment this thread runs.
+ * @property stateMachines the flattened state machines of [environment], which the engine runs.
  * @property traceLogger the engine's trace logger, or `null` for no tracing.
  */
 class EnvironmentThread(
     val environment: Environment,
+    val stateMachines: ComposedStateMachines,
     val traceLogger: EngineTraceLogger? = null
 ) : Runnable, ObservedEnvironment {
 
@@ -103,14 +105,14 @@ class EnvironmentThread(
     val engine = Engine(
         environment.metamodel!!,
         environment.model!!,
-        environment.stateMachines,
+        stateMachines.attached,
         environment.tickDelayMS,
         sharedEventBus,
         traceLogger = traceLogger,
         eventConsumptionOnFire = environment.eventConsumptionOnFire,
         eventMetamodel = environment.eventMetamodel,
         featureManager = environment.featureManager,
-        stateMachineDefinitions = environment.stateMachineDefinitions
+        stateMachineDefinitions = stateMachines.definitions
     )
 
     /**
