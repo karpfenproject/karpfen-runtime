@@ -44,6 +44,11 @@ import java.util.concurrent.TimeUnit
  * imports stays loaded in `sys.modules`, and the next import of it is a lookup. Changes that code makes to a module
  * object or to the process, such as an attribute set on `math` or a changed working directory, therefore also stay.
  *
+ * After each call the loop empties the namespace. A function that the code defines refers to the namespace as its
+ * globals, and the namespace refers to the function, so without this every call would leave a reference cycle with the
+ * values of the code in it. Python frees such cycles only in its garbage collection, so emptying the namespace frees
+ * the values of a call at its end instead of leaving them to a later collection.
+ *
  * An exception of any kind in the code, `SystemExit` included, is answered with ERROR and the last line of Python's text
  * for it, such as `ZeroDivisionError: division by zero`, and the process goes on.
  *
@@ -206,6 +211,7 @@ while True:
         continue
     printed = io.StringIO()
     status, text = 'NONE', ''
+    namespace = {}
     try:
         code = base64.b64decode(line).decode('utf-8')
         namespace = {'__name__': '__main__', '__builtins__': builtins}
@@ -219,6 +225,7 @@ while True:
         status, text = 'ERROR', lines[-1] if lines else type(e).__name__
     finally:
         sys.stdout, sys.stderr = __karpfen_out__, sys.__stderr__
+        namespace.clear()
     __karpfen_out__.write('__SENTINEL__' + status + '\n' + __karpfen_encode__(text) + '\n'
                           + __karpfen_encode__(printed.getvalue()) + '\n')
     __karpfen_out__.flush()
