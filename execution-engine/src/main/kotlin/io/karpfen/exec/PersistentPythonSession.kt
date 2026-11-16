@@ -16,6 +16,7 @@
 package io.karpfen.io.karpfen.exec
 
 import java.io.*
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 /**
@@ -23,18 +24,32 @@ import java.util.concurrent.TimeUnit
  *
  * Instead of spawning a new Python process for each macro execution, this class keeps
  * a single Python process alive and sends code snippets to its stdin. Results are read
- * from stdout using a unique sentinel-based protocol to delimit output.
+ * from stdout in a fixed form of two lines per call.
  *
  * The subprocess runs a custom REPL loop (not Python's interactive mode) that reads
- * base64-encoded code snippets from stdin, executes them via exec(), and prints a
- * sentinel line after each execution. This avoids all interactive-mode issues with
- * compound statements, blank lines, and prompt handling.
+ * base64-encoded code snippets from stdin, executes them via exec(), and answers each with
+ * two lines: a sentinel with the status, `__SENTINEL__OK` or `__SENTINEL__ERROR`, and the
+ * base64-encoded UTF-8 text of what the code printed, or of the last line of the error.
+ * Encoding the answer keeps every character the code prints, also line breaks of any kind,
+ * out of the line structure of the protocol.
+ *
+ * While the code runs, the loop captures `sys.stdout` and `sys.stderr`. What the code prints
+ * to stdout is its result; what it writes to stderr is dropped when it succeeds. An exception
+ * of any kind in the code, `SystemExit` included, is answered with ERROR and the last line of
+ * Python's text for it, such as `ZeroDivisionError: division by zero`, and the process goes on.
+ * The process's own stderr is discarded, so nothing written to it can fill a pipe and stop the
+ * process.
  *
  * Benefits:
  * - Eliminates Python interpreter startup overhead (~100-300ms) on each invocation.
  * - Import statements (e.g., `import math`, `import numpy`) are cached by the interpreter
  *   across invocations.
  * - No temp file I/O.
+ *
+ * Failures: an error in the code fails the call with a [PythonExecutionException] and keeps the
+ * process. A process that ends during a call, or answers outside the protocol, fails the call
+ * with a [PythonExecutionException] too and is ended; the next call starts a new one.
+ * A call has no time limit: code that does not end holds its call until [abort] kills the process.
  *
  * Thread safety: All methods that interact with the subprocess are `synchronized`, so calls of
  * several threads never interleave on one process. A [PythonSessionPool] gives threads that call
@@ -52,68 +67,55 @@ class PersistentPythonSession : PythonSession {
      * Executes the given Python code in the persistent session and returns stdout output.
      *
      * The code is base64-encoded and sent as a single line to the subprocess's stdin.
-     * The REPL loop decodes and executes it via exec(), then prints a sentinel.
-     * Everything printed before the sentinel is returned as the result.
+     * The REPL loop decodes and executes it via exec(), then answers with its status and output.
      *
      * @param code The Python code to execute.
-     * @return The stdout output (trimmed), or null if there was no output.
-     * @throws RuntimeException if the Python execution fails or the session cannot be started.
+     * @return The stdout output as [PythonProcess.printed] gives it, or null if there was no output.
+     * @throws PythonExecutionException if the code fails in Python or the process ends during the call.
+     * @throws RuntimeException if the session cannot be started.
      */
     @Synchronized
     override fun execute(code: String): String? {
         ensureSessionAlive()
 
-        try {
-            val w = writer ?: throw RuntimeException("Python session writer is not available")
-            val r = reader ?: throw RuntimeException("Python session reader is not available")
-
-            // Send base64-encoded code as a single line
-            val encoded = java.util.Base64.getEncoder().encodeToString(code.toByteArray(Charsets.UTF_8))
-            w.write(encoded)
-            w.newLine()
-            w.flush()
-
-            // Read the sentinel line first (format: __SENTINEL__<status>)
-            // Then read the number of output lines, then the output lines themselves.
-            val sentinelLine = r.readLine() ?: throw RuntimeException(
-                "Python session terminated unexpectedly while executing code"
-            )
-
-            if (!sentinelLine.startsWith("__SENTINEL__")) {
-                throw RuntimeException("Protocol error: expected sentinel, got: $sentinelLine")
-            }
-
-            val status = sentinelLine.removePrefix("__SENTINEL__")
-            val lineCountStr = r.readLine() ?: throw RuntimeException(
-                "Python session terminated unexpectedly while reading line count"
-            )
-            val lineCount = lineCountStr.toIntOrNull() ?: throw RuntimeException(
-                "Protocol error: expected line count, got: $lineCountStr"
-            )
-
-            val output = StringBuilder()
-            repeat(lineCount) { i ->
-                val line = r.readLine() ?: throw RuntimeException(
-                    "Python session terminated unexpectedly while reading output line ${i+1}/$lineCount"
-                )
-                if (output.isNotEmpty()) output.append("\n")
-                output.append(line)
-            }
-
-            if (status == "ERROR") {
-                val errorMsg = output.toString().trim()
-                System.err.println("[PersistentPythonSession] Python error: $errorMsg")
-                return null
-            }
-
-            val result = output.toString().trim()
-            return if (result.isEmpty()) null else result
-
+        val (status, text) = try {
+            exchange(code)
         } catch (e: IOException) {
-            // The process likely died — clean up and let the next call restart it
             destroySession()
-            throw RuntimeException("Python session I/O error: ${e.message}", e)
+            throw PythonExecutionException("The Python process ended during the call")
+        } catch (e: PythonExecutionException) {
+            destroySession()
+            throw e
         }
+
+        if (status == "ERROR") throw PythonExecutionException.raised(text.trim())
+        return PythonProcess.printed(text)
+    }
+
+    /**
+     * Sends [code] and reads the answer: the status after the sentinel and the decoded text.
+     *
+     * @throws PythonExecutionException when the process ends or answers outside the protocol.
+     */
+    private fun exchange(code: String): Pair<String, String> {
+        val w = writer ?: throw PythonExecutionException("The Python process ended during the call")
+        val r = reader ?: throw PythonExecutionException("The Python process ended during the call")
+
+        w.write(Base64.getEncoder().encodeToString(code.toByteArray(Charsets.UTF_8)))
+        w.newLine()
+        w.flush()
+
+        val sentinelLine = r.readLine() ?: throw PythonExecutionException("The Python process ended during the call")
+        if (!sentinelLine.startsWith("__SENTINEL__")) {
+            throw PythonExecutionException("The Python process answered outside the protocol: $sentinelLine")
+        }
+        val encoded = r.readLine() ?: throw PythonExecutionException("The Python process ended during the call")
+        val text = try {
+            String(Base64.getDecoder().decode(encoded.trim()), Charsets.UTF_8)
+        } catch (_: IllegalArgumentException) {
+            throw PythonExecutionException("The Python process answered outside the protocol: $encoded")
+        }
+        return sentinelLine.removePrefix("__SENTINEL__") to text
     }
 
     /**
@@ -140,6 +142,10 @@ class PersistentPythonSession : PythonSession {
         return process?.isAlive == true
     }
 
+    /** The process id of the running subprocess, or null when none runs. */
+    @Synchronized
+    fun pid(): Long? = process?.takeIf { it.isAlive }?.pid()
+
     /**
      * Ensures the Python session is alive, starting it if necessary.
      */
@@ -152,12 +158,9 @@ class PersistentPythonSession : PythonSession {
      * Starts a new Python subprocess running a custom REPL loop.
      *
      * The REPL loop reads base64-encoded code from stdin (one line per request),
-     * decodes and executes it, captures stdout, and prints a structured response:
+     * decodes and executes it with stdout and stderr captured, and answers:
      *   __SENTINEL__OK (or __SENTINEL__ERROR)
-     *   <number of output lines>
-     *   <output line 1>
-     *   <output line 2>
-     *   ...
+     *   <base64 of the captured stdout, or of the last line of the error>
      */
     private fun startSession() {
         destroySession() // Clean up any existing dead session
@@ -165,55 +168,45 @@ class PersistentPythonSession : PythonSession {
         val cmd = findPythonCommand()
         pythonCommand = cmd
 
-        // The REPL script: reads base64 lines from stdin, exec()s them, sends structured output
         val replScript = """
-import sys, base64, io
+import sys, base64, io, traceback
+
+def __karpfen_answer__(out, status, text):
+    out.write('__SENTINEL__' + status + '\n')
+    out.write(base64.b64encode(text.encode('utf-8', 'replace')).decode('ascii') + '\n')
+    out.flush()
 
 while True:
-    try:
-        line = sys.stdin.readline()
-    except EOFError:
-        break
+    line = sys.stdin.readline()
     if not line:
         break
     line = line.strip()
     if not line:
         continue
     captured = io.StringIO()
-    old_stdout = sys.stdout
+    old_stdout, old_stderr = sys.stdout, sys.stderr
     try:
         code = base64.b64decode(line).decode('utf-8')
-        sys.stdout = captured
+        sys.stdout, sys.stderr = captured, io.StringIO()
         exec(code)
-        sys.stdout = old_stdout
-        output = captured.getvalue()
-        lines = output.split('\n')
-        if lines and lines[-1] == '':
-            lines = lines[:-1]
-        old_stdout.write('__SENTINEL__OK\n')
-        old_stdout.write(str(len(lines)) + '\n')
-        for l in lines:
-            old_stdout.write(l + '\n')
-        old_stdout.flush()
-    except Exception as e:
-        sys.stdout = old_stdout
-        err_msg = str(e)
-        old_stdout.write('__SENTINEL__ERROR\n')
-        old_stdout.write('1\n')
-        old_stdout.write(err_msg + '\n')
-        old_stdout.flush()
+        sys.stdout, sys.stderr = old_stdout, old_stderr
+        __karpfen_answer__(old_stdout, 'OK', captured.getvalue())
+    except BaseException as e:
+        sys.stdout, sys.stderr = old_stdout, old_stderr
+        lines = [l.strip() for l in traceback.format_exception_only(type(e), e) if l.strip()]
+        __karpfen_answer__(old_stdout, 'ERROR', lines[-1] if lines else type(e).__name__)
 """.trimIndent()
 
         // -u: unbuffered stdout/stderr
         val processBuilder = ProcessBuilder(cmd, "-u", "-c", replScript)
-        processBuilder.redirectErrorStream(false)
+        processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD)
         processBuilder.environment()["PYTHONIOENCODING"] = "utf-8"
         processBuilder.environment()["PYTHONDONTWRITEBYTECODE"] = "1"
 
         val proc = processBuilder.start()
         process = proc
-        writer = proc.outputStream.bufferedWriter()
-        reader = proc.inputStream.bufferedReader()
+        writer = proc.outputStream.bufferedWriter(Charsets.UTF_8)
+        reader = proc.inputStream.bufferedReader(Charsets.UTF_8)
     }
 
     /**

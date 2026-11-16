@@ -16,6 +16,7 @@
 package io.karpfen.exec
 
 import io.karpfen.io.karpfen.exec.PersistentPythonSession
+import io.karpfen.io.karpfen.exec.PythonExecutionException
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Tag
@@ -215,19 +216,15 @@ class PersistentPythonSessionTest {
     // ---- Error handling ----
 
     @Test
-    fun `syntax error does not kill session`() {
+    fun `an error fails the call and does not kill the session`() {
         session = PersistentPythonSession()
 
-        // First call succeeds
         val r1 = session!!.execute("print('before error')")
         assertEquals("before error", r1)
 
-        // Second call has an error - the try/except wrapper should catch it
-        val r2 = session!!.execute("print(1/0)")  // ZeroDivisionError
-        // Result may be null or error message depending on how the error is handled
-        // The important thing is the session survives
+        val error = assertThrows(PythonExecutionException::class.java) { session!!.execute("print(1/0)") }
+        assertEquals("Python error: ZeroDivisionError: division by zero", error.message)
 
-        // Third call should still work
         val r3 = session!!.execute("print('after error')")
         assertEquals("after error", r3)
         assertTrue(session!!.isAlive())

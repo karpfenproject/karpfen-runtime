@@ -20,7 +20,11 @@ package io.karpfen.io.karpfen.exec
  */
 interface PythonSession {
 
-    /** Runs [code] and returns what it printed, trimmed, or null when it printed nothing or failed in Python. */
+    /**
+     * Runs [code] and returns what it printed, as [PythonProcess.printed] gives it, or null when it printed nothing.
+     *
+     * @throws PythonExecutionException when the code fails in Python or the process ends during the call.
+     */
     fun execute(code: String): String?
 
     /** Ends the process. */

@@ -544,11 +544,11 @@ print(json.dumps(result))
     }
 
     @Test
-    fun `parseResult blank returns null`() {
+    fun `parseResult blank returns null except for a string, which keeps its whitespace`() {
         val processor = MacroProcessor(mqp.metamodel, mqp.model, macros, "turtle", mqp)
         assertNull(processor.parseResult("", "number"))
         assertNull(processor.parseResult("   ", "boolean"))
-        assertNull(processor.parseResult("  \n  ", "string"))
+        assertEquals("  \n  ", processor.parseResult("  \n  ", "string"))
     }
 
     // ---- Complex type (DataObject) parsing ----

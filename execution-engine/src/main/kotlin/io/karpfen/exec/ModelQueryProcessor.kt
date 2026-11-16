@@ -853,102 +853,24 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     }
 
     /**
-     * Serializes a DataObject to a Python dict string representation, recursively including
-     * embedded objects and simple properties.
+     * Writes [obj] with everything reachable through its relations as a Python dictionary literal, as
+     * [PythonLiteralWriter] describes.
+     *
+     * @throws IllegalStateException when an object is reachable from itself.
      */
-    fun dataObjectToPythonDict(obj: DataObject): String = modelLock.read { dataObjectToPythonDictLocked(obj) }
-
-    private fun dataObjectToPythonDictLocked(obj: DataObject): String {
-        val entries = mutableListOf<String>()
-
-        // Add the object id
-        entries.add("\"__id__\": \"${obj.id}\"")
-        entries.add("\"__type__\": \"${obj.ofType.name}\"")
-
-        // Simple properties
-        for (prop in obj.properties) {
-            if (prop.isList()) {
-                val listProp = prop as SimpleListPropertyObject
-                val values = listProp.getValues().joinToString(", ") { valueToPythonLiteral(it, prop.getValueType()) }
-                entries.add("\"${prop.key}\": [$values]")
-            } else {
-                val atomicProp = prop as SimpleAtomicPropertyObject
-                entries.add("\"${prop.key}\": ${valueToPythonLiteral(atomicProp.getValue(), prop.getValueType())}")
-            }
-        }
-
-        // Embedded relations (has)
-        for (rel in obj.relations) {
-            if (rel.getPropertyType().associationType == AssociationType.EMBEDDED) {
-                if (rel.isList()) {
-                    val listRel = rel as ClassTypeListPropertyObject
-                    val values = listRel.getValues().joinToString(", ") { dataObjectToPythonDict(it) }
-                    entries.add("\"${rel.key}\": [$values]")
-                } else {
-                    val atomicRel = rel as ClassTypeAtomicPropertyObject
-                    val value = atomicRel.getValue()
-                    if (value != null) {
-                        entries.add("\"${rel.key}\": ${dataObjectToPythonDict(value)}")
-                    } else {
-                        entries.add("\"${rel.key}\": None")
-                    }
-                }
-            } else {
-                // LINK relations: serialize as reference id(s)
-                if (rel.isList()) {
-                    val listRel = rel as ClassTypeListPropertyObject
-                    val values = listRel.getValues().joinToString(", ") { dataObjectToPythonDict(it) }
-                    entries.add("\"${rel.key}\": [$values]")
-                } else {
-                    val atomicRel = rel as ClassTypeAtomicPropertyObject
-                    val value = atomicRel.getValue()
-                    if (value != null) {
-                        entries.add("\"${rel.key}\": ${dataObjectToPythonDict(value)}")
-                    } else {
-                        entries.add("\"${rel.key}\": None")
-                    }
-                }
-            }
-        }
-
-        return "{${entries.joinToString(", ")}}"
-    }
+    fun dataObjectToPythonDict(obj: DataObject): String = modelLock.read { PythonLiteralWriter.write(obj) }
 
     /**
-     * Converts a primitive value to its Python literal representation.
+     * Converts a primitive value to its Python literal representation, as [PythonLiteralWriter.writeSimple] does.
      */
-    fun valueToPythonLiteral(value: Any, type: SimplePropertyType): String {
-        return when (type) {
-            SimplePropertyType.STRING -> "\"$value\""
-            SimplePropertyType.NUMBER -> {
-                val d = value as Double
-                if (d == d.toLong().toDouble()) d.toLong().toString() else d.toString()
-            }
-            SimplePropertyType.BOOLEAN -> if (value as Boolean) "True" else "False"
-        }
-    }
+    fun valueToPythonLiteral(value: Any, type: SimplePropertyType): String = PythonLiteralWriter.writeSimple(value, type)
 
     /**
-     * Converts an arbitrary resolved value to a Python literal string suitable for embedding in code.
+     * Converts an arbitrary resolved value to a Python literal string suitable for embedding in code, as
+     * [PythonLiteralWriter.write] does.
+     *
+     * @throws IllegalStateException when the value holds an object that is reachable from itself.
      */
-    fun anyToPythonLiteral(value: Any?): String = modelLock.read { anyToPythonLiteralLocked(value) }
-
-    private fun anyToPythonLiteralLocked(value: Any?): String {
-        return when (value) {
-            null -> "None"
-            is DataObject -> dataObjectToPythonDict(value)
-            is List<*> -> {
-                val elements = value.map { anyToPythonLiteral(it) }
-                "[${elements.joinToString(", ")}]"
-            }
-            is String -> "\"$value\""
-            is Boolean -> if (value) "True" else "False"
-            is Double -> {
-                if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
-            }
-            is Number -> value.toString()
-            else -> "\"$value\""
-        }
-    }
+    fun anyToPythonLiteral(value: Any?): String = modelLock.read { PythonLiteralWriter.write(value) }
 
 }

@@ -33,6 +33,11 @@ class MacroProcessor(
     val modelQueryProcessor: ModelQueryProcessor
 ) {
 
+    private companion object {
+        /** The number of characters of a result that an error message shows. */
+        const val PREVIEW_LENGTH = 200
+    }
+
     val context: DataObject = modelQueryProcessor.getDataObjectById(currentContextModelElement)
     private val codeTransformer = MacroCodeTransformer(modelQueryProcessor, macros)
 
@@ -66,8 +71,9 @@ class MacroProcessor(
 
     /**
      * Dispatches the transformed Python code to the appropriate execution tier:
-     * - SIMPLE: Evaluated natively in Kotlin (no Python subprocess).
-     * - MEDIUM: Executed via `python -c` (no temp file I/O).
+     * - SIMPLE: Evaluated natively in Kotlin (no Python subprocess), when [simpleResult] gives the result Python would
+     *   give; otherwise the code runs like MEDIUM-tier code.
+     * - MEDIUM: Executed in a new Python process that reads the code from stdin.
      * - COMPLEX: Executed via a persistent interactive Python session.
      */
     private fun executeWithTieredStrategy(pythonCode: String, expectedTarget: String): Any? {
@@ -75,31 +81,8 @@ class MacroProcessor(
 
         return when (tier) {
             ExecutionTier.SIMPLE -> {
-                val body = ExpressionClassifier.extractFunctionBody(pythonCode)
-                val expr = body?.let { ExpressionClassifier.extractSimpleReturnExpression(it) }
-                if (expr != null) {
-                    val result = SimpleExpressionEvaluator.evaluate(expr)
-                    // Convert the result to match the expected target type
-                    when (expectedTarget.lowercase()) {
-                        "boolean" -> {
-                            when (result) {
-                                is Boolean -> result
-                                is Double -> result != 0.0
-                                else -> result
-                            }
-                        }
-                        "number" -> {
-                            when (result) {
-                                is Double -> result
-                                is Boolean -> if (result) 1.0 else 0.0
-                                else -> result
-                            }
-                        }
-                        else -> result
-                    }
-                } else {
-                    // Fallback: should not happen if classifier is correct, but be safe
-                    val rawResult = runPythonCodeViaSession(pythonCode) ?: return null
+                simpleResult(pythonCode, expectedTarget) ?: run {
+                    val rawResult = runPythonCodeDirect(pythonCode) ?: return null
                     parseResultInModel(rawResult, expectedTarget)
                 }
             }
@@ -111,6 +94,34 @@ class MacroProcessor(
                 val rawResult = runPythonCodeViaSession(pythonCode) ?: return null
                 parseResultInModel(rawResult, expectedTarget)
             }
+        }
+    }
+
+    /**
+     * Computes SIMPLE-tier code in Kotlin, or returns null when Python must run it.
+     *
+     * The Kotlin result counts only when it is certainly the result Python gives: a boolean for the target `boolean`
+     * and a finite number for the target `number`. Everything else goes to Python, which then decides as for any other
+     * code: an expression the evaluator does not take (such as a chained comparison), a division or modulo by zero and
+     * any other case the evaluator refuses (see [SimpleExpressionEvaluator.NotSimpleException]), a number where a
+     * boolean is expected and the other way round, and an infinite result. So for these two targets the way the code
+     * runs never changes its result or its error. For every other target the Kotlin result is taken as it is, a number
+     * or a boolean, where Python would give its text.
+     */
+    private fun simpleResult(pythonCode: String, expectedTarget: String): Any? {
+        val body = ExpressionClassifier.extractFunctionBody(pythonCode) ?: return null
+        val expr = ExpressionClassifier.extractSimpleReturnExpression(body) ?: return null
+        val result = try {
+            SimpleExpressionEvaluator.evaluate(expr)
+        } catch (_: IllegalArgumentException) {
+            return null
+        } catch (_: SimpleExpressionEvaluator.NotSimpleException) {
+            return null
+        }
+        return when (expectedTarget.lowercase()) {
+            "boolean" -> result as? Boolean
+            "number" -> (result as? Double)?.takeIf { it.isFinite() }
+            else -> result
         }
     }
 
@@ -151,88 +162,34 @@ class MacroProcessor(
     }
 
     /**
-     * Runs the given Python code as a subprocess and returns the result captured from stdout.
-     *
-     * The Python code is written to a temporary file and executed via the system's Python interpreter.
-     * The result is read from stdout. Errors from stderr result in an exception.
+     * Runs the given Python code from a temporary file in a new process and returns what it printed, as
+     * [PythonProcess.run] does.
      *
      * @param code The complete Python code to execute.
      * @return The stdout output as a trimmed string, or null if no output.
+     * @throws PythonExecutionException when the code fails.
      */
     fun runPythonCode(code: String): Any? {
         val tempFile = Files.createTempFile("karpfen_macro_", ".py").toFile()
         try {
             tempFile.writeText(code)
-
-            val command = listOf(cachedPythonCommand, tempFile.absolutePath)
-
-            val processBuilder = ProcessBuilder(command)
-            processBuilder.redirectErrorStream(false)
-            processBuilder.environment()["PYTHONIOENCODING"] = "utf-8"
-
-            val process = processBuilder.start()
-
-            val stdout = process.inputStream.bufferedReader().readText().trim()
-            val stderr = process.errorStream.bufferedReader().readText().trim()
-
-            val exitCode = process.waitFor()
-
-            if (exitCode != 0) {
-                throw RuntimeException(
-                    "Python execution failed with exit code $exitCode.\nStderr: $stderr\nCode:\n$code"
-                )
-            }
-
-            if (stderr.isNotEmpty()) {
-                //System.err.println("Python stderr (non-fatal): $stderr")
-            }
-
-            return if (stdout.isEmpty()) null else stdout
+            return PythonProcess.run(listOf(cachedPythonCommand, tempFile.absolutePath), stdin = null)
         } finally {
             tempFile.delete()
         }
     }
 
     /**
-     * Executes Python code directly via `python -c <code>` without creating a temp file.
-     * Used for MEDIUM-tier code that is self-contained and not too long.
+     * Runs the given Python code in a new process that reads it from stdin, as [PythonProcess.run] does. Used for
+     * MEDIUM-tier code. The code goes through stdin rather than `python -c`, which avoids the escaping rules of the
+     * command lines of the platforms.
      *
      * @param code The complete Python code to execute.
      * @return The stdout output as a trimmed string, or null if no output.
+     * @throws PythonExecutionException when the code fails.
      */
-    fun runPythonCodeDirect(code: String): String? {
-        // Pipe code via stdin instead of using `python -c` to avoid
-        // Windows command-line escaping issues with double quotes in code.
-        val command = listOf(cachedPythonCommand, "-u", "-")
-
-        val processBuilder = ProcessBuilder(command)
-        processBuilder.redirectErrorStream(false)
-        processBuilder.environment()["PYTHONIOENCODING"] = "utf-8"
-
-        val process = processBuilder.start()
-
-        // Write code to stdin and close it to signal EOF
-        process.outputStream.bufferedWriter().use { writer ->
-            writer.write(code)
-        }
-
-        val stdout = process.inputStream.bufferedReader().readText().trim()
-        val stderr = process.errorStream.bufferedReader().readText().trim()
-
-        val exitCode = process.waitFor()
-
-        if (exitCode != 0) {
-            throw RuntimeException(
-                "Python direct execution failed with exit code $exitCode.\nStderr: $stderr\nCode:\n$code"
-            )
-        }
-
-        if (stderr.isNotEmpty()) {
-            //System.err.println("Python stderr (non-fatal): $stderr")
-        }
-
-        return if (stdout.isEmpty()) null else stdout
-    }
+    fun runPythonCodeDirect(code: String): String? =
+        PythonProcess.run(listOf(cachedPythonCommand, "-u", "-"), stdin = code)
 
     /**
      * Executes Python code via a persistent interactive Python session of [pythonSessions].
@@ -269,12 +226,22 @@ class MacroProcessor(
      *   are updated in place. Otherwise a new DataObject is created.
      * - list("TypeName") → [List] of the above
      *
+     * A `string` result is the text as the code returned it, white space and line breaks included. For every other
+     * type the text is trimmed first, and a text that is then empty is no result. A `number` accepts `nan`, `inf` and
+     * `-inf`, as Python prints these floats.
+     *
      * @param rawResult The raw stdout string from Python.
      * @param expectedType The expected type string.
      * @return The parsed result.
      */
     fun parseResult(rawResult: String, expectedType: String): Any? {
-        if (rawResult.isBlank()) return null
+        if (expectedType.lowercase() == "string") return rawResult
+        return parseTrimmedResult(rawResult.trim(), expectedType)
+    }
+
+    /** Parses a result of a type other than `string` from its trimmed text [rawResult]; see [parseResult]. */
+    private fun parseTrimmedResult(rawResult: String, expectedType: String): Any? {
+        if (rawResult.isEmpty()) return null
 
         // Handle reference types: reference("TypeName") → look up existing DataObject by __id__
         val refMatch = Regex("""reference\("(\w+)"\)""").find(expectedType)
@@ -292,18 +259,17 @@ class MacroProcessor(
         // Handle primitive types
         return when (expectedType.lowercase()) {
             "number" -> {
-                rawResult.toDoubleOrNull() ?: throw IllegalArgumentException(
-                    "Expected number but got: $rawResult"
+                parsePythonNumber(rawResult) ?: throw IllegalArgumentException(
+                    "Expected number but got: ${preview(rawResult)}"
                 )
             }
             "boolean" -> {
                 when (rawResult.lowercase()) {
                     "true" -> true
                     "false" -> false
-                    else -> throw IllegalArgumentException("Expected boolean but got: $rawResult")
+                    else -> throw IllegalArgumentException("Expected boolean but got: ${preview(rawResult)}")
                 }
             }
-            "string" -> rawResult
             else -> {
                 // It's a complex metamodel type (like "Vector") — parse JSON dict to DataObject
                 parseComplexResult(rawResult, expectedType)
@@ -314,8 +280,25 @@ class MacroProcessor(
     // ---- Result parsing helpers ----
 
     /**
+     * [text] for an error message: as it is up to [PREVIEW_LENGTH] characters, otherwise its beginning followed by
+     * `...`, so that a long result does not fill the trace log.
+     */
+    private fun preview(text: String): String =
+        if (text.length <= PREVIEW_LENGTH) text else text.take(PREVIEW_LENGTH) + "..."
+
+    /** Reads a number as Python prints a float or an int, `nan`, `inf` and `-inf` included, or null. */
+    private fun parsePythonNumber(text: String): Double? = when (text) {
+        "nan", "-nan" -> Double.NaN
+        "inf" -> Double.POSITIVE_INFINITY
+        "-inf" -> Double.NEGATIVE_INFINITY
+        else -> text.toDoubleOrNull()
+    }
+
+    /**
      * Parses a reference result. The Python code returns either:
-     * - A JSON dict containing "__id__" → look up the existing DataObject in the model.
+     * - A JSON dict containing "__id__": the existing DataObject with that id. When the dict has entries besides
+     *   `__id__` and `__type__`, the object is changed in place first, as [jsonObjectToDataObject] describes, so the
+     *   rule for a dictionary with the id of an existing object holds for `knows` relations as for `has` relations.
      * - A plain string id → look up directly.
      */
     private fun parseReferenceResult(rawResult: String): DataObject {
@@ -323,7 +306,9 @@ class MacroProcessor(
         if (trimmed.startsWith("{")) {
             val json = JSONObject(trimmed)
             if (json.has("__id__")) {
-                return modelQueryProcessor.getDataObjectById(json.getString("__id__"))
+                val existing = modelQueryProcessor.getDataObjectById(json.getString("__id__"))
+                val changes = json.keySet().any { it != "__id__" && it != "__type__" }
+                return if (changes) jsonObjectToDataObject(json, existing.ofType.name) else existing
             }
         }
         val cleanId = trimmed.trim('"', '\'', ' ')
@@ -369,7 +354,7 @@ class MacroProcessor(
     private fun parseComplexResult(rawResult: String, typeName: String): DataObject {
         val trimmed = rawResult.trim()
         if (!trimmed.startsWith("{")) {
-            throw IllegalArgumentException("Expected a JSON dict for type '$typeName' but got: $rawResult")
+            throw IllegalArgumentException("Expected a JSON dict for type '$typeName' but got: ${preview(rawResult)}")
         }
         val json = JSONObject(trimmed)
         return jsonObjectToDataObject(json, typeName)
