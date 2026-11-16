@@ -69,6 +69,14 @@ class EngineTraceLogger(
         }
     }
 
+    /**
+     * The kinds of entries. Every entry that belongs to a state machine, which is every entry except those of the
+     * engine as a whole under the key `*`, names the path or paths of the instance it concerns in its details:
+     * `path` for one path, `paths` for the paths of a split instance, `starts` for the paths a split starts and `ends`
+     * for the paths a join, a forced state or an exchange ends (see [io.karpfen.io.karpfen.exec.PathNumbers]).
+     * [STATE_MACHINE_EXCHANGED] stands for the end of one instance and the start of the next on the same object, which
+     * `EXCHANGE` causes, in place of a [STATE_MACHINE_DETACHED] and a [STATE_MACHINE_ATTACHED] entry.
+     */
     enum class TraceEventType {
         ENGINE_START,
         ENGINE_STOP,
@@ -90,7 +98,10 @@ class EngineTraceLogger(
         EVENT_RECEIVED,
         EVENT_CONSUMED,
         ACTION_ERROR,
-        ENGINE_ERROR
+        ENGINE_ERROR,
+        STATE_MACHINE_ATTACHED,
+        STATE_MACHINE_DETACHED,
+        STATE_MACHINE_EXCHANGED
     }
 
     /**

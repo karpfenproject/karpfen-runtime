@@ -38,6 +38,7 @@ class TickLimitTest {
             branchIdBase = "",
             branches = mutableListOf(Branch(
                 eventProcessor = mockk(),
+                path = 0,
                 stateStack = stateStack,
                 notEnteredSubstack = mutableListOf()
             ))

@@ -65,6 +65,14 @@ class HistoryFeature: DefaultFeature() {
     fun resetHistory() {
         lastVisitedSubstates.clear()
     }
+
+    /**
+     * Forgets the histories of the instance on [modelElementId], when that instance leaves the engine. An instance that
+     * later runs on the same object starts without memory, as every instance owns its histories.
+     */
+    fun forget(modelElementId: String) {
+        lastVisitedSubstates.remove(modelElementId)
+    }
 }
 
 @AutoService(FeatureProvider::class)

@@ -143,6 +143,18 @@ class BreakpointFeature(private val tickByTickFeature: TickByTickFeature) : Defa
     }
 
     /**
+     * Forgets the overrides of [modelElementId], when the instance on that object leaves the engine. An instance that
+     * later runs on the same object starts with the breakpoints of its own text, as every instance owns its breakpoint
+     * state; a client sets overrides for it again when it wants them.
+     */
+    fun forget(modelElementId: String) {
+        entryBreakpoints.remove(modelElementId)
+        exitBreakpoints.remove(modelElementId)
+        startBreakpoints.remove(modelElementId)
+        endBreakpoints.remove(modelElementId)
+    }
+
+    /**
      * Evaluates state entry breakpoints before each onEntry block
      */
     fun evalStateEntryBreakpoint(modelElementId: String, state: State) {

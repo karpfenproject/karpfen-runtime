@@ -33,6 +33,11 @@ import io.karpfen.dsl.states.conditions.EventCondition
  * and told whether splits are currently allowed. A normal transition is applied in place; a split is
  * reported back to the caller (see [BranchTickResult]). In a simple context the engine simply runs
  * this over the single branch, so the non-parallel path is exactly the same code as the parallel one.
+ *
+ * A branch of an instance that has ended ([SMContext.hasEnded]) does nothing. When the instance ends during an action
+ * block, because the block removed an object that holds the object of the instance or exchanged its state machine, or
+ * because another branch or state machine did, the block runs to its end and the branch stops right after it, without
+ * looking for transitions.
  */
 class BranchRunner(
     private val traceLogger: EngineTraceLogger?,
@@ -41,6 +46,7 @@ class BranchRunner(
 ) {
 
     fun tick(ctx: SMContext, branch: Branch, allowSplit: Boolean): BranchTickResult {
+        if (ctx.hasEnded) return BranchTickResult.Stable
         val smQueryHelper = ctx.smQueryHelper
 
         //History: remember the stack before anything can leave it, also when a transition fires right after an ENTRY
@@ -71,6 +77,7 @@ class BranchRunner(
                         "Error in onEntry for state '$stateName': ${e.message}", mapOf("state" to stateName))
                     System.err.println("[BranchRunner] Error executing onEntry for state '$stateName': ${e.message}")
                 }
+                if (ctx.hasEnded) return BranchTickResult.Stable
 
                 // Only check for transitions if the ENTRY actually ran actions (matches simple-mode rule).
                 val fireable = findFireable(ctx, branch, allowSplit)
@@ -116,6 +123,7 @@ class BranchRunner(
                     "Error in onDo for state '$currentStateName': ${e.message}", mapOf("state" to currentStateName))
                 System.err.println("[BranchRunner] Error executing onDo for state '$currentStateName': ${e.message}")
             }
+            if (ctx.hasEnded) return BranchTickResult.Stable
         } else {
             trace(ctx, branch, EngineTraceLogger.TraceEventType.STATE_DO_SKIP,
                 "onDo for state '$currentStateName' is empty — skipped", mapOf("state" to currentStateName))
@@ -242,6 +250,11 @@ class BranchRunner(
         }
     }
 
+    /**
+     * Logs an entry of [branch]: its details start with `path`, the path number of the branch, go on with [details] and
+     * end with `stack`, the state stack of the branch. The path tells the entries of parallel branches apart, also when
+     * the branches step on threads of their own and their entries interleave.
+     */
     private fun trace(
         ctx: SMContext,
         branch: Branch,
@@ -250,7 +263,10 @@ class BranchRunner(
         details: Map<String, String>
     ) {
         if (traceLogger == null) return
-        val withBranch = details + ("branch" to branch.eventProcessor.engineId) + ("stack" to branch.stateStack.joinToString(","))
-        traceLogger.log(ctx.modelElementId, type, message, withBranch)
+        val all = LinkedHashMap<String, String>()
+        all["path"] = branch.path.toString()
+        all.putAll(details)
+        all["stack"] = branch.stateStack.joinToString(",")
+        traceLogger.log(ctx.modelElementId, type, message, all)
     }
 }

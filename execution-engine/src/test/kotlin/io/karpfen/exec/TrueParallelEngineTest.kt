@@ -54,7 +54,7 @@ class TrueParallelEngineTest {
 
     @AfterEach
     fun stopEngines() {
-        engines.forEach { it.stop() }
+        engines.forEach { it.close() }
     }
 
     @Test

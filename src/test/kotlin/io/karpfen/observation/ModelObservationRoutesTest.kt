@@ -85,7 +85,8 @@ class ModelObservationRoutesTest {
             EnvironmentPhase.RUNNING,
             57L,
             linkedMapOf("turtle" to listOf("observe", "react to obstacle"), "lamp" to listOf("off")),
-            listOf(root)
+            listOf(root),
+            linkedMapOf("turtle" to null, "lamp" to "switching")
         )
         environments.create(ENV, model)
         environments.activate(ENV, FakeObservedEnvironment(EnvironmentPhase.RUNNING, running))
@@ -97,6 +98,7 @@ class ModelObservationRoutesTest {
         assertEquals(
             "{\"environmentKey\":\"$ENV\",\"phase\":\"running\",\"revision\":57," +
                 "\"activeStates\":{\"turtle\":[\"observe\",\"react to obstacle\"],\"lamp\":[\"off\"]}," +
+                "\"stateMachines\":{\"turtle\":null,\"lamp\":\"switching\"}," +
                 "\"roots\":[$root]}",
             response.bodyAsText()
         )

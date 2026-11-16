@@ -63,6 +63,15 @@ class TickLimitFeature: DefaultFeature() {
         enteredStates.forEach { stateMap.remove(it) }
     }
 
+    /**
+     * Forgets the counts of the instance on [modelElementId], when that instance leaves the engine, so that an instance
+     * that later runs on the same object counts from its own entries. Called on the engine thread between the steps of
+     * a tick, like [incrementTick].
+     */
+    fun forget(modelElementId: String) {
+        tickMap = tickMap - modelElementId
+    }
+
     /** Evaluates if every state of the current stack has passed their specified timeout, if so returns the necessary transition */
     fun evalNecessaryTransition(modelElementId: String, stateStack: List<State>): Transition? {
         val stateMap = tickMap[modelElementId]?: emptyMap()

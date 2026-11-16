@@ -29,7 +29,8 @@ import kotlin.test.assertTrue
 
 /**
  * Covers [PythonSessionPool] with sessions that answer with their own number and never start Python: calls one after
- * the other share a session, calls at the same time get one each, and closing ends every session.
+ * the other share a session, calls at the same time get one each, closing ends every session, and aborting ends a
+ * session also while a call uses it.
  */
 class PythonSessionPoolTest {
 
@@ -72,6 +73,26 @@ class PythonSessionPoolTest {
         assertFailsWith<IllegalStateException> { pool.execute("late") }
     }
 
+    @Test
+    fun `aborting ends a busy session while its call waits, and refuses later calls`() {
+        val inside = CountDownLatch(1)
+        val caller = thread {
+            pool.execute("wait") {
+                inside.countDown()
+                val session = synchronized(sessions) { sessions.single() }
+                while (!session.aborted) Thread.onSpinWait()
+            }
+        }
+        assertTrue(inside.await(WAIT_MS, TimeUnit.MILLISECONDS))
+
+        pool.abort()
+        caller.join(WAIT_MS)
+
+        assertTrue(sessions.single().aborted)
+        assertTrue(!caller.isAlive)
+        assertFailsWith<IllegalStateException> { pool.execute("late") }
+    }
+
     /** Runs [code] in the pool while [inside] runs on the session; [inside] stands for Python that takes its time. */
     private fun PythonSessionPool.execute(code: String, inside: () -> Unit): String? {
         FakeSession.inside.set(inside)
@@ -93,6 +114,14 @@ class PythonSessionPoolTest {
         }
 
         override fun close() {
+            closed = true
+        }
+
+        @Volatile
+        var aborted = false
+
+        override fun abort() {
+            aborted = true
             closed = true
         }
 

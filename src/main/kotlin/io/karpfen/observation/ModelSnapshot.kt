@@ -31,28 +31,35 @@ import io.karpfen.io.karpfen.exec.ModelJsonWriter
  *   first reported; empty before the first tick after a start.
  * @property roots every root object of the model in model order, each written by [ModelJsonWriter.write] exactly as
  *   the `value` of an `objectChanged` push.
+ * @property stateMachines per object key that has a state machine instance the name of its definition, or null for a
+ *   state machine attached by the run configuration, in the order the instances appeared; empty before a start.
  */
 data class ModelSnapshot(
     val environmentKey: String,
     val phase: EnvironmentPhase,
     val revision: Long,
     val activeStates: Map<String, List<String>>,
-    val roots: List<String>
+    val roots: List<String>,
+    val stateMachines: Map<String, String?> = emptyMap()
 ) {
 
     /**
-     * Writes the snapshot as one JSON object with the members `environmentKey`, `phase`, `revision`, `activeStates`
-     * and `roots` in this order and without whitespace between them. Strings are quoted with [ModelJsonWriter.quote];
-     * the roots are spliced in as written.
+     * Writes the snapshot as one JSON object with the members `environmentKey`, `phase`, `revision`, `activeStates`,
+     * `stateMachines` and `roots` in this order and without whitespace between them. Strings are quoted with
+     * [ModelJsonWriter.quote], a missing definition name is `null`; the roots are spliced in as written.
      */
     fun toJson(): String {
         val states = activeStates.entries.joinToString(",") { (modelElementId, stack) ->
             "${ModelJsonWriter.quote(modelElementId)}:[${stack.joinToString(",") { ModelJsonWriter.quote(it) }}]"
         }
+        val machines = stateMachines.entries.joinToString(",") { (objectId, definition) ->
+            "${ModelJsonWriter.quote(objectId)}:${definition?.let(ModelJsonWriter::quote) ?: "null"}"
+        }
         return "{\"environmentKey\":${ModelJsonWriter.quote(environmentKey)}," +
             "\"phase\":${ModelJsonWriter.quote(phase.wireName)}," +
             "\"revision\":$revision," +
             "\"activeStates\":{$states}," +
+            "\"stateMachines\":{$machines}," +
             "\"roots\":[${roots.joinToString(",")}]}"
     }
 }

@@ -251,6 +251,11 @@ class MacroProcessor(
         pythonSessions.close()
     }
 
+    /** Ends every Python session of this processor at once, also one a call waits for; see [PythonSessionPool.abort]. */
+    fun abort() {
+        pythonSessions.abort()
+    }
+
     /**
      * Parses the raw string result from Python execution into the expected type.
      *
@@ -355,7 +360,7 @@ class MacroProcessor(
      *
      * Strategy:
      * 1. If the dict has an "__id__" field and an object with that id exists in the model,
-     *    update that existing object's simple properties in place and return it.
+     *    change that existing object in place, as [jsonObjectToDataObject] describes, and return it.
      * 2. Otherwise, construct a new DataObject from the dict, populating simple properties
      *    from the JSON values and resolving nested dicts/references for object properties.
      *
@@ -373,10 +378,11 @@ class MacroProcessor(
     /**
      * Converts a [JSONObject] into a [DataObject].
      *
-     * If the JSON contains "__id__" and an object with that id already exists in the model,
-     * the existing object's simple properties are updated in place with the values from the JSON.
-     * This makes sense because macros are side-effect-free: we only propagate values back,
-     * and the caller can decide whether to apply the update to the model.
+     * If the JSON contains "__id__" and an object with that id already exists in the model, that object is changed
+     * in place through [ModelQueryProcessor.updateObjectInPlace] with the properties and relations of the JSON:
+     * objects its `has` relations no longer hold leave the model like through `DROPOBJ`, objects they newly hold
+     * enter it as new objects, and the change is published. Nested dictionaries are converted first, so a nested
+     * existing object is changed before the object that holds it.
      *
      * If no existing object is found, a new DataObject is built from scratch using the metamodel
      * type definition to determine which keys are simple properties vs. object properties.
@@ -385,19 +391,16 @@ class MacroProcessor(
         // If the JSON carries an __id__, check whether this object already exists in the model.
         if (json.has("__id__")) {
             val existingId = json.getString("__id__")
-            try {
-                val existing = modelQueryProcessor.getDataObjectById(existingId)
-                // Update the existing object's simple properties with the JSON values
-                val propsUpdate = extractSimplePropsFromJson(json, existing.ofType)
-                existing.assignProps(propsUpdate)
-                // Also handle nested object properties if present
-                val relsUpdate = extractRelationsFromJson(json, existing.ofType)
-                if (relsUpdate.isNotEmpty()) {
-                    existing.assignRels(relsUpdate)
-                }
-                return existing
+            val found = try {
+                modelQueryProcessor.getDataObjectById(existingId)
             } catch (_: IllegalArgumentException) {
-                // Object not found in model — fall through to construct a new one
+                null
+            }
+            found?.let { existing ->
+                val propsUpdate = extractSimplePropsFromJson(json, existing.ofType)
+                val relsUpdate = extractRelationsFromJson(json, existing.ofType)
+                modelQueryProcessor.updateObjectInPlace(existing, propsUpdate, relsUpdate)
+                return existing
             }
         }
 

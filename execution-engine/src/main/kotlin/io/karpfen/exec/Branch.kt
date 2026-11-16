@@ -29,6 +29,8 @@ import io.karpfen.dsl.states.TransitionLike
  * parallel branches can react to the same event independently.
  *
  * @property eventProcessor    This branch's view of the shared event bus (its consumption lineage).
+ * @property path              The number of the path this branch runs, unique per object over the life of the engine
+ *   (see [PathNumbers]). The trace log names the branch by it, and the identity of [eventProcessor] contains it.
  * @property stateStack        Active states, outermost first; the last entry is the current state.
  * @property notEnteredSubstack States whose ENTRY block still needs to run, in order.
  * @property lastFiredTransition The transition this branch fired last (for the NOT LOOPING rule).
@@ -36,6 +38,7 @@ import io.karpfen.dsl.states.TransitionLike
  */
 class Branch(
     val eventProcessor: EventProcessor,
+    val path: Int,
     var stateStack: List<String>,
     var notEnteredSubstack: MutableList<String>,
     var lastFiredTransition: TransitionLike? = null,

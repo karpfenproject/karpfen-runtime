@@ -58,6 +58,7 @@ fun main() {
 
     Runtime.getRuntime().addShutdownHook(Thread {
         println("[Main] Shutting down...")
+        EnvironmentHandler.shutdown()
         server.stop()
     })
     Thread.sleep(Long.MAX_VALUE)

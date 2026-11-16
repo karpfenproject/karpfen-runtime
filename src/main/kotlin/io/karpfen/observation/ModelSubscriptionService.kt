@@ -42,10 +42,9 @@ class ModelSubscriptionService(
      */
     fun subscribe(envKey: String, clientId: String) {
         requireEnvironment(envKey)
-        if (sessions.getSessionForClient(envKey, clientId) == null) {
+        if (!sessions.subscribeToModelIfConnected(envKey, clientId)) {
             throw IllegalStateException("Client $clientId has no open WebSocket session for environment $envKey")
         }
-        sessions.subscribeToModel(envKey, clientId)
     }
 
     /**

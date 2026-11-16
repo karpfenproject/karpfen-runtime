@@ -42,6 +42,7 @@ import java.util.concurrent.TimeUnit
  */
 class PersistentPythonSession : PythonSession {
 
+    @Volatile
     private var process: Process? = null
     private var writer: BufferedWriter? = null
     private var reader: BufferedReader? = null
@@ -121,6 +122,14 @@ class PersistentPythonSession : PythonSession {
     @Synchronized
     override fun close() {
         destroySession()
+    }
+
+    /**
+     * Kills the subprocess at once without waiting for a running [execute], which then reads the end of the output and
+     * fails. Not synchronized, so it reaches a process whose answer another thread waits for.
+     */
+    override fun abort() {
+        process?.destroyForcibly()
     }
 
     /**

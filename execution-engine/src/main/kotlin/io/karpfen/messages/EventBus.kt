@@ -31,14 +31,49 @@ import java.util.concurrent.CopyOnWriteArrayList
  * - An engine that has already reacted to an event marks it via [Event.markProcessedBy]; subsequent
  *   calls to [hasUnprocessedEvent] will return `false` for that engine.
  *
+ * **Freezing**
+ * While its environment is stopped, the bus is frozen ([freeze]): time does not pass for its events. [thaw] credits
+ * every waiting event with the frozen time, so each keeps the time to live it had left at the freeze.
+ *
  * **Thread safety**
  * The top-level domain map is a [ConcurrentHashMap]. Each bucket is a [CopyOnWriteArrayList],
  * which allows cheap concurrent reads while keeping write operations safe.
  */
 class EventBus(
     /** Default TTL in milliseconds applied to every published event (0 = live forever). */
-    val defaultTtlMs: Long = 0L
+    val defaultTtlMs: Long = 0L,
+    /** The clock the bus measures the time to live of its events with, in milliseconds since 1970. */
+    private val clock: () -> Long = System::currentTimeMillis
 ) {
+
+    /** The time of the clock at which the bus was frozen, or null while it is not frozen. */
+    @Volatile
+    private var frozenSince: Long? = null
+
+    /** The time against which events expire: the time of the freeze while frozen, the clock otherwise. */
+    private fun now(): Long = frozenSince ?: clock()
+
+    /** Stops the time for the events of the bus, until [thaw]. Freezing a frozen bus changes nothing. */
+    @Synchronized
+    fun freeze() {
+        if (frozenSince == null) frozenSince = clock()
+    }
+
+    /**
+     * Lets the time go on for the events of the bus: every event in a bucket is credited with the time since the
+     * [freeze], as [Event.creditFreeze] describes. Thawing a bus that is not frozen changes nothing.
+     */
+    @Synchronized
+    fun thaw() {
+        val since = frozenSince ?: return
+        val thawedAt = clock()
+        for (bucket in buckets.values) bucket.forEach { it.creditFreeze(since, thawedAt) }
+        frozenSince = null
+    }
+
+    /** True while the bus is frozen. */
+    val isFrozen: Boolean
+        get() = frozenSince != null
     /** domain → list of live events */
     // TODO: The CopyOnWriteArrayList is not ideal for collections with high write frequency such as this one
     //  In the current demo cases, not much event action is going on so its okay for now.
@@ -112,7 +147,7 @@ class EventBus(
      */
     fun getUnprocessedEvents(domain: String, engineId: String): List<Event> {
         return getBucket(domain)
-            .filter { !it.isExpired() && !it.wasProcessedBy(engineId) }
+            .filter { !it.isExpired(now()) && !it.wasProcessedBy(engineId) }
     }
 
     /**
@@ -121,7 +156,7 @@ class EventBus(
      */
     fun getUnprocessedEvents(domain: String, eventName: String, engineId: String): List<Event> {
         return getBucket(domain)
-            .filter { !it.isExpired() && !it.wasProcessedBy(engineId) && it.name == eventName }
+            .filter { !it.isExpired(now()) && !it.wasProcessedBy(engineId) && it.name == eventName }
             .sortedBy { it.timestamp }
     }
 
@@ -132,7 +167,7 @@ class EventBus(
      */
     fun eventsOf(domain: String, eventName: String): List<Event> {
         return getBucket(domain)
-            .filter { !it.isExpired() && it.name == eventName }
+            .filter { !it.isExpired(now()) && it.name == eventName }
             .sortedBy { it.timestamp }
     }
 
@@ -142,7 +177,7 @@ class EventBus(
      */
     fun hasUnprocessedEvent(domain: String, eventName: String, engineId: String): Boolean {
         return getBucket(domain).any { event ->
-            !event.isExpired() && !event.wasProcessedBy(engineId) && event.name == eventName
+            !event.isExpired(now()) && !event.wasProcessedBy(engineId) && event.name == eventName
         }
     }
 
@@ -152,7 +187,7 @@ class EventBus(
      */
     fun peekEvent(domain: String, eventName: String, engineId: String): Event? {
         return getBucket(domain).firstOrNull { event ->
-            !event.isExpired() && !event.wasProcessedBy(engineId) && event.name == eventName
+            !event.isExpired(now()) && !event.wasProcessedBy(engineId) && event.name == eventName
         }
     }
 
@@ -178,7 +213,7 @@ class EventBus(
      */
     fun purgeExpired() {
         for ((_, bucket) in buckets) {
-            bucket.removeIf { it.isExpired() }
+            bucket.removeIf { it.isExpired(now()) }
         }
     }
 
@@ -189,7 +224,7 @@ class EventBus(
     fun purgeFullyConsumedAndExpired(knownEngineIds: Set<String>) {
         for ((_, bucket) in buckets) {
             bucket.removeIf { event ->
-                event.isExpired() || knownEngineIds.all { engineId -> event.wasProcessedBy(engineId) }
+                event.isExpired(now()) || knownEngineIds.all { engineId -> event.wasProcessedBy(engineId) }
             }
         }
     }

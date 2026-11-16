@@ -22,6 +22,9 @@ import io.karpfen.dsl.reader.kstates.KstatesReader
 import io.karpfen.env.DomainListener
 import io.karpfen.env.EnvironmentHandler
 import io.karpfen.env.Observation
+import io.karpfen.env.Environment
+import io.karpfen.io.karpfen.exec.InstanceSpec
+import io.karpfen.io.karpfen.exec.StateMachineDefinitions
 import io.karpfen.io.karpfen.exec.StateMachineQueryHelper
 import io.karpfen.io.karpfen.features.FeatureRegistry
 
@@ -96,18 +99,40 @@ object APIService {
 
     /**
      * Reads [stateMachineData] with a `KstatesReader`, every optional language feature switched on, and stores the
-     * state machine and its text in the environment [envKey] for the model element [modelElement].
+     * state machine and its text in the environment [envKey].
+     *
+     * With [modelElement] the text must have the attached form, `STATEMACHINE ATTACHED TO "Type"`, and the state
+     * machine is attached to the object with that key; a second upload for the key replaces it at its place. Without
+     * [modelElement] the text must have the attachable form, `STATEMACHINE "name" ATTACHABLE TO "Type", ...`, and the
+     * state machine is kept as a definition under its name; a second upload of the name replaces it at its place.
      *
      * @throws UploadRejectedException if the text has errors; the environment then stays as it was.
+     * @throws IllegalArgumentException if the text has the other form; the message says which form is expected.
      */
-    fun receiveStateMachine(envKey: String, modelElement: String, stateMachineData: String) {
+    fun receiveStateMachine(envKey: String, modelElement: String?, stateMachineData: String) {
         assertEnv(envKey)
-        val stateMachine = UploadReading.acceptOrReject(
-            envKey, "state machine for '$modelElement'", KstatesReader().read(stateMachineData)
-        )
+        val upload = if (modelElement != null) "state machine for '$modelElement'" else "attachable state machine"
+        val stateMachine = UploadReading.acceptOrReject(envKey, upload, KstatesReader().read(stateMachineData))
         val env = EnvironmentHandler.getEnv(envKey)!!
-        env.stateMachines[modelElement] = stateMachine
-        env.stateMachineSources[modelElement] = stateMachineData
+        if (modelElement != null) {
+            if (stateMachine.isAttachable) {
+                throw IllegalArgumentException(
+                    "The state machine for '$modelElement' must have the attached form STATEMACHINE ATTACHED TO " +
+                        "\"Type\", but it is the attachable state machine '${stateMachine.name}'; upload an attachable " +
+                        "state machine without attachedTo"
+                )
+            }
+            env.stateMachines[modelElement] = stateMachine
+            env.stateMachineSources[modelElement] = stateMachineData
+        } else {
+            val name = stateMachine.name
+                ?: throw IllegalArgumentException(
+                    "A state machine without attachedTo must have the attachable form STATEMACHINE \"name\" " +
+                        "ATTACHABLE TO \"Type\"; give attachedTo for a state machine ATTACHED TO a type"
+                )
+            env.stateMachineDefinitions[name] = stateMachine
+            env.stateMachineDefinitionSources[name] = stateMachineData
+        }
     }
 
     fun updateTickDelay(envKey: String, tickDelayMS: Int) {
@@ -130,15 +155,16 @@ object APIService {
         if (!EnvironmentHandler.isActiveEnv(envKey)) {
             throw IllegalStateException("Environment with key $envKey is not active")
         }
-        val sm = env.stateMachines[modelElement]
+        val envThread = EnvironmentHandler.executionThreads[envKey]
+            ?: throw IllegalStateException("Environment with key $envKey has no execution thread")
+        // The instance on the element is the one of the latest tick, also one attached during the run.
+        val sm = envThread.engine.stateMachineOf(modelElement)
             ?: throw IllegalArgumentException("No state machine for model element '$modelElement' in environment $envKey")
         // Validate the leaf up front so an unknown state returns 400 synchronously (the engine-thread
         // command would otherwise only log it).
         if (StateMachineQueryHelper(sm).getStateStackForState(state).isEmpty()) {
             throw IllegalArgumentException("Unknown state '$state' for model element '$modelElement'")
         }
-        val envThread = EnvironmentHandler.executionThreads[envKey]
-            ?: throw IllegalStateException("Environment with key $envKey has no execution thread")
         envThread.forceActiveState(modelElement, state)
     }
 
@@ -157,8 +183,10 @@ object APIService {
      *
      * Every state machine must be attached to an object of the model, nested objects included; otherwise the engine
      * thread would die at its start while every call had answered 200. Missing attachments are refused with an
-     * [IllegalStateException] naming the keys, comma-separated, and the environment stays configurable. Activation
-     * itself happens at most once (see [EnvironmentHandler.activeEnv]).
+     * [IllegalStateException] naming the keys, comma-separated, and the environment stays configurable. So is every
+     * type of the metamodel that `behaves after` a name no attachable state machine of the environment has, or one
+     * that does not list the type, since its objects could not get their instances at the start or when a rule creates
+     * them. Activation itself happens at most once (see [EnvironmentHandler.activeEnv]).
      */
     fun runEnvironment(envKey: String) {
         val env = EnvironmentHandler.getEnv(envKey) ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
@@ -171,6 +199,20 @@ object APIService {
             throw IllegalStateException(
                 "Environment with key $envKey has state machines attached to objects missing from its model: " +
                     missingAttachments.joinToString(", ")
+            )
+        }
+        val problems = StateMachineDefinitions(env.stateMachines, env.stateMachineDefinitions)
+            .behavesAfterProblems(env.metamodel!!)
+        if (problems.missing.isNotEmpty()) {
+            throw IllegalStateException(
+                "Environment with key $envKey has types that behave after state machines it does not hold: " +
+                    problems.missing.joinToString(", ")
+            )
+        }
+        if (problems.mismatched.isNotEmpty()) {
+            throw IllegalStateException(
+                "Environment with key $envKey has types that behave after state machines not attachable to them: " +
+                    problems.mismatched.joinToString("; ")
             )
         }
         EnvironmentHandler.activeEnv(envKey)
@@ -186,6 +228,16 @@ object APIService {
         EnvironmentHandler.stopEnvironmentThread(envKey)
     }
 
+    /**
+     * Drops the environment [envKey] for good, in every phase, as [EnvironmentHandler.dropEnv] describes. Afterwards
+     * every call with the key answers as for an environment that never existed.
+     *
+     * @throws IllegalArgumentException when the environment does not exist.
+     */
+    fun dropEnvironment(envKey: String) {
+        EnvironmentHandler.dropEnv(envKey)
+    }
+
     fun registerClientForWebSocket(clientId: String, envKey: String): String {
         if (EnvironmentHandler.getEnv(envKey) == null) {
             throw IllegalArgumentException("Environment with key $envKey does not exist")
@@ -195,28 +247,69 @@ object APIService {
         return accessKey
     }
 
+    /**
+     * Every activated environment with the keys of the objects that have a state machine instance: those of the latest
+     * tick once it has run, before that the ones its start will build.
+     */
     fun listActiveEnvironments(): List<Map<String, Any>> {
         return EnvironmentHandler.activeEnvs.map { (key, env) ->
             mapOf(
                 "envKey" to key,
-                "modelElements" to env.stateMachines.keys.toList()
+                "modelElements" to instancesOf(key, env).map { it.objectId }
             )
         }
     }
 
-    fun getStateMachineSource(envKey: String, modelElement: String): String {
+    /**
+     * The KStates text of a state machine of the environment [envKey]. With [modelElement] it is the text of the
+     * instance on that object: the definition it was built from when it runs on an attachable state machine, otherwise
+     * the text uploaded with `attachedTo` for the object. Without [modelElement] it is the text of the attachable state
+     * machine [name].
+     *
+     * @throws IllegalArgumentException when there is no such text, or neither parameter is given.
+     */
+    fun getStateMachineSource(envKey: String, modelElement: String?, name: String?): String {
         val env = EnvironmentHandler.getEnv(envKey)
             ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
-        return env.stateMachineSources[modelElement]
-            ?: throw IllegalArgumentException("No state machine source found for model element '$modelElement' in environment $envKey")
+        if (modelElement != null) {
+            val definitionName = instancesOf(envKey, env).firstOrNull { it.objectId == modelElement }?.definitionName
+            if (definitionName != null) return env.stateMachineDefinitionSources.getValue(definitionName)
+            return env.stateMachineSources[modelElement]
+                ?: throw IllegalArgumentException("No state machine source found for model element '$modelElement' in environment $envKey")
+        }
+        if (name == null) throw IllegalArgumentException("Missing required parameter: modelElement")
+        return env.stateMachineDefinitionSources[name]
+            ?: throw IllegalArgumentException("No attachable state machine named '$name' in environment $envKey")
     }
+
+    /**
+     * What the environment [envKey] holds of state machines, as `GET /observatory/stateMachines` answers it: the keys
+     * of the attached state machines in upload order, the attachable ones with their types in upload order, and the
+     * instances with their objects and definitions in the order in which they step.
+     */
+    fun describeStateMachines(envKey: String): StateMachineHoldings {
+        val env = EnvironmentHandler.getEnv(envKey)
+            ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
+        return StateMachineHoldings(
+            attached = env.stateMachines.keys.toList(),
+            definitions = env.stateMachineDefinitions.map { (name, sm) -> name to sm.types },
+            instances = instancesOf(envKey, env).map { it.objectId to it.definitionName }
+        )
+    }
+
+    /** The instances of the engine of [envKey], or none before activation. */
+    private fun instancesOf(envKey: String, env: Environment): List<InstanceSpec> =
+        if (EnvironmentHandler.isActiveEnv(envKey)) {
+            EnvironmentHandler.executionThreads[envKey]?.engine?.stateMachineInstances ?: emptyList()
+        } else {
+            emptyList()
+        }
 
     fun registerObservatoryClient(clientId: String, envKey: String, modelElement: String): String {
         if (EnvironmentHandler.getEnv(envKey) == null) {
             throw IllegalArgumentException("Environment with key $envKey does not exist")
         }
-        val accessKey = EnvironmentHandler.registerClientSession(clientId, envKey)
-        EnvironmentHandler.clientSessionManager.subscribeToObservatory(envKey, clientId, modelElement)
+        val accessKey = EnvironmentHandler.registerObservatorySession(clientId, envKey, modelElement)
         println("[APIService] Observatory client $clientId registered for environment $envKey, element $modelElement with accessKey $accessKey")
         return accessKey
     }

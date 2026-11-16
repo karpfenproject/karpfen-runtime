@@ -16,6 +16,7 @@
 package io.karpfen.observation
 
 import io.karpfen.io.karpfen.exec.ModelChangePublisher
+import io.karpfen.io.karpfen.exec.StateMachineObserver
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventPublicationListener
 import io.karpfen.io.karpfen.messages.PayloadFormat
@@ -34,8 +35,13 @@ import org.json.JSONObject
  * therefore gets the same revision, and the revisions of an environment increase in enqueue order. A change whose
  * object cannot be written uses up its revision without a message, so that the gap reveals it.
  *
+ * As the [StateMachineObserver] of the engine, the relay pushes `stateMachineAttached` when a state machine instance
+ * appears on an object and `stateMachineDetached` when it leaves, both under the next revision, and keeps
+ * [stateMachines] and [activeStacks] in step with them, so a snapshot shows only the instances that exist.
+ *
  * Each time a thread of the engine starts to wait for a pause or goes on, [onEngineStatusChanged] tells every client
- * connected to the environment the engine's status, without a revision.
+ * connected to the environment the engine's status, without a revision. [onPhaseChanged] tells them the same way that a
+ * stop froze the environment and that a start let it continue.
  *
  * As the [EventPublicationListener] of the environment's event bus, the relay also announces every published event to
  * the domain listeners of its domain. Domain events carry no revision: they are not model state, and external events
@@ -45,13 +51,15 @@ import org.json.JSONObject
  * @property sessions the session manager that selects the recipients and enqueues the messages.
  * @property revision the environment's observation counter.
  * @property activeStacks the environment's record of the last reported stacks, read by snapshots.
+ * @property stateMachines the environment's record of the state machine instances, read by snapshots.
  */
 class ObservationRelay(
     private val environmentKey: String,
     private val sessions: ClientSessionManager,
     private val revision: ChangeRevision,
-    private val activeStacks: ActiveStackRecord
-) : ModelChangePublisher, EventPublicationListener {
+    private val activeStacks: ActiveStackRecord,
+    private val stateMachines: StateMachineRecord = StateMachineRecord()
+) : ModelChangePublisher, EventPublicationListener, StateMachineObserver {
 
     /** Pushes `objectChanged` for [objectId] with its JSON as the engine committed it, under the next revision. */
     override fun onObjectChanged(objectId: String, jsonValue: String) {
@@ -87,12 +95,49 @@ class ObservationRelay(
     }
 
     /**
+     * Records the instance of [definitionName] on [objectId] and pushes `stateMachineAttached` under the next revision.
+     * The payload is an org.json object with `modelElementId`, `stateMachine` (the definition name, or JSON `null` for
+     * a state machine attached by the run configuration) and `revision`.
+     */
+    override fun onStateMachineAttached(objectId: String, definitionName: String?) {
+        stateMachines.attached(objectId, definitionName)
+        sessions.notifyStateMachine(environmentKey, objectId, "stateMachineAttached", lifecyclePayload(objectId, definitionName))
+    }
+
+    /**
+     * Forgets the instance on [objectId] and its stack and pushes `stateMachineDetached` under the next revision, with
+     * the payload of [onStateMachineAttached].
+     */
+    override fun onStateMachineDetached(objectId: String, definitionName: String?) {
+        stateMachines.detached(objectId)
+        activeStacks.forget(objectId)
+        sessions.notifyStateMachine(environmentKey, objectId, "stateMachineDetached", lifecyclePayload(objectId, definitionName))
+    }
+
+    /** The payload of `stateMachineAttached` and `stateMachineDetached`, under the next revision. */
+    private fun lifecyclePayload(objectId: String, definitionName: String?): String =
+        JSONObject()
+            .put("modelElementId", objectId)
+            .put("stateMachine", definitionName ?: JSONObject.NULL)
+            .put("revision", revision.next())
+            .toString()
+
+    /**
      * Pushes `engineStatus` with the engine's [status], the JSON object that the `getStatus` message of the breakpoint
      * feature answers, to every client connected to the environment. It carries no revision: it tells what the engine
      * thread does, not what the model holds.
      */
     fun onEngineStatusChanged(status: String) {
         sessions.notifyEngineStatus(environmentKey, status)
+    }
+
+    /**
+     * Pushes `engineStatus` to every client connected to the environment when a stop froze it or a start let it
+     * continue: the engine's [status] as [onEngineStatusChanged] pushes it, with the member `phase` added, `stopped` or
+     * `running` as the [phase] the snapshot names. It carries no revision.
+     */
+    fun onPhaseChanged(phase: EnvironmentPhase, status: String) {
+        sessions.notifyEngineStatus(environmentKey, JSONObject(status).put("phase", phase.wireName).toString())
     }
 
     /**
