@@ -22,6 +22,8 @@ import io.karpfen.io.karpfen.messages.PayloadFormat
 import io.karpfen.observation.ModelObservationRoutes
 import io.karpfen.observation.ModelSnapshotService
 import io.karpfen.observation.ModelSubscriptionService
+import io.karpfen.observation.RunMetricsRoutes
+import io.karpfen.observation.RunMetricsService
 import io.karpfen.websocket.ClientSessionManager
 import io.karpfen.websocket.WebSocketMessage
 import io.ktor.server.application.*
@@ -48,15 +50,24 @@ class KtorServer(
         ModelSnapshotService(RegistryEnvironmentLookup, ModelSnapshotService.DEFAULT_TICK_WAIT_MS),
         ModelSubscriptionService(RegistryEnvironmentLookup, sessionManager),
         HTTPRoutes::respondWithError
+    ),
+    /** The route of the numbers of environments, installed next to [observationRoutes], over the same registry. */
+    private val metricsRoutes: RunMetricsRoutes = RunMetricsRoutes(
+        RunMetricsService(RegistryEnvironmentLookup),
+        HTTPRoutes::respondWithError
     )
 ) {
     private var engine: ApplicationEngine? = null
 
-    /** Starts the server without waiting: the HTTP routes, then the model observation routes, then the WebSocket. */
+    /**
+     * Starts the server without waiting: the HTTP routes, then the model observation routes and the metrics route,
+     * then the WebSocket.
+     */
     fun start() {
         engine = embeddedServer(Netty, port = port, host = host) {
             HTTPRoutes.configure(this)
             observationRoutes.install(this)
+            metricsRoutes.install(this)
             configureWebSocket()
         }.start(wait = false)
         println("[KtorServer] Started on http://$host:$port")

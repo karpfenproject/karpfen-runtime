@@ -138,6 +138,9 @@ class ModelObservationServerTest {
             reading.countDown()
             return gate.betweenTicks(timeoutMs) { ModelSnapshot(key, phase, 0L, emptyMap(), emptyList()) }
         }
+
+        /** No numbers, as before the first tick. */
+        override fun metrics() = FakeObservedEnvironment.NO_METRICS
     }
 
     private companion object {

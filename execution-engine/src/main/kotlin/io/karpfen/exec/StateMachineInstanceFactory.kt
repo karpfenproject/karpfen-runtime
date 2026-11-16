@@ -18,6 +18,7 @@ package io.karpfen.io.karpfen.exec
 import io.karpfen.dsl.instance.Model
 import io.karpfen.dsl.meta.Metamodel
 import io.karpfen.io.karpfen.messages.EventBus
+import io.karpfen.io.karpfen.metrics.RunMetricsRecorder
 
 /**
  * Builds the execution context of one state machine instance, at its initial stack, from an [InstanceSpec].
@@ -35,13 +36,15 @@ import io.karpfen.io.karpfen.messages.EventBus
  * @property modelQueryProcessor the shared access to the model.
  * @property eventBus the bus of the environment.
  * @property engineId the id of the engine, the start of every branch identity.
+ * @property metrics where the macro processors of the instances report their calls of code.
  */
 class StateMachineInstanceFactory(
     private val metamodel: Metamodel,
     private val model: Model,
     private val modelQueryProcessor: ModelQueryProcessor,
     private val eventBus: EventBus,
-    private val engineId: String
+    private val engineId: String,
+    private val metrics: RunMetricsRecorder = RunMetricsRecorder.NONE
 ) {
 
     /** The number of instances built per object. */
@@ -64,7 +67,7 @@ class StateMachineInstanceFactory(
         val initialStack = smQueryHelper.getInitialStateStack()
         check(initialStack.isNotEmpty()) { "State machine attached to '$objectId' has no initial state" }
 
-        val macroProcessor = MacroProcessor(metamodel, model, stateMachine.macros, objectId, modelQueryProcessor)
+        val macroProcessor = MacroProcessor(metamodel, model, stateMachine.macros, objectId, modelQueryProcessor, metrics)
         val transitionProcessor = TransitionProcessor(
             stateMachine, metamodel, model, objectId, macroProcessor, smQueryHelper, modelQueryProcessor
         )

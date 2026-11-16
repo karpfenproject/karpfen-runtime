@@ -23,14 +23,22 @@ import io.karpfen.dsl.meta.SimplePropertyType
 import org.json.JSONArray
 import org.json.JSONObject
 import io.karpfen.dsl.states.Macro
+import io.karpfen.io.karpfen.metrics.CodeWay
+import io.karpfen.io.karpfen.metrics.RunMetricsRecorder
 import java.nio.file.Files
 
+/**
+ * Runs the `EVAL` blocks and macros of one state machine instance in the way their code needs, and reports every call
+ * with its way and duration to [metrics]: only the run of the code counts, not the writing of the code before it and
+ * not the reading of its result after it.
+ */
 class MacroProcessor(
     val metamodel: Metamodel,
     val model: Model,
     val macros: List<Macro>,
     val currentContextModelElement: String,
-    val modelQueryProcessor: ModelQueryProcessor
+    val modelQueryProcessor: ModelQueryProcessor,
+    private val metrics: RunMetricsRecorder = RunMetricsRecorder.NONE
 ) {
 
     private companion object {
@@ -81,19 +89,34 @@ class MacroProcessor(
 
         return when (tier) {
             ExecutionTier.SIMPLE -> {
-                simpleResult(pythonCode, expectedTarget) ?: run {
-                    val rawResult = runPythonCodeDirect(pythonCode) ?: return null
+                val start = System.nanoTime()
+                val computed = simpleResult(pythonCode, expectedTarget)
+                if (computed != null) {
+                    metrics.codeRan(CodeWay.COMPUTED, System.nanoTime() - start)
+                    computed
+                } else {
+                    val rawResult = timed(CodeWay.NEW_PROCESS) { runPythonCodeDirect(pythonCode) } ?: return null
                     parseResultInModel(rawResult, expectedTarget)
                 }
             }
             ExecutionTier.MEDIUM -> {
-                val rawResult = runPythonCodeDirect(pythonCode) ?: return null
+                val rawResult = timed(CodeWay.NEW_PROCESS) { runPythonCodeDirect(pythonCode) } ?: return null
                 parseResultInModel(rawResult, expectedTarget)
             }
             ExecutionTier.COMPLEX -> {
-                val rawResult = runPythonCodeViaSession(pythonCode) ?: return null
+                val rawResult = timed(CodeWay.OPEN_PROCESS) { runPythonCodeViaSession(pythonCode) } ?: return null
                 parseResultInModel(rawResult, expectedTarget)
             }
+        }
+    }
+
+    /** Runs [call] and reports it to [metrics] as a call in the way [way], also when it fails. */
+    private inline fun <T> timed(way: CodeWay, call: () -> T): T {
+        val start = System.nanoTime()
+        try {
+            return call()
+        } finally {
+            metrics.codeRan(way, System.nanoTime() - start)
         }
     }
 

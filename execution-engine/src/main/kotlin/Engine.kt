@@ -27,6 +27,7 @@ import io.karpfen.io.karpfen.features.runtime.event.EventInjectionFeature
 import io.karpfen.io.karpfen.features.runtime.event.EventRecordingFeature
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
+import io.karpfen.io.karpfen.metrics.RunMetrics
 import io.karpfen.dsl.meta.Metamodel
 import io.karpfen.dsl.states.JoinTransition
 import io.karpfen.dsl.states.StateMachine
@@ -93,6 +94,12 @@ class Engine(
      * Every `behaves after` of [metamodel] must name one that lists its type; otherwise the engine is not built.
      */
     stateMachineDefinitions: Map<String, StateMachine> = emptyMap(),
+    /**
+     * The numbers of this engine: its ticks and the calls of code of its instances. The engine reports every tick to
+     * it and hands it to the macro processor of every instance it builds; readers on any thread take a
+     * [RunMetrics.snapshot].
+     */
+    val metrics: RunMetrics = RunMetrics(),
 ) {
 
     /** Parses incoming event payloads into the runtime object model against [eventMetamodel]. */
@@ -211,7 +218,7 @@ class Engine(
     /** The owner of the state machine instances; see [StateMachineLifecycle]. */
     private val lifecycle = StateMachineLifecycle(
         definitions,
-        StateMachineInstanceFactory(metamodel, model, modelQueryProcessor, eventBus, engineId),
+        StateMachineInstanceFactory(metamodel, model, modelQueryProcessor, eventBus, engineId, metrics),
         model,
         modelQueryProcessor,
         InstanceReporter()
@@ -406,7 +413,11 @@ class Engine(
             tickCount++
             val tickStart = System.currentTimeMillis()
 
-            tickGate.duringTick { runTick(tickCount) }
+            tickGate.duringTick {
+                val start = System.nanoTime()
+                runTick(tickCount)
+                metrics.tickEnded(System.nanoTime() - start)
+            }
 
             val elapsed = System.currentTimeMillis() - tickStart
             val remaining = tickDelayMS.toLong() - elapsed

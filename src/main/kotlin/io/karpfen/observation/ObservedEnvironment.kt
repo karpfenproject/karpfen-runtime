@@ -15,6 +15,8 @@
  */
 package io.karpfen.observation
 
+import io.karpfen.io.karpfen.metrics.RunMetricsSnapshot
+
 /**
  * An activated environment as the observation feature sees it: its lifecycle phase and a snapshot of its model read
  * between two ticks. The environment's execution thread implements it.
@@ -32,4 +34,7 @@ interface ObservedEnvironment {
      * @throws IllegalStateException when the model holds a reference loop, which has no JSON.
      */
     fun snapshotBetweenTicks(timeoutMs: Long): ModelSnapshot?
+
+    /** The numbers of the engine of the environment as they are now, read at once, also while a tick runs. */
+    fun metrics(): RunMetricsSnapshot
 }

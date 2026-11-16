@@ -22,6 +22,7 @@ import io.karpfen.io.karpfen.exec.ModelJsonWriter
 import io.karpfen.io.karpfen.features.runtime.TickByTickFeature
 import io.karpfen.io.karpfen.messages.Event
 import io.karpfen.io.karpfen.messages.EventBus
+import io.karpfen.io.karpfen.metrics.RunMetricsSnapshot
 import io.karpfen.observation.ActiveStackRecord
 import io.karpfen.observation.ChangeRevision
 import io.karpfen.observation.EnvironmentPhase
@@ -160,6 +161,9 @@ class EnvironmentThread(
                 stateMachineRecord.current()
             )
         }
+
+    /** The numbers of the engine, read from its [Engine.metrics] without waiting for a tick boundary. */
+    override fun metrics(): RunMetricsSnapshot = engine.metrics.snapshot()
 
     /**
      * Wires the engine to the environment's WebSocket clients before the first start.
