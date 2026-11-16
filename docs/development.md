@@ -60,3 +60,23 @@ its grammars and changes files in the submodule; `git -C karpfen-dsl-tools check
 ```
 
 Tests that run Python carry the JUnit tag `python`. `-PskipPythonTests` leaves them out, in both Gradle projects.
+
+`test_docker.sh` runs the tests in a throwaway container, so Python never runs on the development machine. It builds
+the image `karpfen-runtime-test` from the stage `test` of the `Dockerfile`, which has the Python and the packages of
+the runtime image plus a JDK, copies the checkout into the container without its build folders, runs Gradle there with
+three workers and brings `build/test-results` and `build/reports` of each project back to `build/container`. Gradle's
+downloads stay in the volume `karpfen-runtime-test-gradle`. The checkout is copied rather than mounted so that the build
+in the container leaves the build folders, `.gradle` and the generated sources of `karpfen-dsl-tools` of the checkout
+alone, and every run starts clean. Every image, container and volume carries the label `io.karpfen.runtime.test=true`;
+the container is removed however the run ends, and no port is published.
+
+```bash
+./test_docker.sh                                                   # both projects, Python tests included
+./test_docker.sh :execution-engine:test --tests 'io.karpfen.exec.PythonFailuresTest'
+./test_docker.sh --collect "libs" :execution-engine:jar             # other folders below build
+./test_docker.sh --cleanup                                         # removes everything with the label
+./test_docker.sh --cleanup --keep-cache                            # keeps the Gradle volume
+```
+
+`KARPFEN_TEST_WORKERS` sets the number of Gradle workers, 3 by default, and `KARPFEN_TEST_MEMORY` the memory of the
+container, 6g by default.
