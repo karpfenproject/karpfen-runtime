@@ -10,6 +10,8 @@
 - Every change of an object in an action block is written as JSON with everything reachable from the object, also
   when no client observes the object. The cost grows with the size of that part of the model, not with the run.
 - Events with a time to live of 0 stay in memory until the environment is dropped.
+- An injected event keeps the timestamp of its upload. With a time to live above 0 it counts as expired on arrival
+  when it is injected later than that time after the upload, and no state machine sees it.
 - Path numbers are `Int` per object. A state machine that splits and joins on one object every few ticks runs out of
   them after about a month at 1000 ticks per second; the numbers then turn negative and later repeat.
 - The notebook `compare-benchmark-runs.ipynb` has not been run.
