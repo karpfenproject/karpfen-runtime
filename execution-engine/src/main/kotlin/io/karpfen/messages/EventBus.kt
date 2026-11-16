@@ -283,9 +283,20 @@ class EventCursor {
 
 /**
  * The events of one domain, from the oldest to the newest timestamp. Each event gets a number in this order, which
- * cursors use to find their place again. An event published with a timestamp older than the newest one in the bucket,
- * which happens only when the clock went back, is put in its place, and the bucket numbers its events anew. Every
- * cursor then starts again from the front once.
+ * cursors use to find their place again.
+ *
+ * An event is often published later than it was stamped, so it may be older than the newest event in the bucket:
+ * - an event from a WebSocket client is stamped on receipt and published by the event loop of its environment up to
+ *   10 ms later, while the engine may raise an internal event in between;
+ * - events that clients send while the environment is stopped wait in the queue of its runner and are published only
+ *   after the restart;
+ * - while events are recorded, an event is published at the next tick;
+ * - an injected event keeps the timestamp of its upload;
+ * - the clock of the machine may go back.
+ *
+ * Such an event is put in its place, and the bucket numbers its events anew. A cursor whose numbering is not the
+ * bucket's forgets its place and starts once from the front, because its number of the last event means nothing in
+ * the new numbering.
  */
 private class Bucket {
 
@@ -319,8 +330,11 @@ private class Bucket {
 
     @Synchronized
     fun unhandled(name: String, now: Long, cursor: EventCursor, handled: (Event) -> Boolean): List<Event> {
-        var index = if (cursor.numbering == numbering) firstAfter(cursor.lastSeq) else 0
-        cursor.numbering = numbering
+        if (cursor.numbering != numbering) {
+            cursor.numbering = numbering
+            cursor.lastSeq = -1
+        }
+        var index = firstAfter(cursor.lastSeq)
         var front = true
         var result: MutableList<Event>? = null
         while (index < entries.size) {
