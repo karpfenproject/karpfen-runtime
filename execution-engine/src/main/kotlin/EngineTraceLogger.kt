@@ -48,6 +48,17 @@ class EngineTraceLogger(
          * engine stays bounded (older entries are evicted FIFO).
          */
         const val MAX_IN_MEMORY_TRACES = 100_000
+
+        /** The time of an entry in its text form; a formatter is immutable and safe to share between threads. */
+        private val TIME_FORMAT: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("HH:mm:ss.SSS").withZone(ZoneId.systemDefault())
+
+        /** The kinds of entries that [errors] returns. */
+        private val ERROR_TYPES = setOf(
+            TraceEventType.ACTION_ERROR,
+            TraceEventType.CONDITION_ERROR,
+            TraceEventType.ENGINE_ERROR
+        )
     }
     /**
      * Represents a single trace entry produced by the engine.
@@ -61,10 +72,9 @@ class EngineTraceLogger(
         val details: Map<String, String> = emptyMap()
     ) {
         fun format(): String {
-            val time = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
-                .withZone(ZoneId.systemDefault())
-                .format(Instant.ofEpochMilli(timestamp))
-            val detailStr = if (details.isNotEmpty()) " | ${details.entries.joinToString(", ") { "${it.key}=${it.value}" }}" else ""
+            val time = TIME_FORMAT.format(Instant.ofEpochMilli(timestamp))
+            val detailStr =
+                if (details.isNotEmpty()) " | ${details.entries.joinToString(", ") { "${it.key}=${it.value}" }}" else ""
             return "[$time] [$engineId] [$modelElementId] ${eventType.name}: $message$detailStr"
         }
     }
@@ -139,6 +149,11 @@ class EngineTraceLogger(
         }
     }
 
+    /**
+     * Records an entry: in the in-memory ring, on the console and in the file when they are on, and for every trace
+     * listener. The text form of the entry is built only when the console or the file takes it, because building it
+     * costs more than the rest of the call and the engine logs several entries per tick.
+     */
     fun log(
         modelElementId: String,
         eventType: TraceEventType,
@@ -157,16 +172,14 @@ class EngineTraceLogger(
             while (_traces.size > MAX_IN_MEMORY_TRACES) _traces.removeFirst()
         }
 
-        val formatted = entry.format()
-
-        if (consoleOutput) {
-            println(formatted)
-        }
-
-        if (fileWriter != null) {
+        if (consoleOutput || fileWriter != null) {
+            val formatted = entry.format()
+            if (consoleOutput) println(formatted)
             synchronized(fileLock) {
-                fileWriter?.println(formatted)
-                fileWriter?.flush()
+                fileWriter?.let {
+                    it.println(formatted)
+                    it.flush()
+                }
             }
         }
 
@@ -209,8 +222,7 @@ class EngineTraceLogger(
      */
     fun errors(): List<TraceEntry> =
         synchronized(_tracesLock) {
-            _traces.filter { it.eventType == TraceEventType.ACTION_ERROR || it.eventType == TraceEventType.CONDITION_ERROR ||
-                    it.eventType == TraceEventType.ENGINE_ERROR }
+            _traces.filter { it.eventType in ERROR_TYPES }
         }
 
     fun close() {
