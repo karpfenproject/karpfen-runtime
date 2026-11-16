@@ -94,6 +94,28 @@ class PersistentPythonSessionTest {
     }
 
     @Test
+    fun `the same code text runs again in fresh globals and fails again the same way`() {
+        val counting = "count = globals().get('count', 0) + 1\nprint(count)\n__karpfen_result__ = count"
+        repeat(3) { assertEquals(PythonAnswer("1", "1\n"), session.execute(counting)) }
+
+        val syntaxErrors = List(2) { session.execute("__karpfen_result__ = (1 +* 2)").error }
+        assertTrue(syntaxErrors[0]!!.startsWith("SyntaxError"), syntaxErrors[0])
+        assertEquals(syntaxErrors[0], syntaxErrors[1])
+        repeat(2) {
+            assertEquals("ZeroDivisionError: division by zero", session.execute("__karpfen_result__ = 1 / 0").error)
+        }
+    }
+
+    @Test
+    fun `more code texts than the loop keeps compiled still give their own results`() {
+        for (round in 1..2) {
+            for (i in 0 until 300) assertEquals("$i", session.execute("__karpfen_result__ = $i").result)
+        }
+        val long = "__karpfen_result__ = len('${"x".repeat(20_000)}')"
+        repeat(2) { assertEquals("20000", session.execute(long).result) }
+    }
+
+    @Test
     fun `a loaded module stays loaded, while its name must be imported again`() {
         session.execute("import decimal")
         val error = session.execute("__karpfen_result__ = decimal.Decimal(1)").error

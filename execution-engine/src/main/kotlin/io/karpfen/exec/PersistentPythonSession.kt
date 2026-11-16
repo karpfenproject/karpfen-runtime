@@ -49,6 +49,11 @@ import java.util.concurrent.TimeUnit
  * values of the code in it. Python frees such cycles only in its garbage collection, so emptying the namespace frees
  * the values of a call at its end instead of leaving them to a later collection.
  *
+ * The loop keeps the compiled form of up to [MAX_COMPILED] code texts of at most [MAX_COMPILED_LINE] encoded characters
+ * and empties this store when it is full. Compiling is the largest part of the work of a short call in Python, and a
+ * state machine sends the same text again and again when its values do not change and the result cache is off.
+ * Compiling has no effects of its own, so running a kept compiled form is the same as compiling the text again.
+ *
  * An exception of any kind in the code, `SystemExit` included, is answered with ERROR and the last line of Python's text
  * for it, such as `ZeroDivisionError: division by zero`, and the process goes on.
  *
@@ -188,6 +193,12 @@ class PersistentPythonSession : PythonSession {
         const val SENTINEL = "__SENTINEL__"
         const val ENDED = "The Python process ended during the call"
 
+        /** The most compiled code texts the loop keeps; see the class description. */
+        const val MAX_COMPILED = 256
+
+        /** The longest encoded code text, in characters, whose compiled form the loop keeps. */
+        const val MAX_COMPILED_LINE = 16_384
+
         /** The loop the process runs; see the class description for its protocol. */
         val LOOP = """
 import sys, os, base64, io, json, traceback, builtins
@@ -200,6 +211,7 @@ def __karpfen_text__(value):
         return json.dumps(value)
     return str(value)
 
+__karpfen_compiled__ = {}
 __karpfen_out__ = os.fdopen(os.dup(1), "w", encoding="ascii")
 os.dup2(2, 1)
 while True:
@@ -213,10 +225,16 @@ while True:
     status, text = 'NONE', ''
     namespace = {}
     try:
-        code = base64.b64decode(line).decode('utf-8')
+        compiled = __karpfen_compiled__.get(line)
+        if compiled is None:
+            compiled = compile(base64.b64decode(line).decode('utf-8'), '<string>', 'exec')
+            if len(line) <= $MAX_COMPILED_LINE:
+                if len(__karpfen_compiled__) >= $MAX_COMPILED:
+                    __karpfen_compiled__.clear()
+                __karpfen_compiled__[line] = compiled
         namespace = {'__name__': '__main__', '__builtins__': builtins}
         sys.stdout = sys.stderr = printed
-        exec(code, namespace)
+        exec(compiled, namespace)
         result = namespace.get('__karpfen_result__')
         if result is not None:
             status, text = 'OK', __karpfen_text__(result)
