@@ -61,8 +61,9 @@ interface PythonSession {
  * what TrueParallel is for. Sessions are reused across ticks, instances, splits and joins, so a state machine that
  * splits again and again does not start a new Python process each time.
  *
- * [close] ends every session. A session that is still in use is closed when its call gives it back, and a call after
- * [close] fails, so no Python process outlives the engine that closed the pool.
+ * [close] ends every session. A session that a call still uses is aborted, which fails that call, because a call that
+ * hangs would otherwise keep its process for as long as the JVM runs. A call after [close] fails, so no Python process
+ * outlives the engine that closed the pool.
  *
  * @property newSession creates a session; the session may start its process lazily on its first call.
  */
@@ -98,26 +99,18 @@ class PythonSessionPool(private val newSession: () -> PythonSession) {
         }
     }
 
-    /** Ends every session; idle ones at once, busy ones when their call gives them back. */
+    /**
+     * Ends every session: closes the idle ones and aborts the busy ones, so a call that waits for Python fails at once
+     * instead of holding its process. The engine calls it when it ends for good, whatever state its threads are in.
+     * An aborted session is closed again when its call gives it back.
+     */
     fun close() {
-        val toClose = synchronized(this) {
+        val (toClose, toAbort) = synchronized(this) {
             closed = true
             created -= idle.size
-            idle.toList().also { idle.clear() }
+            (idle.toList() to busy.toList()).also { idle.clear() }
         }
         toClose.forEach { it.close() }
-    }
-
-    /**
-     * Ends every session at once, the busy ones too, so a call that waits for Python fails instead of holding up the
-     * end of the engine; used when the engine ends for good and a tick does not end on its own.
-     */
-    fun abort() {
-        val toAbort = synchronized(this) {
-            closed = true
-            created -= idle.size
-            (idle.toList() + busy).also { idle.clear() }
-        }
         toAbort.forEach { it.abort() }
     }
 

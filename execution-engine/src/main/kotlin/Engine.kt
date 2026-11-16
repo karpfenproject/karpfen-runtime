@@ -862,8 +862,10 @@ class Engine(
      * Ends the engine for good: stops the run, releases a thread held by [stop] and the pause of [TickByTickFeature] so
      * that the thread can end, and waits for it: the running tick ends, and the threads of branches end with the engine
      * thread. A thread that has not ended within 5 s, as one whose EVAL waits for Python, first loses its Python
-     * sessions, which ends that wait, and is then interrupted. At the end the Python sessions and the trace log are
-     * closed; the trace file stays on disk. The engine does not start again.
+     * sessions, which ends that wait, and is then interrupted. At the end the Python sessions are closed whatever state
+     * the threads are in. This also aborts a call that still waits in the thread of a branch which a [stop] left behind
+     * when the engine thread ended, because that call would otherwise keep its process until the JVM ends. Then the trace
+     * log is closed; the trace file stays on disk. The engine does not start again.
      */
     fun close() = synchronized(lifeLock) {
         closed = true
@@ -874,7 +876,7 @@ class Engine(
             try {
                 t.join(STOP_WAIT_MS)
                 if (t.isAlive) {
-                    pythonSessions.abort()
+                    pythonSessions.close()
                     t.interrupt()
                     t.join(STOP_WAIT_MS)
                 }

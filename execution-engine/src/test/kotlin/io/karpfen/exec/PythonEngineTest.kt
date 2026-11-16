@@ -144,6 +144,27 @@ class PythonEngineTest {
         PythonFixtures.await("every process ends with the engine") { newPythonProcesses().isEmpty() }
     }
 
+    @Test
+    fun `with TrueParallel a call that hangs in a branch ends when the engine closes after a stop`() {
+        val run = run(attached = mapOf("a" to HANGING_LAMP), parallel = true)
+        PythonFixtures.await("the process of the hanging call") { newPythonProcesses().isNotEmpty() }
+
+        run.engine.stop()
+        val deadline = System.currentTimeMillis() + 60_000L
+        while (engineThreadAlive(run.engine.engineId)) {
+            assertTrue(System.currentTimeMillis() < deadline, "the engine thread did not end after the stop")
+            Thread.sleep(5)
+        }
+        assertEquals(1, newPythonProcesses().size, "the hanging call still holds its process")
+        run.engine.close()
+
+        PythonFixtures.await("every process ends with the engine") { newPythonProcesses().isEmpty() }
+    }
+
+    /** True while the thread of the engine [engineId] runs. */
+    private fun engineThreadAlive(engineId: String): Boolean =
+        Thread.getAllStackTraces().keys.any { it.isAlive && it.name == "Engine-$engineId" }
+
     // ---- Running ------------------------------------------------------------------------------------------------
 
     private fun run(
@@ -341,6 +362,28 @@ class PythonEngineTest {
                     SPLIT "init" -> "s1", "s2", "s3", "s4" { }
                 }
                 $MACROS
+            }
+        """
+
+        /** Splits into a branch whose call never returns and one that does nothing. */
+        val HANGING_LAMP = """
+            STATEMACHINE ATTACHED TO "Lamp" {
+                STATES {
+                    INITIAL STATE "init" { }
+                    STATE "hanging" {
+                        ENTRY {
+                            SET("watts", EVAL {
+                                import threading
+                                threading.Event().wait()
+                                return 1
+                            })
+                        }
+                    }
+                    STATE "idle" { }
+                }
+                TRANSITIONS {
+                    SPLIT "init" -> "hanging", "idle" { }
+                }
             }
         """
 

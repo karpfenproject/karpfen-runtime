@@ -30,8 +30,8 @@ import kotlin.test.assertTrue
 
 /**
  * Covers [PythonSessionPool] with sessions that answer with their own number and never start Python: calls one after
- * the other share a session, calls at the same time get one each, closing ends every session, and aborting ends a
- * session also while a call uses it.
+ * the other share a session, calls at the same time get one each, and closing ends every session, a busy one by
+ * aborting it while its call waits.
  */
 class PythonSessionPoolTest {
 
@@ -75,18 +75,19 @@ class PythonSessionPoolTest {
     }
 
     @Test
-    fun `aborting ends a busy session while its call waits, and refuses later calls`() {
+    fun `closing aborts a busy session while its call waits, and refuses later calls`() {
         val inside = CountDownLatch(1)
         val caller = thread {
             pool.execute("wait") {
                 inside.countDown()
                 val session = synchronized(sessions) { sessions.single() }
-                while (!session.aborted) Thread.onSpinWait()
+                val deadline = System.currentTimeMillis() + WAIT_MS
+                while (!session.aborted && System.currentTimeMillis() < deadline) Thread.onSpinWait()
             }
         }
         assertTrue(inside.await(WAIT_MS, TimeUnit.MILLISECONDS))
 
-        pool.abort()
+        pool.close()
         caller.join(WAIT_MS)
 
         assertTrue(sessions.single().aborted)
