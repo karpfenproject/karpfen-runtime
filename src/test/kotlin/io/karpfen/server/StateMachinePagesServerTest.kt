@@ -140,6 +140,26 @@ class StateMachinePagesServerTest {
     }
 
     @Test
+    fun `runEnvironment names a macro call whose arguments do not fit the macro of another file`() {
+        val envKey = configured()
+        APIService.receiveStateMachine(envKey, null, BULB_TEST.removeSuffix("}") + HALF_MACRO + "\n}")
+        APIService.receiveStateMachine(
+            envKey, LAMP,
+            SELF_TEST_LAMP.replace("INITIAL STATE \"off\" { }", "INITIAL STATE \"off\" { ENTRY { SET(\"watts\", MACRO(\"half\", \"watts\", \"watts\")) } }")
+        )
+
+        val refusal = assertFailsWith<IllegalStateException> { APIService.runEnvironment(envKey) }
+
+        assertEquals(
+            "Environment with key $envKey has state machines that cannot be flattened:\n" +
+                "State machine for 'lamp': In the state machine attached to 'Lamp': Macro 'half' takes 1 argument, " +
+                "but the call passes 2; pass one argument per TAKES",
+            refusal.message
+        )
+        assertFalse(EnvironmentHandler.isActiveEnv(envKey))
+    }
+
+    @Test
     fun `clients see qualified names in stateChange, in the snapshot and in setActiveState`() {
         val envKey = configured()
         APIService.receiveStateMachine(envKey, null, BULB_TEST)
@@ -228,6 +248,7 @@ class StateMachinePagesServerTest {
         val METAMODEL = """
             type "Lamp" "A lamp" {
                 prop("log", list("string"))
+                prop("watts", "number")
             }
         """.trimIndent()
 
@@ -255,6 +276,19 @@ class StateMachinePagesServerTest {
                 }
                 TRANSITIONS {
                     TRANSITION "off" -> "self test" { }
+                }
+            }
+        """.trimIndent()
+
+        /** A macro block for a fragment: `half` takes one number. */
+        val HALF_MACRO = """
+            MACROS {
+                MACRO "half" {
+                    TAKES("watts", "number")
+                    RETURNS("number")
+                    DEFINITION {
+                        EVAL { return $(watts) / 2 }
+                    }
                 }
             }
         """.trimIndent()
