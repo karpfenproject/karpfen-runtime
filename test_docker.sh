@@ -7,6 +7,7 @@
 #
 # Usage:
 #   ./test_docker.sh [--collect "DIR ..."] [GRADLE_ARGUMENT ...]
+#   ./test_docker.sh [--collect "DIR ..."] --script FILE [ARGUMENT ...]
 #   ./test_docker.sh --cleanup [--keep-cache]
 #
 #   GRADLE_ARGUMENT  Tasks and options for ./gradlew inside the container.
@@ -15,6 +16,10 @@
 #   --collect DIRS   Folders below build/ that come back to the checkout after
 #                    the run, separated by spaces.
 #                    Default: "test-results reports"
+#   --script FILE    Runs the bash script FILE of the checkout inside the
+#                    container, in the copy of the sources, instead of Gradle,
+#                    with the remaining arguments.  The script finds the
+#                    variable KARPFEN_TEST_CONTAINER=1 and WORKERS set.
 #   --cleanup        Removes every container, image and volume with the label
 #                    io.karpfen.runtime.test=true and lists what is left.
 #   --keep-cache     With --cleanup: keeps the volume with Gradle's downloads.
@@ -23,6 +28,7 @@
 #   ./test_docker.sh
 #   ./test_docker.sh :execution-engine:test --tests 'io.karpfen.io.karpfen.exec.MacroProcessorTest'
 #   ./test_docker.sh --collect "reports/benchmarks" :execution-engine:benchmark
+#   ./test_docker.sh --collect "reports/integration" --script benchmark_integration.sh
 #   ./test_docker.sh --cleanup
 #
 # What a run does:
@@ -42,7 +48,7 @@
 #   5. Removes the container, also after Ctrl+C or a failure.
 #
 # The script needs nothing on the host but Docker.  It publishes no port.
-# It ends with the exit status of Gradle.
+# It ends with the exit status of Gradle or of the script.
 #
 # Environment:
 #   KARPFEN_TEST_WORKERS  Gradle workers in the container (default 3)
@@ -103,14 +109,23 @@ if [ "${1:-}" = "--collect" ]; then
     COLLECT="${2:?--collect needs a list of folders below build/}"
     shift 2
 fi
-if [ "$#" -eq 0 ]; then
+SCRIPT=""
+if [ "${1:-}" = "--script" ]; then
+    SCRIPT="${2:?--script needs a file of the checkout}"
+    shift 2
+fi
+if [ -z "$SCRIPT" ] && [ "$#" -eq 0 ]; then
     set -- :test :execution-engine:test --continue
 fi
 
 echo "=== Karpfen Runtime – Gradle in Docker ==="
 echo ""
 echo "  Sources : $SCRIPT_DIR  (copied into the container, read-only mount)"
-echo "  Gradle  : ./gradlew $*  (--max-workers=$WORKERS)"
+if [ -n "$SCRIPT" ]; then
+    echo "  Script  : $SCRIPT $*"
+else
+    echo "  Gradle  : ./gradlew $*  (--max-workers=$WORKERS)"
+fi
 echo "  Results : <project>/build/container/{${COLLECT// /,}}"
 echo ""
 
@@ -153,8 +168,12 @@ done
 tar -C /src "${excludes[@]}" -cf - . | tar -C /work -xf -
 cd /work
 export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
-./gradlew --no-daemon --max-workers="$WORKERS" -Dorg.gradle.jvmargs=-Xmx1536m \
-    -Porg.gradle.java.installations.auto-download=false "$@"
+if [ -n "$SCRIPT" ]; then
+    bash "/work/$SCRIPT" "$@"
+else
+    ./gradlew --no-daemon --max-workers="$WORKERS" -Dorg.gradle.jvmargs=-Xmx1536m \
+        -Porg.gradle.java.installations.auto-download=false "$@"
+fi
 status=$?
 for project in $PROJECTS; do
     for folder in $COLLECT; do
@@ -167,7 +186,7 @@ done
 exit $status
 '
 
-echo "[2/3] Running Gradle in container $CONTAINER ..."
+echo "[2/3] Running in container $CONTAINER ..."
 echo ""
 set +e
 docker run --rm --init \
@@ -181,6 +200,8 @@ docker run --rm --init \
     -e WORKERS="$WORKERS" \
     -e COLLECT="$COLLECT" \
     -e PROJECTS="${PROJECTS[*]}" \
+    -e SCRIPT="$SCRIPT" \
+    -e KARPFEN_TEST_CONTAINER=1 \
     "$IMAGE" bash -c "$INNER" bash "$@"
 status=$?
 set -e
@@ -194,5 +215,5 @@ for project in "${PROJECTS[@]}"; do
         fi
     done
 done
-echo "      Gradle exit status: $status"
+echo "      Exit status: $status"
 exit $status

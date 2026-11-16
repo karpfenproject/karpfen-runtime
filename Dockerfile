@@ -43,7 +43,8 @@ RUN apt-get update \
 # ──────────────────────────────────────────────────────────────────────────────
 # Stage 3 – test
 #
-# The image of test_docker.sh: the python stage plus the JDK that Gradle needs.
+# The image of test_docker.sh: the python stage plus the JDK that Gradle needs
+# and curl, with which benchmark_integration.sh drives the runtime over HTTP.
 # It holds no sources; test_docker.sh copies them in for every run.  A plain
 # "docker build" does not build this stage, because runtime is the last stage.
 # ──────────────────────────────────────────────────────────────────────────────
@@ -52,6 +53,7 @@ FROM python AS test
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
            openjdk-21-jdk-headless \
+           curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
