@@ -1,48 +1,59 @@
 # 3 Execution
 
 The karpfen runtime is a server program that runs models. It reads a metamodel, a model, event definitions and state
-machines in the languages of [2 Modeling languages](https://github.com/karpfenproject/karpfen-dsl-tools/blob/main/docs/reference/2-modeling-languages.md),
-runs state machines on the objects of the model and runs all of them in steps called ticks. A state machine is
-attached to one object, or it is attachable and objects get instances of it at the start and while the model runs. A state machine
-reads and changes its object and the objects it reaches from there. Events come from clients over a WebSocket and from
-the state machines themselves. Clients watch the run over the same WebSocket.
+machines in the languages of
+[2 Modeling languages](https://github.com/karpfenproject/karpfen-dsl-tools/blob/main/docs/reference/2-modeling-languages.md)
+and runs the state machines on the objects of the model in steps called ticks. A state machine is either attached to
+one object or attachable, in which case objects get instances of it at the start and while the model runs. It reads
+and changes its object and every object it reaches from there. Events come from the state machines themselves and
+from clients over a WebSocket, the same one over which clients watch the run.
 
-The runtime holds everything in memory. One running runtime holds any number of environments. An environment is one
-run of one model: it has its own metamodel, model, event definitions, state machines, settings, features, events and
-connected clients. Environments do not see each other.
+A running runtime holds any number of environments, all of them in memory. An environment is one run of one model.
+It does not see the other environments, because each one holds the following parts of its own.
 
-The IDE starts a runtime and drives it for you, as [4.5 Running](https://github.com/karpfenproject/karpfen-IDE/blob/main/docs/reference/4.5-running.md)
-describes. Chapter 3 describes the runtime itself, for every client.
+- metamodel and model
+- event definitions
+- state machines
+- settings
+- features
+- events
+- connected clients
 
-The life of an environment has these steps. Each step is one call of the HTTP API in
+When you work in the IDE, it starts a runtime and drives it for you.
+[4.5 Running](https://github.com/karpfenproject/karpfen-IDE/blob/main/docs/reference/4.5-running.md) describes this
+from the side of the IDE. Chapter 3 is about the runtime itself and holds what every client needs to drive it.
+
+An environment goes through the following steps in its life. Each step is one call of the
 [3.4 HTTP API](3.4-http-api.md).
 
-1. A client creates the environment and gets its key, for example `env-1763035112345`. The environment is in the
-   phase `configuring`.
-2. The client uploads the metamodel, then the model, the event definitions, one attached state machine per object
-   that gets one and the attachable state machines. The runtime reads every upload at once and refuses a text with errors, line by line. An accepted upload
-   replaces the one before it.
-3. The client sets the tick delay and the time to live of events, registers the WebSocket clients that observe objects
-   or listen to event domains, and switches features on.
-4. The client runs the environment. From now on its uploads, settings and observers are fixed. The runtime checks that
-   the environment has a metamodel and a model, that every attached state machine belongs to an object of the model,
-   and that every type that behaves after a state machine finds an attachable one that lists it.
-   The environment is in the phase `activated`.
-5. The client starts the environment. The state machines start in their initial states and tick until the environment
-   is stopped. Objects that rules create or remove gain and lose state machine instances on the way. The phase is
-   `running`. Events that clients send go to the state machines, and clients get the changes of the model and of the
-   active states pushed over the WebSocket.
-6. The client stops the environment. The run is frozen: the model, the state machines with their active states and
-   the waiting events stay as they are, the phase is `stopped`, and the connections of the clients stay open.
-7. The client may start the environment again. The run continues with the next tick as if there had been no stop.
-8. The client drops the environment when it no longer needs it. Its engine, its Python processes and its connections
-   end, and its key is gone. A client may drop an environment in any phase. An environment that is not dropped stays
-   in the runtime, frozen when it is stopped, until the runtime ends.
+1. A client creates the environment and gets back its key, for example `env-1763035112345`. The new environment is in
+   the phase `configuring`.
+2. The client uploads the metamodel first and then the model, the event definitions, one attached state machine for
+   each object that has one, the attachable state machines and the fragments that container states use. The runtime
+   reads every upload as soon as it arrives. A text with errors is refused with an answer that names each error with
+   its line. An accepted upload replaces the one before it.
+3. The client sets the tick delay and the time to live of events and switches the result cache on or off. It
+   registers the WebSocket clients that observe objects or listen to event domains and switches features on.
+4. The client runs the environment. Before the runtime accepts the call, it checks that the environment has a
+   metamodel and a model, that every attached state machine belongs to an object of the model, that every type that
+   behaves after a state machine finds an attachable state machine that lists the type, and that every state machine
+   flattens with its fragments. From then on the uploads, settings and observers are fixed. The environment is now in
+   the phase `activated`.
+5. When the client starts the environment, the phase becomes `running`. The state machines start in their initial
+   states and tick until the environment is stopped. On the way, objects that rules create gain state machine
+   instances and objects that rules remove lose theirs. Events that clients send go to the state machines. The runtime
+   pushes the changes of the model and of the active states to the clients over the WebSocket.
+6. When the client stops the environment, the phase becomes `stopped`. The model, the state machines with their active
+   states and the waiting events stay as they are. The connections of the clients stay open.
+7. The client may start the environment again. The run then continues with the next tick as if there had been no
+   stop.
+8. When the client no longer needs the environment, it drops it. That ends the engine, the Python processes and the
+   connections of the environment and removes its key. A client may drop an environment in any phase. An environment
+   that is never dropped stays in the runtime until the runtime ends, frozen if it was stopped.
 
-The phase `halted` means that the run ended on its own after an error inside the runtime, without a stop call. The
-phase of an environment is part of every model snapshot of [3.4 HTTP API](3.4-http-api.md).
-
-The sections of chapter 3:
+The phase `halted` is not reached by any call. It means that the run ended on its own after an error inside the
+runtime. The phase of an environment is part of every model snapshot of
+[3.4.8 Observation](3.4-http-api.md#348-observation).
 
 | Section | What it covers |
 |---|---|

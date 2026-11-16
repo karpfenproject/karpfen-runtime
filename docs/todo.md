@@ -15,3 +15,7 @@
 - Path numbers are `Int` per object. A state machine that splits and joins on one object every few ticks runs out of
   them after about a month at 1000 ticks per second; the numbers then turn negative and later repeat.
 - The notebook `compare-benchmark-runs.ipynb` has not been run.
+- A list for EventInjection that cannot be read, also one that EventReplayController uploads, is answered with status
+  500, because the parse error is no `IllegalArgumentException`. Status 400 would be right.
+- When the runtime ends, only clients of environments that were run get the close with code 1001 and the reason
+  `Runtime stopped`. Clients of an environment that was never run just lose their connection.
