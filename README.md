@@ -13,8 +13,8 @@ state machines over HTTP, runs them, sends events and watches the model change o
 | [3.1 Execution semantics](docs/reference/3.1-execution-semantics.md) | Ticks, transitions, actions, events, splits and joins, histories, tick limits |
 | [3.2 Runtime features](docs/reference/3.2-features.md) | Histories, tick limits, stepping, breakpoints, recording and replaying events |
 | [3.3 Running the runtime](docs/reference/3.3-running-the-runtime.md) | Starting the runtime, `application.conf` and the trace log |
-| [3.4 HTTP API](docs/reference/3.4-http-api.md) | Every route with its answers and errors |
-| [3.5 WebSocket](docs/reference/3.5-websocket.md) | Connecting, sending events and the pushed messages |
+| [3.4 HTTP API](docs/reference/3.4-http-api.md) | An overview of the HTTP API. Every route with its answers and errors is in [docs/http-api.md](docs/http-api.md) |
+| [3.5 WebSocket](docs/reference/3.5-websocket.md) | An overview of the WebSocket. Connecting, sending events and every pushed message are in [docs/websocket.md](docs/websocket.md) |
 | [3.6 Examples](docs/reference/3.6-examples.md) | The example models in `examples` |
 | [Developing the runtime](docs/development.md) | Structure, main classes, building and testing |
 

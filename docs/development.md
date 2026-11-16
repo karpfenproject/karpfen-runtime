@@ -1,7 +1,9 @@
 # Developing the runtime
 
 This page is for people who work on the runtime itself. The reference for users is in
-[reference/README.md](reference/README.md).
+[reference/README.md](reference/README.md). The complete HTTP API and WebSocket for client developers are described in
+[http-api.md](http-api.md) and [websocket.md](websocket.md), the console and trace output in
+[console-and-trace.md](console-and-trace.md).
 
 ## Structure
 

@@ -52,14 +52,14 @@ An environment goes through the following steps in its life. Each step is one ca
    that is never dropped stays in the runtime until the runtime ends, frozen if it was stopped.
 
 The phase `halted` is not reached by any call. It means that the run ended on its own after an error inside the
-runtime. The phase of an environment is part of every model snapshot of
-[3.4.8 Observation](3.4-http-api.md#348-observation).
+runtime. The phase of an environment is part of every snapshot of the model that a client reads with the
+[observation routes of the HTTP API](https://github.com/karpfenproject/karpfen-runtime/blob/main/docs/http-api.md#observation).
 
 | Section | What it covers |
 |---|---|
 | [3.1 Execution semantics](3.1-execution-semantics.md) | What happens in a tick: active states, transitions, actions, events, splits and joins, histories, tick limits and the life of state machine instances |
 | [3.2 Runtime features](3.2-features.md) | The features that change a run: histories, tick limits, stepping, breakpoints, recording and replaying events, branches on threads of their own |
 | [3.3 Running the runtime](3.3-running-the-runtime.md) | Starting the runtime on your machine or in Docker, its configuration file and its trace log |
-| [3.4 HTTP API](3.4-http-api.md) | Every route, its parameters, its answers and its errors, with one whole session |
-| [3.5 WebSocket](3.5-websocket.md) | Connecting, sending events and every message the runtime pushes |
+| [3.4 HTTP API](3.4-http-api.md) | What the HTTP API offers someone who writes a client of the runtime, in brief |
+| [3.5 WebSocket](3.5-websocket.md) | What the WebSocket offers someone who writes a client of the runtime, in brief |
 | [3.6 Examples](3.6-examples.md) | The example models that come with the runtime and how to run them |
