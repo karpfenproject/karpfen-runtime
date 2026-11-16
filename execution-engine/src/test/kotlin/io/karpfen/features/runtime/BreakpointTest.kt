@@ -38,9 +38,8 @@ class BreakpointTest {
     fun replaceTickByTickFeature(breakpointFeature: BreakpointFeature) {
         isPaused = false
         val tickByTickFeature = mockk<TickByTickFeature>(relaxed = true)
-        every {tickByTickFeature.onMessage("pause")} answers {
+        every {tickByTickFeature.haltAt(any())} answers {
             isPaused = true
-            ""
         }
         val tickByTickField = breakpointFeature::class.java.getDeclaredField("tickByTickFeature")
         tickByTickField.setAccessible(true)

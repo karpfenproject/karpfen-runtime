@@ -20,7 +20,34 @@ import io.karpfen.dsl.instance.*
 import io.karpfen.dsl.meta.AssociationType
 import io.karpfen.dsl.meta.Metamodel
 import io.karpfen.dsl.meta.SimplePropertyType
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.withLock
+import kotlin.concurrent.write
 
+/**
+ * Reads and writes the model of one engine and publishes its changes to the registered [ModelChangePublisher]s.
+ *
+ * The processor is safe for several threads, which the feature TrueParallel needs: the branches of a split state
+ * machine then run their action blocks at the same time on threads of their own. The objects of the model come from
+ * dsl-tools and hold plain mutable lists, and a path or a JSON text reads through many objects, so one read-write lock
+ * guards the whole model rather than a lock per object:
+ * - every public read (paths, lookups, conversions to Python and JSON) holds the read lock, so reads of several
+ *   threads run side by side, and a list it returns is a copy;
+ * - every public write holds the write lock for the one operation, so a single write such as one `SET` or one
+ *   `DROPOBJ` is atomic, while the reads and the Python code that compute its value run outside the lock.
+ * Each public operation takes its lock and calls a private function of the same name with the suffix `Locked`, which
+ * does the work and expects the lock to be held. A write called while the same thread holds only the read lock gives
+ * that lock up for the write, as [kotlin.concurrent.write] does, so it cannot deadlock.
+ *
+ * Notification batches belong to the thread that opened them ([beginBatch]), so each action block publishes its own
+ * changes once when it ends, whatever other branches do meanwhile. A write outside any batch publishes at once.
+ * [commitBatch] publishes under the read lock and a publication lock, writing each object as JSON at that moment: two
+ * commits never interleave, every publisher sees the publications of one commit in a row, and the last published
+ * value of an object is always its latest one. The model lock is always taken before the publication lock.
+ */
 class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
 
     companion object {
@@ -46,17 +73,26 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     /** Monotonic counter backing [generateUniqueId]. */
     private var idCounter = 0
 
-    /** Registered listeners that are notified whenever a DataObject changes. */
-    private val changePublishers: MutableList<ModelChangePublisher> = mutableListOf()
+    /** Registered listeners that are notified whenever a DataObject changes; copy-on-write, registered at any time. */
+    private val changePublishers = CopyOnWriteArrayList<ModelChangePublisher>()
 
-    /** When true, change notifications are queued rather than fired immediately. */
-    private var batchMode = false
+    /** Guards the objects of the model, the [objectIndex] and the [idCounter]. */
+    private val modelLock = ReentrantReadWriteLock()
 
-    /** Objects changed during a batch; deduplicated so each fires exactly once. */
-    private val pendingNotifications = LinkedHashSet<DataObject>()
+    /** Lets one commit at a time publish, so that the publications of two commits never interleave. */
+    private val publicationLock = ReentrantLock()
 
-    /** Object ids deleted during a batch; fired after change notifications on commit. */
-    private val pendingDeletions = LinkedHashSet<String>()
+    /** The notification batch the calling thread has open, or null outside a batch. */
+    private val openBatch = ThreadLocal<NotificationBatch?>()
+
+    /**
+     * The changes of one batch: the changed objects, deduplicated so each fires exactly once, and the deleted ids,
+     * fired after the change notifications on commit. Only the thread that opened the batch touches it.
+     */
+    private class NotificationBatch {
+        val changed = LinkedHashSet<DataObject>()
+        val deleted = LinkedHashSet<String>()
+    }
 
     fun addChangePublisher(publisher: ModelChangePublisher) {
         changePublishers.add(publisher)
@@ -66,14 +102,29 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
         changePublishers.remove(publisher)
     }
 
-    /** Begin a notification batch. Notifications are deferred until [commitBatch]. */
+    /**
+     * Runs [read] while holding the read lock of the model, so that no write of another thread happens during it. For
+     * readers that walk the model objects directly, such as a snapshot of the whole model.
+     */
+    fun <T> readModel(read: () -> T): T = modelLock.read(read)
+
+    /**
+     * Runs [write] while holding the write lock of the model, for code that changes model objects directly instead of
+     * through the write operations of this processor. It publishes nothing by itself.
+     */
+    fun <T> writeModel(write: () -> T): T = modelLock.write(write)
+
+    /**
+     * Begin a notification batch of the calling thread. Notifications are deferred until [commitBatch] on the same
+     * thread; a batch that is already open stays open.
+     */
     fun beginBatch() {
-        batchMode = true
+        if (openBatch.get() == null) openBatch.set(NotificationBatch())
     }
 
     /**
-     * Commits the batch and leaves batch mode: publishes one change per changed object that was not deleted in the
-     * batch, then one deletion per deleted id.
+     * Commits the batch of the calling thread and closes it: publishes one change per changed object that was not
+     * deleted in the batch, then one deletion per deleted id. Without an open batch it publishes nothing.
      *
      * Each change and each deletion is published on its own, so one that fails never keeps the others of the batch
      * from being published. A changed object that cannot be written as JSON, because an object is reachable from
@@ -82,16 +133,20 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * exceptions.
      */
     fun commitBatch() {
-        batchMode = false
-        val changed = pendingNotifications.toList()
-        val deleted = pendingDeletions.toSet()
-        pendingNotifications.clear()
-        pendingDeletions.clear()
+        val batch = openBatch.get() ?: return
+        openBatch.remove()
+        val changed = batch.changed.toList()
+        val deleted = batch.deleted.toSet()
+        if (changed.isEmpty() && deleted.isEmpty()) return
         val failures = mutableListOf<Exception>()
-        for (obj in changed) {
-            if (obj.id !in deleted) publishIsolated(failures) { fireNotification(obj) }
+        modelLock.read {
+            publicationLock.withLock {
+                for (obj in changed) {
+                    if (obj.id !in deleted) publishIsolated(failures) { fireNotification(obj) }
+                }
+                for (id in deleted) publishIsolated(failures) { fireDeletion(id) }
+            }
         }
-        for (id in deleted) publishIsolated(failures) { fireDeletion(id) }
         val first = failures.firstOrNull() ?: return
         failures.drop(1).forEach(first::addSuppressed)
         throw first
@@ -106,20 +161,28 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
         }
     }
 
+    /**
+     * Records the change of [obj] in the batch of the calling thread, or publishes it at once outside a batch. A write
+     * operation calls it while holding the write lock, so the publication lock is taken after the model lock, in the
+     * same order as in [commitBatch].
+     */
     private fun notifyChange(obj: DataObject) {
-        if (batchMode) {
-            pendingNotifications.add(obj)
+        val batch = openBatch.get()
+        if (batch != null) {
+            batch.changed.add(obj)
             return
         }
-        fireNotification(obj)
+        publicationLock.withLock { fireNotification(obj) }
     }
 
+    /** Records the deletion of [objectId] like [notifyChange] records a change. */
     private fun notifyDeletion(objectId: String) {
-        if (batchMode) {
-            pendingDeletions.add(objectId)
+        val batch = openBatch.get()
+        if (batch != null) {
+            batch.deleted.add(objectId)
             return
         }
-        fireDeletion(objectId)
+        publicationLock.withLock { fireDeletion(objectId) }
     }
 
     /**
@@ -156,7 +219,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * @param key       The key of the list property to append to.
      * @param value     The value to append.
      */
-    fun appendToList(objectId: String, key: String, value: Any) {
+    fun appendToList(objectId: String, key: String, value: Any) =
+        modelLock.write { appendToListLocked(objectId, key, value) }
+
+    private fun appendToListLocked(objectId: String, key: String, value: Any) {
         val obj = getDataObjectById(objectId)
         var prop = obj.properties.firstOrNull { it.key == key }
 
@@ -189,7 +255,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * Returns one of: "number", "boolean", "string", reference("TypeName"), list("TypeName"),
      * or a class-type name for embedded objects.
      */
-    fun inferReturnType(contextObj: DataObject, path: String): String {
+    fun inferReturnType(contextObj: DataObject, path: String): String =
+        modelLock.read { inferReturnTypeLocked(contextObj, path) }
+
+    private fun inferReturnTypeLocked(contextObj: DataObject, path: String): String {
         val segments = path.split("->").map { it.trim() }
         var currentObj = contextObj
         var currentType: io.karpfen.dsl.meta.ClassType? = contextObj.ofType
@@ -248,7 +317,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * Updates the simple properties of a [DataObject] identified by [objectId] with the
      * provided [props] map (key → typed value) and notifies all registered change publishers.
      */
-    fun updateProperties(objectId: String, props: Map<String, Any>) {
+    fun updateProperties(objectId: String, props: Map<String, Any>) =
+        modelLock.write { updatePropertiesLocked(objectId, props) }
+
+    private fun updatePropertiesLocked(objectId: String, props: Map<String, Any>) {
         //println("property update --> " + objectId + " ---> " + props.toString())
         val obj = getDataObjectById(objectId)
         obj.assignProps(props)
@@ -259,7 +331,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * Updates the relations of a [DataObject] identified by [objectId] with the provided
      * [rels] map and notifies all registered change publishers.
      */
-    fun updateRelations(objectId: String, rels: Map<String, Any>) {
+    fun updateRelations(objectId: String, rels: Map<String, Any>) =
+        modelLock.write { updateRelationsLocked(objectId, rels) }
+
+    private fun updateRelationsLocked(objectId: String, rels: Map<String, Any>) {
         val obj = getDataObjectById(objectId)
         obj.assignRels(rels)
         notifyChange(obj)
@@ -282,7 +357,9 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     // ---- Object lifecycle & relation mutation (metamodel + containment validated) -----------
 
     /** Generates an id that is not currently used by any object in the model. */
-    fun generateUniqueId(typeName: String): String {
+    fun generateUniqueId(typeName: String): String = modelLock.write { generateUniqueIdLocked(typeName) }
+
+    private fun generateUniqueIdLocked(typeName: String): String {
         var id: String
         do {
             id = "gen_${typeName}_${idCounter++}"
@@ -291,14 +368,16 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     }
 
     /** True when an object with [id] is currently part of the model. */
-    fun containsObject(id: String): Boolean = objectIndex.containsKey(id)
+    fun containsObject(id: String): Boolean = modelLock.read { objectIndex.containsKey(id) }
 
     /**
      * Registers a newly-created object and its embedded (`has`) subtree in the object index. Every
      * object must already carry a non-empty, model-unique id (macro-built objects get one at
      * construction time). Throws if any id already exists in the model.
      */
-    fun registerObjectTree(root: DataObject) {
+    fun registerObjectTree(root: DataObject) = modelLock.write { registerObjectTreeLocked(root) }
+
+    private fun registerObjectTreeLocked(root: DataObject) {
         val subtree = KmodelDSLConverter.collectAllObjects(mutableListOf(root))
         for (obj in subtree) {
             require(obj.id.isNotEmpty()) {
@@ -330,7 +409,9 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * Overwrites a single scalar property. Validates that [key] is a non-list simple property of the
      * owner's type (relations must use SETOBJ; list properties must use SETLIST/APPEND).
      */
-    fun setScalar(ownerId: String, key: String, value: Any) {
+    fun setScalar(ownerId: String, key: String, value: Any) = modelLock.write { setScalarLocked(ownerId, key, value) }
+
+    private fun setScalarLocked(ownerId: String, key: String, value: Any) {
         val owner = getDataObjectById(ownerId)
         val propDef = owner.ofType.simplePropsAsMap()[key]
             ?: throw IllegalArgumentException(
@@ -341,7 +422,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     }
 
     /** Overwrites a whole simple list property, lazily creating it if absent. */
-    fun setSimpleList(ownerId: String, key: String, values: List<Any>) {
+    fun setSimpleList(ownerId: String, key: String, values: List<Any>) =
+        modelLock.write { setSimpleListLocked(ownerId, key, values) }
+
+    private fun setSimpleListLocked(ownerId: String, key: String, values: List<Any>) {
         val owner = getDataObjectById(ownerId)
         val propDef = owner.ofType.simplePropsAsMap()[key]
             ?: throw IllegalArgumentException("No simple property '$key' on type '${owner.ofType.name}'")
@@ -353,7 +437,9 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     }
 
     /** Clears a simple list property (sets it to empty). */
-    fun clearSimpleList(ownerId: String, key: String) {
+    fun clearSimpleList(ownerId: String, key: String) = modelLock.write { clearSimpleListLocked(ownerId, key) }
+
+    private fun clearSimpleListLocked(ownerId: String, key: String) {
         val owner = getDataObjectById(ownerId)
         val propDef = owner.ofType.simplePropsAsMap()[key]
             ?: throw IllegalArgumentException("No simple property '$key' on type '${owner.ofType.name}'")
@@ -367,7 +453,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * new object: the previous occupant is dropped and the new object is embedded. For a `knows` (LINK)
      * relation the [target] must already exist in the model: only the reference is repointed.
      */
-    fun setObjectRelation(ownerId: String, relationKey: String, target: DataObject) {
+    fun setObjectRelation(ownerId: String, relationKey: String, target: DataObject) =
+        modelLock.write { setObjectRelationLocked(ownerId, relationKey, target) }
+
+    private fun setObjectRelationLocked(ownerId: String, relationKey: String, target: DataObject) {
         val owner = getDataObjectById(ownerId)
         val relDef = owner.ofType.objectPropsAsMap()[relationKey]
             ?: throw IllegalArgumentException("No object relation '$relationKey' on type '${owner.ofType.name}'")
@@ -395,7 +484,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * Adds an object to a list relation. `has` (EMBEDDED) lists take new objects (embedded + registered);
      * `knows` (LINK) lists take existing objects (referenced).
      */
-    fun appendObjectRelation(ownerId: String, relationKey: String, target: DataObject) {
+    fun appendObjectRelation(ownerId: String, relationKey: String, target: DataObject) =
+        modelLock.write { appendObjectRelationLocked(ownerId, relationKey, target) }
+
+    private fun appendObjectRelationLocked(ownerId: String, relationKey: String, target: DataObject) {
         val owner = getDataObjectById(ownerId)
         val relDef = owner.ofType.objectPropsAsMap()[relationKey]
             ?: throw IllegalArgumentException("No object relation '$relationKey' on type '${owner.ofType.name}'")
@@ -421,7 +513,9 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * reference. Affected owner objects receive change notifications; every removed object id is reported
      * via [ModelChangePublisher.onObjectDeleted].
      */
-    fun dropObject(objId: String) {
+    fun dropObject(objId: String) = modelLock.write { dropObjectLocked(objId) }
+
+    private fun dropObjectLocked(objId: String) {
         val target = getDataObjectById(objId)
         val removedIds = KmodelDSLConverter.collectAllObjects(mutableListOf(target)).map { it.id }.toSet()
         val affectedOwners = LinkedHashSet<DataObject>()
@@ -470,7 +564,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     }
 
     /** Finds the single object whose `has` (EMBEDDED) relation currently contains [target], if any. */
-    fun findEmbeddedContainer(target: DataObject): Pair<DataObject, ClassTypePropertyObject>? {
+    fun findEmbeddedContainer(target: DataObject): Pair<DataObject, ClassTypePropertyObject>? =
+        modelLock.read { findEmbeddedContainerLocked(target) }
+
+    private fun findEmbeddedContainerLocked(target: DataObject): Pair<DataObject, ClassTypePropertyObject>? {
         for (obj in objectIndex.values) {
             for (rel in obj.relations) {
                 if (rel.getPropertyType().associationType != AssociationType.EMBEDDED) continue
@@ -491,12 +588,14 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * Serialises a [DataObject] to a JSON string for WebSocket push notifications; [ModelJsonWriter.write] does the
      * writing, so pushes and model snapshots share one format.
      */
-    fun dataObjectToJson(obj: DataObject): String = ModelJsonWriter.write(obj)
+    fun dataObjectToJson(obj: DataObject): String = modelLock.read { ModelJsonWriter.write(obj) }
 
     /**
      * Finds a DataObject by its unique id across all objects (including nested/embedded).
      */
-    fun getDataObjectById(id: String): DataObject {
+    fun getDataObjectById(id: String): DataObject = modelLock.read { getDataObjectByIdLocked(id) }
+
+    private fun getDataObjectByIdLocked(id: String): DataObject {
         return objectIndex[id]
             ?: throw IllegalArgumentException("No DataObject found with id '$id'")
     }
@@ -512,7 +611,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      *
      * @return The resolved value: a DataObject, a List<DataObject>, a primitive value, or a List of primitives.
      */
-    fun getValueOfThing(startObjectId: String, argumentPath: List<String>): Any? {
+    fun getValueOfThing(startObjectId: String, argumentPath: List<String>): Any? =
+        modelLock.read { getValueOfThingLocked(startObjectId, argumentPath) }
+
+    private fun getValueOfThingLocked(startObjectId: String, argumentPath: List<String>): Any? {
         if (argumentPath.isEmpty()) return getDataObjectById(startObjectId)
 
         var currentObj = getDataObjectById(startObjectId)
@@ -548,7 +650,7 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
                     )
                 }
                 return if (simpleProp.isList()) {
-                    currentObj.getProp(segment)
+                    currentObj.getProp(segment).toList()
                 } else {
                     currentObj.getProp(segment).firstOrNull()
                 }
@@ -572,7 +674,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * @throws IllegalArgumentException if the path is rooted at `event` but no event is in scope, or if
      *         a segment cannot be resolved.
      */
-    fun resolvePathInScope(contextObj: DataObject, scope: Map<String, Any?>, path: String): Any? {
+    fun resolvePathInScope(contextObj: DataObject, scope: Map<String, Any?>, path: String): Any? =
+        modelLock.read { resolvePathInScopeLocked(contextObj, scope, path) }
+
+    private fun resolvePathInScopeLocked(contextObj: DataObject, scope: Map<String, Any?>, path: String): Any? {
         val segments = path.split("->").map { it.trim() }
         val root = segments.firstOrNull()
         if (root != null && scope.containsKey(root)) {
@@ -610,7 +715,10 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     /**
      * Resolves a path string (e.g. "boundingBox->position->x") relative to a given context DataObject.
      */
-    fun resolvePathFromObject(contextObj: DataObject, path: String): Any? {
+    fun resolvePathFromObject(contextObj: DataObject, path: String): Any? =
+        modelLock.read { resolvePathFromObjectLocked(contextObj, path) }
+
+    private fun resolvePathFromObjectLocked(contextObj: DataObject, path: String): Any? {
         val segments = path.split("->").map { it.trim() }
         if (segments.isEmpty()) return contextObj
 
@@ -637,7 +745,7 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
                         "Cannot navigate further through simple property '$segment'"
                     )
                 }
-                return if (simpleProp.isList()) currentObj.getProp(segment) else currentObj.getProp(segment).firstOrNull()
+                return if (simpleProp.isList()) currentObj.getProp(segment).toList() else currentObj.getProp(segment).firstOrNull()
             }
 
             throw IllegalArgumentException(
@@ -651,7 +759,9 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * Serializes a DataObject to a Python dict string representation, recursively including
      * embedded objects and simple properties.
      */
-    fun dataObjectToPythonDict(obj: DataObject): String {
+    fun dataObjectToPythonDict(obj: DataObject): String = modelLock.read { dataObjectToPythonDictLocked(obj) }
+
+    private fun dataObjectToPythonDictLocked(obj: DataObject): String {
         val entries = mutableListOf<String>()
 
         // Add the object id
@@ -724,7 +834,9 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     /**
      * Converts an arbitrary resolved value to a Python literal string suitable for embedding in code.
      */
-    fun anyToPythonLiteral(value: Any?): String {
+    fun anyToPythonLiteral(value: Any?): String = modelLock.read { anyToPythonLiteralLocked(value) }
+
+    private fun anyToPythonLiteralLocked(value: Any?): String {
         return when (value) {
             null -> "None"
             is DataObject -> dataObjectToPythonDict(value)

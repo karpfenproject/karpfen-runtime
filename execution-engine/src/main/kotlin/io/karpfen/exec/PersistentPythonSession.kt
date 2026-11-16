@@ -36,10 +36,11 @@ import java.util.concurrent.TimeUnit
  *   across invocations.
  * - No temp file I/O.
  *
- * Thread safety: All methods that interact with the subprocess are `synchronized`.
- * The engine currently executes ticks sequentially, so a single session suffices.
+ * Thread safety: All methods that interact with the subprocess are `synchronized`, so calls of
+ * several threads never interleave on one process. A [PythonSessionPool] gives threads that call
+ * at the same time a session each.
  */
-class PersistentPythonSession {
+class PersistentPythonSession : PythonSession {
 
     private var process: Process? = null
     private var writer: BufferedWriter? = null
@@ -58,7 +59,7 @@ class PersistentPythonSession {
      * @throws RuntimeException if the Python execution fails or the session cannot be started.
      */
     @Synchronized
-    fun execute(code: String): String? {
+    override fun execute(code: String): String? {
         ensureSessionAlive()
 
         try {
@@ -118,7 +119,7 @@ class PersistentPythonSession {
      * Closes the persistent Python session, terminating the subprocess.
      */
     @Synchronized
-    fun close() {
+    override fun close() {
         destroySession()
     }
 

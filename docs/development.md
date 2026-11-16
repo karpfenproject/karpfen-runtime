@@ -21,6 +21,7 @@ This page is for people who work on the runtime itself. The reference for users 
 | `EnvironmentHandler`, `Environment`, `EnvironmentThread` | The environments, their configuration, activation and the thread that runs each |
 | `Engine`, `BranchRunner`, `TransitionProcessor`, `ActionProcessor` | The tick loop and what happens in a tick |
 | `MacroProcessor`, `MacroCodeTransformer`, `ExpressionClassifier` | `EVAL` and macros, with or without Python |
+| `ParallelBranchStepper`, `TickGate`, `PythonSessionPool` | The threads of the branches while TrueParallel is on, the gate between ticks and readers, and one Python session per call that runs at the same time |
 | `EventBus`, `EventProcessor` | Events, their time to live and their consumption per branch |
 | `FeatureManager`, `FeatureRegistry` | Features, found as `FeatureProvider` services |
 | `ObservationRelay`, `ModelSnapshotService`, `ClientSessionManager`, `WebSocketBroadcaster` | Revisions, snapshots and the messages to clients |

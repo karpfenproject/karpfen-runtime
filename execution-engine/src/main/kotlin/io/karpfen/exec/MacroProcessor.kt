@@ -36,9 +36,13 @@ class MacroProcessor(
     val context: DataObject = modelQueryProcessor.getDataObjectById(currentContextModelElement)
     private val codeTransformer = MacroCodeTransformer(modelQueryProcessor, macros)
 
-    /** Persistent Python session for COMPLEX-tier code. Lazily initialized on first use. */
-    private val persistentSession: PersistentPythonSession by lazy { PersistentPythonSession() }
-    private var persistentSessionInitialized = false
+    /**
+     * The persistent Python sessions for COMPLEX-tier code. One session serves one call at a time; while the branches
+     * of a split state machine run on threads of their own (feature TrueParallel), each concurrent call gets a session
+     * of its own, so calls never interleave and a branch that waits for Python holds up no other branch. Without that
+     * feature one session serves every call, as the calls come one after the other.
+     */
+    private val pythonSessions = PythonSessionPool { PersistentPythonSession() }
 
     /** Cached Python command to avoid probing the PATH on every invocation. */
     private val cachedPythonCommand: String by lazy { findPythonCommand() }
@@ -96,19 +100,27 @@ class MacroProcessor(
                 } else {
                     // Fallback: should not happen if classifier is correct, but be safe
                     val rawResult = runPythonCodeViaSession(pythonCode) ?: return null
-                    parseResult(rawResult, expectedTarget)
+                    parseResultInModel(rawResult, expectedTarget)
                 }
             }
             ExecutionTier.MEDIUM -> {
                 val rawResult = runPythonCodeDirect(pythonCode) ?: return null
-                parseResult(rawResult, expectedTarget)
+                parseResultInModel(rawResult, expectedTarget)
             }
             ExecutionTier.COMPLEX -> {
                 val rawResult = runPythonCodeViaSession(pythonCode) ?: return null
-                parseResult(rawResult, expectedTarget)
+                parseResultInModel(rawResult, expectedTarget)
             }
         }
     }
+
+    /**
+     * Parses [rawResult] like [parseResult] while holding the write lock of the model: a result that names an existing
+     * object writes its values into that object, and a new object takes a fresh id, so the parse must not interleave
+     * with reads or writes of branches on other threads.
+     */
+    private fun parseResultInModel(rawResult: String, expectedTarget: String): Any? =
+        modelQueryProcessor.writeModel { parseResult(rawResult, expectedTarget) }
 
     /**
      * Executes a full macro by name. The macro's TAKES parameters are resolved from the context
@@ -223,25 +235,20 @@ class MacroProcessor(
     }
 
     /**
-     * Executes Python code via the persistent interactive Python session.
-     * Used for COMPLEX-tier code. The session is lazily started on first use.
+     * Executes Python code via a persistent interactive Python session of [pythonSessions].
+     * Used for COMPLEX-tier code. A session is started on first use and reused afterwards.
      *
      * @param code The complete Python code to execute.
      * @return The stdout output as a trimmed string, or null if no output.
      */
-    fun runPythonCodeViaSession(code: String): String? {
-        persistentSessionInitialized = true
-        return persistentSession.execute(code)
-    }
+    fun runPythonCodeViaSession(code: String): String? = pythonSessions.execute(code)
 
     /**
-     * Closes the persistent Python session if it was initialized.
-     * Should be called when the engine shuts down.
+     * Closes every persistent Python session that was started. Should be called when the engine shuts down; a later
+     * COMPLEX-tier call fails instead of starting a new process.
      */
     fun close() {
-        if (persistentSessionInitialized) {
-            persistentSession.close()
-        }
+        pythonSessions.close()
     }
 
     /**

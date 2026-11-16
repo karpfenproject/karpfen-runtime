@@ -21,9 +21,9 @@ import java.util.concurrent.atomic.AtomicLong
  * Counts the observations the engine of one activated environment produces: every object change, every object
  * deletion and every change of a machine's active stack.
  *
- * The counter starts at 0, so the first observation gets revision 1. Revisions are assigned on the engine thread
- * inside a tick, in the call that enqueues the push messages, so per environment they increase strictly in enqueue
- * order and every recipient of one observation gets the same revision. A snapshot read between ticks carries
+ * The counter starts at 0, so the first observation gets revision 1. Revisions are assigned inside a tick, one
+ * observation at a time, in the call that enqueues the push messages, so per environment they increase strictly in
+ * enqueue order and every recipient of one observation gets the same revision. A snapshot read between ticks carries
  * [current], the revision of the last observation it contains. The counter lives as long as the activation, so a
  * restart after a stop continues counting.
  */

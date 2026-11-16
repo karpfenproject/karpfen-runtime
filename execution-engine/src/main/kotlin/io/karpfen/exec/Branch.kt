@@ -21,7 +21,8 @@ import io.karpfen.dsl.states.TransitionLike
 /**
  * One independently advancing region of a state machine: a single current state stack with its own
  * tick bookkeeping. A simple (non-parallel) context has exactly one branch; a parallel context has
- * several, ticked in order.
+ * several, ticked in order, or at the same time on threads of their own while the feature TrueParallel
+ * is on. Only the thread that steps a branch touches its data during the step.
  *
  * A branch holds only *data* — all behaviour lives in the shared per-context services, which are
  * handed this branch's data each tick. Each branch carries its own [eventProcessor] identity so that

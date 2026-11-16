@@ -41,7 +41,7 @@ The sections of chapter 3:
 | Section | What it covers |
 |---|---|
 | [3.1 Execution semantics](3.1-execution-semantics.md) | What happens in a tick: active states, transitions, actions, events, splits and joins, histories and tick limits |
-| [3.2 Runtime features](3.2-features.md) | The features that change a run: histories, tick limits, stepping, breakpoints, recording and replaying events |
+| [3.2 Runtime features](3.2-features.md) | The features that change a run: histories, tick limits, stepping, breakpoints, recording and replaying events, branches on threads of their own |
 | [3.3 Running the runtime](3.3-running-the-runtime.md) | Starting the runtime on your machine or in Docker, its configuration file and its trace log |
 | [3.4 HTTP API](3.4-http-api.md) | Every route, its parameters, its answers and its errors, with one whole session |
 | [3.5 WebSocket](3.5-websocket.md) | Connecting, sending events and every message the runtime pushes |

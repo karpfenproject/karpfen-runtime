@@ -19,8 +19,9 @@ package io.karpfen.io.karpfen.messages
  * Learns about every event published on an [EventBus].
  *
  * Every event reaches a bus through [EventBus.publish]: events from outside clients on the environment thread, and
- * events raised by `EVENT` actions on the engine thread while their action block runs. A listener is therefore called
- * on either thread and must not block.
+ * events raised by `EVENT` actions while their action block runs, on the engine thread or, with the feature
+ * TrueParallel, on the thread of a branch. A listener is therefore called on any of these threads, possibly on several
+ * at the same time, and must be thread-safe and must not block.
  */
 fun interface EventPublicationListener {
 
