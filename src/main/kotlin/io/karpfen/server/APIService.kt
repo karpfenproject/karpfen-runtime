@@ -15,7 +15,7 @@
  */
 package io.karpfen.server
 
-import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.instance.Model
 import io.karpfen.dsl.reader.kmeta.KmetaReader
 import io.karpfen.dsl.reader.kmodel.KmodelReader
 import io.karpfen.dsl.reader.kstates.KstatesReader
@@ -226,7 +226,7 @@ object APIService {
         if (env.model == null || env.metamodel == null) {
             throw IllegalStateException("Environment with key $envKey must have both a metamodel and a model before it can be run")
         }
-        val modelIds = KmodelDSLConverter.collectAllObjects(env.model!!.objects).map { it.id }.toSet()
+        val modelIds = Model.collectAllObjects(env.model!!.objects).map { it.id }.toSet()
         val missingAttachments = env.stateMachines.keys.filter { it !in modelIds }
         if (missingAttachments.isNotEmpty()) {
             throw IllegalStateException(

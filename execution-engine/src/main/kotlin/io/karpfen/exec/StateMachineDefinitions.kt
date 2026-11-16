@@ -15,7 +15,7 @@
  */
 package io.karpfen.io.karpfen.exec
 
-import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.instance.Model
 import io.karpfen.dsl.instance.DataObject
 import io.karpfen.dsl.meta.Metamodel
 import io.karpfen.dsl.states.StateMachine
@@ -95,7 +95,7 @@ class StateMachineDefinitions(
      *   it; [behavesAfterProblems] rules that out before an engine runs.
      */
     fun initialInstances(rootObjects: MutableList<DataObject>, skipMissingObjects: Boolean = false): List<InstanceSpec> {
-        val objects = KmodelDSLConverter.collectAllObjects(rootObjects).filter { it.id.isNotEmpty() }
+        val objects = Model.collectAllObjects(rootObjects).filter { it.id.isNotEmpty() }
         val present = objects.map { it.id }.toSet()
         val specs = mutableListOf<InstanceSpec>()
         for ((objectId, stateMachine) in attached) {

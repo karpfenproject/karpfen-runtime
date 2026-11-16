@@ -15,7 +15,6 @@
  */
 package io.karpfen.io.karpfen.exec
 
-import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
 import io.karpfen.dsl.instance.*
 import io.karpfen.dsl.meta.AssociationType
 import io.karpfen.dsl.meta.ClassTypeProperty
@@ -66,7 +65,7 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
      * invariant, and inbound-reference scrubbing stay correct while the engine mutates the model.
      */
     private val objectIndex: MutableMap<String, DataObject> =
-        KmodelDSLConverter.collectAllObjects(model.objects)
+        Model.collectAllObjects(model.objects)
             .filter { it.id.isNotEmpty() }
             .associateBy { it.id }
             .toMutableMap()
@@ -391,7 +390,7 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
     fun registerObjectTree(root: DataObject) = modelLock.write { registerObjectTreeLocked(root) }
 
     private fun registerObjectTreeLocked(root: DataObject) {
-        val subtree = KmodelDSLConverter.collectAllObjects(mutableListOf(root))
+        val subtree = Model.collectAllObjects(mutableListOf(root))
         for (obj in subtree) {
             require(obj.id.isNotEmpty()) {
                 "Cannot register an object of type '${obj.ofType.name}' with an empty id"
@@ -614,7 +613,7 @@ class ModelQueryProcessor(val metamodel: Metamodel, val model: Model) {
 
     private fun dropObjectLocked(objId: String) {
         val target = getDataObjectById(objId)
-        val removedIds = KmodelDSLConverter.collectAllObjects(mutableListOf(target)).map { it.id }.toSet()
+        val removedIds = Model.collectAllObjects(mutableListOf(target)).map { it.id }.toSet()
         val affectedOwners = LinkedHashSet<DataObject>()
 
         // 1. Detach from its `has` container (or the model roots if it is a root object).
