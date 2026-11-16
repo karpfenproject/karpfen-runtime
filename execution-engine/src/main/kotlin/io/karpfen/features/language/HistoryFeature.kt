@@ -62,6 +62,16 @@ class HistoryFeature: DefaultFeature() {
         return null
     }
 
+    /**
+     * Returns the state the history of [state] remembers for the instance on [modelElementId], or null when [state]
+     * has no history or has not been left with an active inner state yet. Used when a branch goes down into a container
+     * state, where the remembered state is entered at once instead of the start path of the fragment.
+     */
+    fun remembered(modelElementId: String, state: io.karpfen.dsl.states.State): String? {
+        if (state.history == History.NONE) return null
+        return lastVisitedSubstates[modelElementId]?.get(state.name)
+    }
+
     fun resetHistory() {
         lastVisitedSubstates.clear()
     }

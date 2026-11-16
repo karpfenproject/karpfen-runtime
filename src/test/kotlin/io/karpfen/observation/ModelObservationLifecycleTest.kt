@@ -17,6 +17,7 @@ package io.karpfen.observation
 
 import io.karpfen.dsl.instance.DataObject
 import io.karpfen.dsl.instance.SimpleAtomicPropertyObject
+import io.karpfen.env.ComposedStateMachines
 import io.karpfen.env.EnvironmentHandler
 import io.karpfen.env.EnvironmentThread
 import io.karpfen.env.RegistryEnvironmentLookup
@@ -84,7 +85,7 @@ class ModelObservationLifecycleTest {
     @Test
     fun `the snapshot reports halted when the engine ended on its own`() {
         val envKey = CleaningRobotExample.createEnvironment(attachedTo = "ghost")
-        val environment = EnvironmentThread(assertNotNull(EnvironmentHandler.getEnv(envKey)))
+        val environment = assertNotNull(EnvironmentHandler.getEnv(envKey)).let { EnvironmentThread(it, ComposedStateMachines.of(it)) }
         environment.setup()
         EnvironmentHandler.executionThreads[envKey] = environment
 

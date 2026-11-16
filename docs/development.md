@@ -19,7 +19,8 @@ This page is for people who work on the runtime itself. The reference for users 
 | `Main.kt` | Reads `application.conf`, starts the server and the WebSocket broadcaster |
 | `KtorServer`, `HTTPRoutes`, `APIService` | The HTTP routes and the WebSocket endpoint, and the calls behind them |
 | `EnvironmentHandler`, `Environment`, `EnvironmentThread` | The environments, their configuration, activation and the thread that runs each |
-| `Engine`, `BranchRunner`, `TransitionProcessor`, `ActionProcessor` | The tick loop and what happens in a tick |
+| `ComposedStateMachines` | Flattens the attached and attachable state machines of an environment with its fragments through `StateMachineFlattener` of dsl-tools when it is activated; the engine only gets the flat state machines |
+| `Engine`, `BranchRunner`, `TransitionProcessor`, `ActionProcessor` | The tick loop and what happens in a tick. `StateEntry` finds the stack a branch rests on when it enters a state, going down into container states, and `StateMachineQueryHelper` holds the start path and the check behind `DONE` |
 | `StateMachineLifecycle`, `StateMachineDefinitions`, `StateMachineInstanceFactory` | The state machine instances of an engine: the attached and attachable state machines, the instances at a start, their order, and the instances that join and leave at the end of each tick. `ModelQueryProcessor` tells the lifecycle about added and removed objects through `ModelStructureListener`, and `ActionProcessor` hands it `ATTACH` and `EXCHANGE` through `StateMachineAttachments` |
 | `MacroProcessor`, `MacroCodeTransformer`, `ExpressionClassifier` | `EVAL` and macros, with or without Python |
 | `ParallelBranchStepper`, `TickGate`, `PythonSessionPool` | The threads of the branches while TrueParallel is on, the gate between ticks and readers, and one Python session per call that runs at the same time |

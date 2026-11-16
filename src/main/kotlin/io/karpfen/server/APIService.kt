@@ -15,7 +15,7 @@
  */
 package io.karpfen.server
 
-import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.instance.Model
 import io.karpfen.dsl.reader.kmeta.KmetaReader
 import io.karpfen.dsl.reader.kmodel.KmodelReader
 import io.karpfen.dsl.reader.kstates.KstatesReader
@@ -104,17 +104,35 @@ object APIService {
      * With [modelElement] the text must have the attached form, `STATEMACHINE ATTACHED TO "Type"`, and the state
      * machine is attached to the object with that key; a second upload for the key replaces it at its place. Without
      * [modelElement] the text must have the attachable form, `STATEMACHINE "name" ATTACHABLE TO "Type", ...`, and the
-     * state machine is kept as a definition under its name; a second upload of the name replaces it at its place.
+     * state machine is kept as a definition under its name, or the fragment form, `STATEMACHINE "name" FRAGMENT`, and
+     * the state machine is kept as a fragment under its name.
      *
-     * @throws UploadRejectedException if the text has errors; the environment then stays as it was.
-     * @throws IllegalArgumentException if the text has the other form; the message says which form is expected.
+     * Attachable state machines and fragments share one name space. An upload of a name replaces the state machine of
+     * that name, at its place when it has the same form; one of the other form leaves, and the new one is added at the
+     * end of its own kind. So the latest upload of a name always holds it, as for two uploads of one form.
+     *
+     * @throws UploadRejectedException if the text has errors; the environment then stays as it was. The rejection names
+     * the upload `fragment` when the text reads as a fragment and has no `attachedTo`.
+     * @throws IllegalArgumentException if the text has a form that does not fit [modelElement]; the message says which
+     * form is expected.
      */
     fun receiveStateMachine(envKey: String, modelElement: String?, stateMachineData: String) {
         assertEnv(envKey)
-        val upload = if (modelElement != null) "state machine for '$modelElement'" else "attachable state machine"
-        val stateMachine = UploadReading.acceptOrReject(envKey, upload, KstatesReader().read(stateMachineData))
+        val read = KstatesReader().read(stateMachineData)
+        val upload = when {
+            modelElement != null -> "state machine for '$modelElement'"
+            read.model?.isFragment == true -> "fragment"
+            else -> "attachable state machine"
+        }
+        val stateMachine = UploadReading.acceptOrReject(envKey, upload, read)
         val env = EnvironmentHandler.getEnv(envKey)!!
         if (modelElement != null) {
+            if (stateMachine.isFragment) {
+                throw IllegalArgumentException(
+                    "The state machine for '$modelElement' must have the attached form STATEMACHINE ATTACHED TO " +
+                        "\"Type\", but it is the fragment '${stateMachine.name}'; upload a fragment without attachedTo"
+                )
+            }
             if (stateMachine.isAttachable) {
                 throw IllegalArgumentException(
                     "The state machine for '$modelElement' must have the attached form STATEMACHINE ATTACHED TO " +
@@ -124,12 +142,21 @@ object APIService {
             }
             env.stateMachines[modelElement] = stateMachine
             env.stateMachineSources[modelElement] = stateMachineData
+        } else if (stateMachine.isFragment) {
+            val name = stateMachine.name!!
+            env.stateMachineDefinitions.remove(name)
+            env.stateMachineDefinitionSources.remove(name)
+            env.stateMachineFragments[name] = stateMachine
+            env.stateMachineFragmentSources[name] = stateMachineData
         } else {
             val name = stateMachine.name
                 ?: throw IllegalArgumentException(
                     "A state machine without attachedTo must have the attachable form STATEMACHINE \"name\" " +
-                        "ATTACHABLE TO \"Type\"; give attachedTo for a state machine ATTACHED TO a type"
+                        "ATTACHABLE TO \"Type\" or the fragment form STATEMACHINE \"name\" FRAGMENT; give " +
+                        "attachedTo for a state machine ATTACHED TO a type"
                 )
+            env.stateMachineFragments.remove(name)
+            env.stateMachineFragmentSources.remove(name)
             env.stateMachineDefinitions[name] = stateMachine
             env.stateMachineDefinitionSources[name] = stateMachineData
         }
@@ -147,7 +174,9 @@ object APIService {
 
     /**
      * Forces the state machine [modelElement] of a RUNNING environment into the leaf [state] and clears
-     * its pending events (a manual "resync"). Unlike most setters this requires the env to be active.
+     * its pending events (a manual "resync"). Unlike most setters this requires the env to be active. [state] is a name
+     * of the flattened state machine, `<container>/<state>` for a state inside a container state; a container state
+     * itself is gone down into as by a transition.
      */
     fun forceActiveState(envKey: String, modelElement: String, state: String) {
         val env = EnvironmentHandler.getEnv(envKey)
@@ -186,14 +215,18 @@ object APIService {
      * [IllegalStateException] naming the keys, comma-separated, and the environment stays configurable. So is every
      * type of the metamodel that `behaves after` a name no attachable state machine of the environment has, or one
      * that does not list the type, since its objects could not get their instances at the start or when a rule creates
-     * them. Activation itself happens at most once (see [EnvironmentHandler.activeEnv]).
+     * them. Activation itself happens at most once (see [EnvironmentHandler.activeEnv]), and it flattens every attached
+     * and attachable state machine with the fragments of the environment first: a state machine that does not flatten,
+     * for example because a container state uses a fragment the environment does not hold, is refused with an
+     * [IllegalStateException] that names every problem, and the environment stays configurable for the missing upload
+     * and another try (see [io.karpfen.env.ComposedStateMachines]).
      */
     fun runEnvironment(envKey: String) {
         val env = EnvironmentHandler.getEnv(envKey) ?: throw IllegalArgumentException("Environment with key $envKey does not exist")
         if (env.model == null || env.metamodel == null) {
             throw IllegalStateException("Environment with key $envKey must have both a metamodel and a model before it can be run")
         }
-        val modelIds = KmodelDSLConverter.collectAllObjects(env.model!!.objects).map { it.id }.toSet()
+        val modelIds = Model.collectAllObjects(env.model!!.objects).map { it.id }.toSet()
         val missingAttachments = env.stateMachines.keys.filter { it !in modelIds }
         if (missingAttachments.isNotEmpty()) {
             throw IllegalStateException(
@@ -264,7 +297,7 @@ object APIService {
      * The KStates text of a state machine of the environment [envKey]. With [modelElement] it is the text of the
      * instance on that object: the definition it was built from when it runs on an attachable state machine, otherwise
      * the text uploaded with `attachedTo` for the object. Without [modelElement] it is the text of the attachable state
-     * machine [name].
+     * machine or the fragment [name]. The texts are the uploaded ones, never the flattened state machines.
      *
      * @throws IllegalArgumentException when there is no such text, or neither parameter is given.
      */
@@ -279,6 +312,7 @@ object APIService {
         }
         if (name == null) throw IllegalArgumentException("Missing required parameter: modelElement")
         return env.stateMachineDefinitionSources[name]
+            ?: env.stateMachineFragmentSources[name]
             ?: throw IllegalArgumentException("No attachable state machine named '$name' in environment $envKey")
     }
 

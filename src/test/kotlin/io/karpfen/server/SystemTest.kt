@@ -17,6 +17,7 @@ package io.karpfen.server
 
 import io.karpfen.dsl.dsl.textual.KmetaDSLConverter
 import io.karpfen.dsl.dsl.textual.KmodelDSLConverter
+import io.karpfen.dsl.instance.Model
 import io.karpfen.dsl.dsl.textual.KstatesDSLConverter
 import io.karpfen.Engine
 import io.karpfen.EngineTraceLogger
@@ -140,7 +141,7 @@ class SystemTest {
 
         // model.objects contains only root-level objects;
         // embedded objects are found via collectAllObjects
-        val allObjects = KmodelDSLConverter.collectAllObjects(model.objects)
+        val allObjects = Model.collectAllObjects(model.objects)
         val objectIds = allObjects.map { it.id }
         assertTrue("turtle" in objectIds, "Robot 'turtle' must exist")
         assertTrue("chair" in objectIds, "Obstacle 'chair' must exist")

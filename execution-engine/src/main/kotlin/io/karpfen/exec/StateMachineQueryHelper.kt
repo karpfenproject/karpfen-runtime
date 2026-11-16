@@ -15,6 +15,8 @@
  */
 package io.karpfen.io.karpfen.exec
 
+import io.karpfen.dsl.states.History
+import io.karpfen.dsl.states.InitialStates
 import io.karpfen.dsl.states.JoinTransition
 import io.karpfen.dsl.states.SplitTransition
 import io.karpfen.dsl.states.State
@@ -24,24 +26,59 @@ import io.karpfen.dsl.states.Transition
 class StateMachineQueryHelper(val stateMachine: StateMachine) {
 
     /**
-     * Finds the initial state stack by recursively traversing states.
-     * The stack is ordered from outermost state to innermost state.
-     * At each level, the initial state is the one marked with [State.isInitial].
-     * If no state is marked initial, the first state at that level is used.
+     * Returns the stack an instance starts in, outermost first: the start path of [InitialStates.startPath], the rule
+     * that the language checks and the IDE use as well. At each level it takes the state that is marked `INITIAL` or
+     * holds the mark below it without passing through a container state, otherwise the first state, and goes on below
+     * it while it has inner states. A marked state inside a later sibling therefore starts the instance in it and in
+     * every state around it. In a flattened state machine the path goes on through container states, so an instance
+     * never starts on a container state alone.
      */
-    fun getInitialStateStack(): List<String> {
-        val stack = mutableListOf<String>()
-        findInitialStateRecursive(stateMachine.states, stack)
-        return stack
+    fun getInitialStateStack(): List<String> = InitialStates.startPath(stateMachine).map { it.name }
+
+    /**
+     * Returns the stack a branch rests on when it enters the states of [stack], outermost first, the last of them being
+     * the target of the entry. When that target is a container state, the branch goes down into it: to the state its
+     * history remembers through [remembered], when the history remembers one inside it, otherwise along
+     * [InitialStates.enteredBelow], the start path of its fragment. Each state on the way down that has a history which
+     * remembers a state takes the branch there instead, and a container state reached through a history is entered the
+     * same way. Any other target, a compound state included, is entered as itself and [stack] is returned unchanged.
+     *
+     * @param remembered the state the history of a state remembers, or null when it has no history or no memory.
+     */
+    fun getEnteredStack(stack: List<String>, remembered: (State) -> String? = { null }): List<String> {
+        val target = stack.lastOrNull()?.let(::findStateByName) ?: return stack
+        return if (target.isContainer) goDown(stack, target, remembered) else stack
     }
 
-    private fun findInitialStateRecursive(states: List<State>, stack: MutableList<String>) {
-        if (states.isEmpty()) return
-        val initialState = states.firstOrNull { it.isInitial } ?: states.first()
-        stack.add(initialState.name)
-        if (initialState.innerStates.isNotEmpty()) {
-            findInitialStateRecursive(initialState.innerStates, stack)
+    /**
+     * Returns [stack] extended below its last state [state], which has just been entered on the way into a container
+     * state. A remembered state below [state] wins; a container state reached that way is gone down into again.
+     */
+    private fun goDown(stack: List<String>, state: State, remembered: (State) -> String?): List<String> {
+        val memory = remembered(state)?.let(::getStateStackForState)
+            ?.takeIf { it.size > stack.size && it.subList(0, stack.size) == stack }
+        if (memory != null) {
+            val reached = findStateByName(memory.last()) ?: return memory
+            return if (reached.isContainer) goDown(memory, reached, remembered) else memory
         }
+        val result = stack.toMutableList()
+        for (inner in InitialStates.enteredBelow(state)) {
+            result.add(inner.name)
+            if (inner.history != History.NONE && remembered(inner) != null) return goDown(result, inner, remembered)
+        }
+        return result
+    }
+
+    /**
+     * Returns true when the container state [container] has reached a final state in [stack], a branch's stack: the
+     * state directly below [container] in [stack] is a final state of its fragment. This is what the condition `DONE`
+     * asks about a container state. False when [container] is not a container state or is not active in [stack].
+     */
+    fun hasReachedFinalState(container: String, stack: List<String>): Boolean {
+        if (findStateByName(container)?.isContainer != true) return false
+        val index = stack.indexOf(container)
+        if (index < 0 || index + 1 >= stack.size) return false
+        return findStateByName(stack[index + 1])?.isFinal == true
     }
 
     /**

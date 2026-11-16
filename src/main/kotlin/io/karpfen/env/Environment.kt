@@ -34,6 +34,13 @@ data class Environment(
     val stateMachineDefinitions: MutableMap<String, StateMachine> = mutableMapOf(),
     /** The KStates text of every attachable state machine, by its name. */
     val stateMachineDefinitionSources: MutableMap<String, String> = mutableMapOf(),
+    /**
+     * The fragments by their name, uploaded without `attachedTo`, in upload order. Container states of the other state
+     * machines use them; [ComposedStateMachines] flattens them in when the environment is activated.
+     */
+    val stateMachineFragments: MutableMap<String, StateMachine> = mutableMapOf(),
+    /** The KStates text of every fragment, by its name. */
+    val stateMachineFragmentSources: MutableMap<String, String> = mutableMapOf(),
     var tickDelayMS: Int = 1000,
     /** Time-to-live for events in milliseconds. 0 means events live forever. */
     var eventTtlMs: Long = 0L,

@@ -29,7 +29,10 @@ import io.karpfen.dsl.meta.Metamodel
  * both converge on the same kind of object, so everything downstream is format-agnostic.
  *
  * Parsing is best-effort: if there is no event metamodel, no payload, or the payload does not match
- * its declared type, the event simply ends up with a null payload object. It can still trigger
+ * its declared type, the event simply ends up with a null payload object. A kmodel payload is read by the strict
+ * `KmodelDSLConverter.parseSingleObject`, which throws an `InvalidTextException` for every error of the KModel reader,
+ * a syntax error as well as an unknown property; that exception is caught like every other, and the errors go to the
+ * console. It can still trigger
  * transitions by name; only payload access (`$(event->...)`) will then find nothing. A payload nested
  * too deeply for the recursive parsers overflows the parsing thread's stack; that [StackOverflowError]
  * is treated like any other unparsable payload, so a client's event can never end the thread that

@@ -24,6 +24,7 @@ import io.karpfen.dsl.states.SplitTransition
 import io.karpfen.dsl.states.TransitionLike
 import io.karpfen.dsl.states.conditions.CompositeCondition
 import io.karpfen.dsl.states.conditions.Condition
+import io.karpfen.dsl.states.conditions.DoneCondition
 import io.karpfen.dsl.states.conditions.EvalCondition
 import io.karpfen.dsl.states.conditions.EventCondition
 import io.karpfen.dsl.states.conditions.ValueCondition
@@ -60,19 +61,23 @@ class TransitionProcessor(
      * [currentState], in definition order. No event is consumed here — consumption happens when the
      * engine actually fires the transition.
      *
+     * @param stateStack     The stack of the branch, for a `DONE` clause: it holds when the state directly below
+     *   [currentState] in it is a final state.
      * @param ambientEvent   The scoped event payload, for guard clauses on transitions without an EVENT clause.
      * @param eventProcessor The branch's event processor, used to find candidate events.
      * @param includeSplits  Whether split transitions are eligible (false while already parallel).
      */
     fun findFireable(
         currentState: String,
+        stateStack: List<String>,
         ambientEvent: DataObject?,
         eventProcessor: EventProcessor,
         includeSplits: Boolean
     ): Sequence<Fireable> = sequence {
+        val done = { stateMachineQueryHelper.hasReachedFinalState(currentState, stateStack) }
         for (transition in stateMachine.outgoingFrom(currentState)) {
             if (transition is SplitTransition && !includeSplits) continue
-            val match = evaluateCondition(transition.condition, ambientEvent, eventProcessor)
+            val match = evaluateCondition(transition.condition, ambientEvent, eventProcessor, done)
             if (match != null) yield(Fireable(transition, match.event))
         }
     }
@@ -80,25 +85,46 @@ class TransitionProcessor(
     /**
      * Evaluates a join's condition (the source-state matching is done by the engine). Returns a
      * [Fireable] when the condition holds, or null otherwise.
+     *
+     * A `DONE` clause holds when every source of the join that is a container state has reached a final state in the
+     * branches of [stateStacks] that stand in it. Sources that are no container states do not count for it.
+     *
+     * @param stateStacks the stacks of the branches of the instance.
      */
-    fun evaluateJoin(join: io.karpfen.dsl.states.JoinTransition, eventProcessor: EventProcessor): Fireable? {
-        val match = evaluateCondition(join.condition, null, eventProcessor) ?: return null
+    fun evaluateJoin(
+        join: io.karpfen.dsl.states.JoinTransition,
+        eventProcessor: EventProcessor,
+        stateStacks: List<List<String>>
+    ): Fireable? {
+        val done = {
+            join.fromStates
+                .filter { stateMachineQueryHelper.findStateByName(it)?.isContainer == true }
+                .all { container ->
+                    val standing = stateStacks.filter { container in it }
+                    standing.isNotEmpty() &&
+                        standing.all { stateMachineQueryHelper.hasReachedFinalState(container, it) }
+                }
+        }
+        val match = evaluateCondition(join.condition, null, eventProcessor, done) ?: return null
         return Fireable(join, match.event)
     }
 
     /**
      * Evaluates a condition (a list of clauses, all of which must hold). When an EVENT clause is
      * present it must be first; the bus is scanned for candidate events (oldest-first) and the first
-     * one whose guard clauses all pass is returned as the match.
+     * one whose guard clauses all pass is returned as the match. A `DONE` clause is asked first through
+     * [done]; while it does not hold, the condition does not hold and no event is looked at.
      */
     private fun evaluateCondition(
         condition: Condition,
         ambientEvent: DataObject?,
-        eventProcessor: EventProcessor
+        eventProcessor: EventProcessor,
+        done: () -> Boolean
     ): MatchResult? {
         val clauses = condition.leafClauses()
+        if (clauses.any { it is DoneCondition } && !done()) return null
         val eventClause = clauses.firstOrNull { it is EventCondition } as? EventCondition
-        val guardClauses = clauses.filter { it !is EventCondition }
+        val guardClauses = clauses.filter { it !is EventCondition && it !is DoneCondition }
 
         if (eventClause == null) {
             return if (guardClauses.all { evaluateGuard(it, ambientEvent) }) MatchResult(null) else null
