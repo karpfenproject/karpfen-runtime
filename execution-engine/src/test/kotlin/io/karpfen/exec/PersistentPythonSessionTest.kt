@@ -23,11 +23,14 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import java.nio.file.Files
+import kotlin.concurrent.thread
 
 /**
  * The protocol of the Python process that stays open: the result comes from the global `__karpfen_result__`, what the
- * code prints comes back apart from it, every call runs in fresh globals while loaded modules stay, and an error is part
- * of the answer and keeps the process.
+ * code prints comes back apart from it, also what it prints through `logging` or what the compiler warns about it,
+ * text printed outside a call is discarded, standard input is empty, every call runs in fresh globals while loaded
+ * modules stay, and an error is part of the answer and keeps the process.
  */
 @Tag("python")
 class PersistentPythonSessionTest {
@@ -82,6 +85,76 @@ class PersistentPythonSessionTest {
             "import sys\nprint('line1')\nprint('line2')\nsys.stderr.write('warning\\n')\n__karpfen_result__ = 7"
         )
         assertEquals(PythonAnswer("7", "line1\nline2\nwarning\n"), answer)
+    }
+
+    @Test
+    fun `text printed after its call returned is discarded and leaves the next answer intact`() {
+        val marker = Files.createTempFile("karpfen-late", ".txt").also { Files.delete(it) }
+        val late = "import threading\n" +
+            "def later():\n" +
+            "    import sys\n" +
+            "    print('late')\n" +
+            "    sys.stderr.write('late too\\n')\n" +
+            "    sys.stdout.flush()\n" +
+            "    open(${pythonText(marker.toString())}, 'w').close()\n" +
+            "threading.Timer(0.2, later).start()\n" +
+            "__karpfen_result__ = 1"
+        assertEquals(PythonAnswer("1", ""), session.execute(late))
+        val pid = session.pid()
+
+        val deadline = System.currentTimeMillis() + WAIT_MS
+        while (!Files.exists(marker)) {
+            assertTrue(System.currentTimeMillis() < deadline, "the timer did not print")
+            Thread.sleep(5)
+        }
+        Files.delete(marker)
+
+        assertEquals(PythonAnswer("2", ""), session.execute("__karpfen_result__ = 2"))
+        assertEquals(pid, session.pid())
+    }
+
+    @Test
+    fun `stdout and stderr are the same objects in every call, and no stream of the loop is reachable by name`() {
+        session.execute("import sys\nsys.karpfen_seen = (sys.stdout, sys.stderr)")
+        assertEquals(
+            "true",
+            session.execute("import sys\n__karpfen_result__ = sys.karpfen_seen == (sys.stdout, sys.stderr)").result
+        )
+        val streams = "import __main__, io\n" +
+            "__karpfen_result__ = [k for k, v in vars(__main__).items() if isinstance(v, io.IOBase)]"
+        assertEquals("[]", session.execute(streams).result)
+    }
+
+    @Test
+    fun `what logging writes reaches the call that logs, in every call`() {
+        assertEquals("WARNING:root:one\n", session.execute("import logging\nlogging.warning('one')").printed)
+        assertEquals("WARNING:root:two\n", session.execute("import logging\nlogging.warning('two')").printed)
+    }
+
+    @Test
+    fun `a warning of the compiler reaches the call whose code it is about`() {
+        val printed = session.execute("x = 1\n__karpfen_result__ = x is 1").printed
+        assertTrue(printed.contains("SyntaxWarning"), printed)
+    }
+
+    @Test
+    fun `code and its child processes read an empty standard input`() {
+        val answers = runBounded {
+            listOf(
+                session.execute("__karpfen_result__ = input()"),
+                session.execute(
+                    "import subprocess, sys\n" +
+                        "child = subprocess.run([sys.executable, '-c', 'import sys; print(len(sys.stdin.read()))'], " +
+                        "capture_output=True, text=True)\n" +
+                        "__karpfen_result__ = child.stdout.strip()"
+                ),
+                session.execute("__karpfen_result__ = 3")
+            )
+        }
+
+        assertEquals("EOFError: EOF when reading a line", answers[0].error)
+        assertEquals("0", answers[1].result)
+        assertEquals("3", answers[2].result)
     }
 
     // ---- Namespaces ----
@@ -186,5 +259,29 @@ class PersistentPythonSessionTest {
 
         assertEquals("restarted", session.execute("__karpfen_result__ = 'restarted'").result)
         assertTrue(session.isAlive())
+    }
+
+    /** [text] as a Python string literal. */
+    private fun pythonText(text: String): String = "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+    /**
+     * Runs [calls] on a thread of its own and returns what they gave. When they have not ended within [WAIT_MS], the
+     * session is aborted, which ends a call that waits for Python, and the test fails.
+     */
+    private fun <T> runBounded(calls: () -> T): T {
+        var outcome: Result<T>? = null
+        val caller = thread { outcome = runCatching(calls) }
+        caller.join(WAIT_MS)
+        if (caller.isAlive) {
+            session.abort()
+            caller.join(WAIT_MS)
+            fail<Unit>("the calls did not end within $WAIT_MS ms")
+        }
+        return outcome!!.getOrThrow()
+    }
+
+    private companion object {
+        /** Generous deadline for every wait of these tests. */
+        const val WAIT_MS = 10_000L
     }
 }

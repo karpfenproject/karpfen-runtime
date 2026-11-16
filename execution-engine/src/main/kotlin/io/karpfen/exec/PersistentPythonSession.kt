@@ -52,15 +52,29 @@ import java.util.concurrent.TimeUnit
  * The loop keeps the compiled form of up to [MAX_COMPILED] code texts of at most [MAX_COMPILED_LINE] encoded characters
  * and empties this store when it is full. Compiling is the largest part of the work of a short call in Python, and a
  * state machine sends the same text again and again when its values do not change and the result cache is off.
- * Compiling has no effects of its own, so running a kept compiled form is the same as compiling the text again.
+ * Running a kept compiled form is the same as compiling the text again, except that a warning of the compiler, such as
+ * a `SyntaxWarning`, comes only with the call that compiled the text.
  *
  * An exception of any kind in the code, `SystemExit` included, is answered with ERROR and the last line of Python's text
  * for it, such as `ZeroDivisionError: division by zero`, and the process goes on.
  *
- * Before the loop starts, the process moves the protocol to a copy of its stdout and points file descriptor 1 at its
- * stderr. Because the runtime discards that stderr, output that bypasses `sys.stdout`, such as `os.write(1, ...)`, a C
- * library or a child process, is dropped and cannot disturb an answer, and nothing written there can fill a pipe and
- * stop the process.
+ * Before the loop starts, the process sets up its streams so that only the loop can reach the protocol:
+ * - The loop reads its requests from a copy of file descriptor 0 and writes its answers to a copy of file descriptor 1.
+ *   Neither copy is inherited by child processes, and the loop holds both in local variables of its function, so no
+ *   name of the code leads to them.
+ * - File descriptor 0 then reads from the null device. Code that calls `input()` or reads `sys.stdin` gets the end of
+ *   the input at once, `input()` raises `EOFError`, and a child process that the code starts cannot read a request.
+ * - File descriptor 1 then points at stderr. Because the runtime discards that stderr, output that bypasses
+ *   `sys.stdout`, such as `os.write(1, ...)`, a C library or a child process, is dropped and cannot disturb an answer,
+ *   and nothing written there can fill a pipe and stop the process.
+ * - `sys.stdout` and `sys.stderr` are two stream objects that stay the same for the life of the process and ignore
+ *   `close()`. What is written to them goes to the buffer of the call that runs at that moment and is discarded when no
+ *   call runs. Because the objects never change, a `logging` handler that took `sys.stderr` in one call writes to the
+ *   call that logs in every later call. A thread or a timer that a call started and that prints after the call returned
+ *   cannot write into the protocol either.
+ *
+ * The loop compiles the code after it has set the buffer of the call. A warning of the compiler is therefore part of
+ * what the call printed.
  *
  * A process that ends during a call, or answers outside the protocol, fails the call with a [PythonExecutionException]
  * and is ended; the next call starts a new one. A call has no time limit: code that does not end holds its call until
@@ -230,50 +244,77 @@ class PersistentPythonSession(private val start: () -> Process = ::startPython) 
         private val LOOP = """
 import sys, os, base64, io, json, traceback, builtins
 
-def __karpfen_encode__(text):
-    return base64.b64encode(text.encode('utf-8', 'replace')).decode('ascii')
+def __karpfen_loop__():
+    def encode(text):
+        return base64.b64encode(text.encode('utf-8', 'replace')).decode('ascii')
 
-def __karpfen_text__(value):
-    if isinstance(value, (dict, list, bool)):
-        return json.dumps(value)
-    return str(value)
+    def as_text(value):
+        if isinstance(value, (dict, list, bool)):
+            return json.dumps(value)
+        return str(value)
 
-__karpfen_compiled__ = {}
-__karpfen_out__ = os.fdopen(os.dup(1), "w", encoding="ascii")
-os.dup2(2, 1)
-while True:
-    line = sys.stdin.readline()
-    if not line:
-        break
-    line = line.strip()
-    if not line:
-        continue
-    printed = io.StringIO()
-    status, text = 'NONE', ''
-    namespace = {}
-    try:
-        compiled = __karpfen_compiled__.get(line)
-        if compiled is None:
-            compiled = compile(base64.b64decode(line).decode('utf-8'), '<string>', 'exec')
-            if len(line) <= $MAX_COMPILED_LINE:
-                if len(__karpfen_compiled__) >= $MAX_COMPILED:
-                    __karpfen_compiled__.clear()
-                __karpfen_compiled__[line] = compiled
-        namespace = {'__name__': '__main__', '__builtins__': builtins}
-        sys.stdout = sys.stderr = printed
-        exec(compiled, namespace)
-        result = namespace.get('__karpfen_result__')
-        if result is not None:
-            status, text = 'OK', __karpfen_text__(result)
-    except BaseException as e:
-        lines = [l.strip() for l in traceback.format_exception_only(type(e), e) if l.strip()]
-        status, text = 'ERROR', lines[-1] if lines else type(e).__name__
-    finally:
-        sys.stdout, sys.stderr = __karpfen_out__, sys.__stderr__
-        namespace.clear()
-    __karpfen_out__.write('__SENTINEL__' + status + '\n' + __karpfen_encode__(text) + '\n'
-                          + __karpfen_encode__(printed.getvalue()) + '\n')
-    __karpfen_out__.flush()
+    class CallOutput(io.TextIOBase):
+        call = None
+        encoding = 'utf-8'
+
+        def writable(self):
+            return True
+
+        def close(self):
+            pass
+
+        def write(self, text):
+            if not isinstance(text, str):
+                raise TypeError('write() argument must be str, not ' + type(text).__name__)
+            buffer = CallOutput.call
+            if buffer is not None:
+                buffer.write(text)
+            return len(text)
+
+    requests = os.fdopen(os.dup(0), 'r', encoding='ascii')
+    answers = os.fdopen(os.dup(1), 'w', encoding='ascii')
+    empty = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(empty, 0)
+    os.close(empty)
+    os.dup2(2, 1)
+    stdout, stderr = CallOutput(), CallOutput()
+    sys.stdout, sys.stderr = stdout, stderr
+    compiled_texts = {}
+    while True:
+        line = requests.readline()
+        if not line:
+            break
+        line = line.strip()
+        if not line:
+            continue
+        printed = io.StringIO()
+        status, text = 'NONE', ''
+        namespace = {}
+        CallOutput.call = printed
+        try:
+            compiled = compiled_texts.get(line)
+            if compiled is None:
+                compiled = compile(base64.b64decode(line).decode('utf-8'), '<string>', 'exec')
+                if len(line) <= $MAX_COMPILED_LINE:
+                    if len(compiled_texts) >= $MAX_COMPILED:
+                        compiled_texts.clear()
+                    compiled_texts[line] = compiled
+            namespace = {'__name__': '__main__', '__builtins__': builtins}
+            exec(compiled, namespace)
+            result = namespace.get('__karpfen_result__')
+            if result is not None:
+                status, text = 'OK', as_text(result)
+        except BaseException as e:
+            lines = [l.strip() for l in traceback.format_exception_only(type(e), e) if l.strip()]
+            status, text = 'ERROR', lines[-1] if lines else type(e).__name__
+        finally:
+            CallOutput.call = None
+            sys.stdout, sys.stderr = stdout, stderr
+            namespace.clear()
+        answers.write('__SENTINEL__' + status + '\n' + encode(text) + '\n' + encode(printed.getvalue()) + '\n')
+        answers.flush()
+
+__karpfen_loop__()
 """.trimIndent()
     }
 }
