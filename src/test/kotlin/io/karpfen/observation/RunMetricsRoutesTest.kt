@@ -68,7 +68,7 @@ class RunMetricsRoutesTest {
     @Test
     fun `the numbers are answered as JSON with milliseconds and the members in order`() = metricsApplication {
         environments.create(ENV)
-        environments.activate(ENV, FakeObservedEnvironment(EnvironmentPhase.STOPPED, null, METRICS))
+        environments.activate(ENV, FakeObservedEnvironment(EnvironmentPhase.STOPPED, null, METRICS, resultCaching = false))
 
         val response = client.get("/observatory/metrics?envKey=$ENV")
 
@@ -79,7 +79,7 @@ class RunMetricsRoutesTest {
                 "\"tickMs\":{\"total\":31.5,\"mean\":10.5,\"max\":20,\"recent\":[1.5,10,20]}," +
                 "\"pythonMs\":2.000001,\"outsidePythonMs\":29.499999," +
                 "\"calls\":{\"computed\":{\"count\":4,\"ms\":0.012}," +
-                "\"openProcess\":{\"count\":2,\"ms\":2.000001},\"cache\":{\"count\":0,\"ms\":0}}}",
+                "\"openProcess\":{\"count\":2,\"ms\":2.000001},\"cache\":{\"count\":0,\"ms\":0}},\"resultCaching\":false}",
             response.bodyAsText()
         )
     }
@@ -94,7 +94,7 @@ class RunMetricsRoutesTest {
             "{\"environmentKey\":\"$ENV\",\"phase\":\"activated\",\"ticks\":0," +
                 "\"tickMs\":{\"total\":0,\"mean\":0,\"max\":0,\"recent\":[]},\"pythonMs\":0,\"outsidePythonMs\":0," +
                 "\"calls\":{\"computed\":{\"count\":0,\"ms\":0}," +
-                "\"openProcess\":{\"count\":0,\"ms\":0},\"cache\":{\"count\":0,\"ms\":0}}}",
+                "\"openProcess\":{\"count\":0,\"ms\":0},\"cache\":{\"count\":0,\"ms\":0}},\"resultCaching\":true}",
             client.get("/observatory/metrics?envKey=$ENV")
         )
     }

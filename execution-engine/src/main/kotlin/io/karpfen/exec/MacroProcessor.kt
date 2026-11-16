@@ -38,6 +38,8 @@ import io.karpfen.io.karpfen.metrics.RunMetricsRecorder
  * @property pythonSessions the Python processes the code runs in. The engine hands every instance of an environment the
  *   same pool and closes it when the environment ends. A processor built without one gets a pool of its own, which its
  *   user ends with [PythonSessionPool.close].
+ * @property resultCache the results of earlier calls of Python, consulted before every call that would run Python. A
+ *   hit answers with the stored result and prints nothing again.
  * @property output receives the text that code printed, with the key of the object of the instance.
  */
 class MacroProcessor(
@@ -48,6 +50,7 @@ class MacroProcessor(
     val modelQueryProcessor: ModelQueryProcessor,
     private val metrics: RunMetricsRecorder = RunMetricsRecorder.NONE,
     val pythonSessions: PythonSessionPool = PythonSessionPool(::PersistentPythonSession),
+    private val resultCache: ResultCache = ResultCache.NONE,
     private val output: CodeOutput = CodeOutput.CONSOLE
 ) {
 
@@ -78,7 +81,8 @@ class MacroProcessor(
 
     /**
      * Runs the finished code text [pythonCode]: in Kotlin when it is [ExecutionTier.SIMPLE] and [simpleResult] gives
-     * the result Python would give, and in Python otherwise.
+     * the result Python would give, from [resultCache] when it holds the result of the same text, and in Python
+     * otherwise. A result of Python is stored in [resultCache]; a call that fails throws before it is stored.
      */
     private fun executeWithTieredStrategy(pythonCode: String, expectedTarget: String): Any? {
         if (ExpressionClassifier.classify(pythonCode) == ExecutionTier.SIMPLE) {
@@ -89,8 +93,23 @@ class MacroProcessor(
                 return computed
             }
         }
-        val rawResult = timed(CodeWay.OPEN_PROCESS) { runPython(pythonCode) } ?: return null
+        val rawResult = cachedOrPython(pythonCode) ?: return null
         return parseResultInModel(rawResult, expectedTarget)
+    }
+
+    /** The raw result of [pythonCode] from [resultCache], or from Python, which then stores it there. */
+    private fun cachedOrPython(pythonCode: String): String? {
+        if (resultCache.enabled) {
+            val start = System.nanoTime()
+            val stored = resultCache.lookup(pythonCode)
+            if (stored != null) {
+                metrics.codeRan(CodeWay.CACHE, System.nanoTime() - start)
+                return stored.result
+            }
+        }
+        val rawResult = timed(CodeWay.OPEN_PROCESS) { runPython(pythonCode) }
+        resultCache.store(pythonCode, rawResult)
+        return rawResult
     }
 
     /** Runs [call] and reports it to [metrics] as a call in the way [way], also when it fails. */

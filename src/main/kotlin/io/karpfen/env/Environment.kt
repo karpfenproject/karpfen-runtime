@@ -46,6 +46,15 @@ data class Environment(
     var eventTtlMs: Long = 0L,
     /** When true (default), events are consumed only when a transition fires. When false, consumed on condition read. */
     var eventConsumptionOnFire: Boolean = true,
+    /**
+     * When true, the engine of the environment answers a code text that it ran in Python before with the stored result
+     * instead of running it again. A client switches it before the activation with `/setResultCaching`.
+     */
+    var resultCaching: Boolean = true,
+    /** The most results the cache of [resultCaching] holds. */
+    val resultCacheMaxEntries: Int = 10_000,
+    /** The most memory, in bytes, the results of the cache of [resultCaching] may take. */
+    val resultCacheMaxBytes: Long = 64L * 1024 * 1024,
     val objectObservations: MutableList<Observation> = mutableListOf(),
     val domainListeners: MutableList<DomainListener> = mutableListOf(),
     /** The features of this environment, switched on and off through the feature routes and asked by its engine. */

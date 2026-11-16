@@ -23,7 +23,7 @@ import org.openjdk.jmh.annotations.OperationsPerInvocation
  * The same condition with the same values in every tick, which a store of results could answer, against values that
  * change in every tick, which it could not. A computed action in the DO block adds 0 or 1 to the value the condition
  * reads, so both variants do the same work besides the condition. The condition runs in Python as plain code or as code
- * that calls a macro. The score is the time of one tick.
+ * that calls a macro, with the result cache of the engine off or on. The score is the time of one tick.
  */
 open class RepeatedValuesBenchmark : EngineBenchmark() {
 
@@ -33,10 +33,15 @@ open class RepeatedValuesBenchmark : EngineBenchmark() {
     @Param("unchanged", "changing")
     var values: String = "unchanged"
 
+    @Param("off", "on")
+    var cache: String = "off"
+
     override fun scenario(): Scenario {
         val step = if (values == "changing") 1 else 0
         val doBlock = "DO { SET(\"watts\", EVAL { return $(watts) + $step }) }"
-        return Scenario(LampWorld.METAMODEL, LampWorld.MODEL, mapOf("lamp" to LampWorld.conditions(way, 1, doBlock)))
+        return Scenario(LampWorld.METAMODEL, LampWorld.MODEL, mapOf("lamp" to LampWorld.conditions(way, 1, doBlock)),
+            resultCaching = cache == "on"
+        )
     }
 
     @Benchmark

@@ -100,6 +100,11 @@ class Engine(
      * [RunMetrics.snapshot].
      */
     val metrics: RunMetrics = RunMetrics(),
+    /**
+     * The results of earlier Python calls of the environment, which answer the same code text again without Python.
+     * Every instance consults it before it runs code in Python. [ResultCache.NONE], the default, stores nothing.
+     */
+    val resultCache: ResultCache = ResultCache.NONE,
 ) {
 
     /** Parses incoming event payloads into the runtime object model against [eventMetamodel]. */
@@ -226,7 +231,7 @@ class Engine(
     private val lifecycle = StateMachineLifecycle(
         definitions,
         StateMachineInstanceFactory(
-            metamodel, model, modelQueryProcessor, eventBus, engineId, metrics, pythonSessions
+            metamodel, model, modelQueryProcessor, eventBus, engineId, metrics, pythonSessions, resultCache
         ),
         model,
         modelQueryProcessor,

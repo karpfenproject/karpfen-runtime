@@ -6,5 +6,4 @@
 - The Python processes of an environment and the loop they run have not been tried on Windows.
 - The ticks of a split and join cycle and of an event every tick grow longer the longer the engine runs; see
   `GrowthBenchmark`.
-- The counter of calls answered from a cache in `GET /observatory/metrics` stays 0, since the runtime has no cache.
 - The notebook `compare-benchmark-runs.ipynb` has not been run.

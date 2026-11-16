@@ -37,4 +37,7 @@ interface ObservedEnvironment {
 
     /** The numbers of the engine of the environment as they are now, read at once, also while a tick runs. */
     fun metrics(): RunMetricsSnapshot
+
+    /** True when the engine of the environment answers code it ran in Python before from its result cache. */
+    val resultCaching: Boolean
 }

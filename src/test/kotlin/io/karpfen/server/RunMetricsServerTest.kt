@@ -94,6 +94,42 @@ class RunMetricsServerTest {
         assertEquals(tickMs.getDouble("total"), stopped.getDouble("outsidePythonMs"), 1e-6)
     }
 
+    @Test
+    fun `result caching is on by default, a client switches it off before the activation, and the numbers say so`() =
+        testApplication {
+            application {
+                HTTPRoutes.configure(this)
+                RunMetricsRoutes(RunMetricsService(RegistryEnvironmentLookup), HTTPRoutes::respondWithError).install(this)
+            }
+            val cached = environment(client)
+            val uncached = environment(client)
+
+            val invalid = client.post("/setResultCaching?envKey=$uncached&enabled=no")
+            assertEquals(HttpStatusCode.BadRequest, invalid.status)
+            assertEquals("Missing or invalid required parameter: enabled", invalid.bodyAsText())
+            assertEquals(HttpStatusCode.OK, client.post("/setResultCaching?envKey=$uncached&enabled=false").status)
+
+            for (envKey in listOf(cached, uncached)) {
+                assertEquals(HttpStatusCode.OK, client.post("/runEnvironment?envKey=$envKey").status)
+            }
+            assertEquals(true, metrics(client, cached).getBoolean("resultCaching"))
+            assertEquals(false, metrics(client, uncached).getBoolean("resultCaching"))
+            assertEquals(
+                HttpStatusCode.Conflict,
+                client.post("/setResultCaching?envKey=$cached&enabled=false").status,
+                "the engine of an active environment keeps its setting"
+            )
+        }
+
+    /** Creates an environment with the lamp and gives its key. */
+    private suspend fun environment(client: HttpClient): String {
+        val envKey = client.post("/createEnvironment").bodyAsText()
+        upload(client, "/setMetamodel?envKey=$envKey", METAMODEL)
+        upload(client, "/setModel?envKey=$envKey", MODEL)
+        upload(client, "/setStateMachine?envKey=$envKey&attachedTo=lamp", LAMP)
+        return envKey
+    }
+
     private suspend fun upload(client: HttpClient, route: String, text: String) {
         val response = client.put(route) { setBody(text) }
         assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())

@@ -52,6 +52,13 @@ data class EngineConfig(
      * such an event stays until it expires and can fire further transitions in later ticks.
      */
     val eventConsumptionOnFire: Boolean = true
+,
+    /** Whether new environments answer a code text they ran in Python before from their result cache. */
+    val resultCaching: Boolean = true,
+    /** The most results the cache of one environment holds. */
+    val resultCacheMaxEntries: Int = 10_000,
+    /** The most memory, in megabytes, the results of the cache of one environment may take. */
+    val resultCacheMaxMegabytes: Long = 64
 )
 
 data class ApplicationConfig(
@@ -96,6 +103,9 @@ data class ApplicationConfig(
             var defaultTickDelayMs = 1000
             var defaultEventTtlMs = 1000L
             var eventConsumptionOnFire = true
+            var resultCaching = true
+            var resultCacheMaxEntries = 10_000
+            var resultCacheMaxMegabytes = 64L
 
             // Simple parsing logic for the conf file
             content.lines().forEach { line ->
@@ -152,6 +162,15 @@ data class ApplicationConfig(
                     normalized.contains("eventConsumptionOnFire =") -> {
                         eventConsumptionOnFire = extractValue(normalized).toBoolean()
                     }
+                    normalized.contains("resultCaching =") -> {
+                        resultCaching = extractValue(normalized).toBoolean()
+                    }
+                    normalized.contains("resultCacheMaxEntries =") -> {
+                        resultCacheMaxEntries = extractValue(normalized).toIntOrNull()?.takeIf { it > 0 } ?: 10_000
+                    }
+                    normalized.contains("resultCacheMaxMegabytes =") -> {
+                        resultCacheMaxMegabytes = extractValue(normalized).toLongOrNull()?.takeIf { it > 0 } ?: 64L
+                    }
                 }
             }
 
@@ -165,7 +184,14 @@ data class ApplicationConfig(
                     consoleOutput = tracingConsoleOutput,
                     simpleTrace = simpleTrace
                 ),
-                engine = EngineConfig(defaultTickDelayMs = defaultTickDelayMs, defaultEventTtlMs = defaultEventTtlMs, eventConsumptionOnFire = eventConsumptionOnFire)
+                engine = EngineConfig(
+                    defaultTickDelayMs = defaultTickDelayMs,
+                    defaultEventTtlMs = defaultEventTtlMs,
+                    eventConsumptionOnFire = eventConsumptionOnFire,
+                    resultCaching = resultCaching,
+                    resultCacheMaxEntries = resultCacheMaxEntries,
+                    resultCacheMaxMegabytes = resultCacheMaxMegabytes
+                )
             )
         }
 

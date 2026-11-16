@@ -20,6 +20,8 @@ import io.karpfen.EngineTraceLogger
 import io.karpfen.dsl.reader.kmeta.KmetaReader
 import io.karpfen.dsl.reader.kmodel.KmodelReader
 import io.karpfen.dsl.reader.kstates.KstatesReader
+import io.karpfen.io.karpfen.exec.LruResultCache
+import io.karpfen.io.karpfen.exec.ResultCache
 import io.karpfen.io.karpfen.features.Feature
 import io.karpfen.io.karpfen.features.FeatureManager
 import io.karpfen.io.karpfen.messages.EventBus
@@ -36,6 +38,8 @@ import kotlin.reflect.KClass
  * @property definitions the KStates texts of the attachable state machines that `behaves after` names.
  * @property features the features that are on, besides TickByTick, which the [TickDriver] switches on.
  * @property eventTtlMs the time to live of the events on the bus; 0 keeps events until they are consumed.
+ * @property resultCaching whether the engine answers a code text it ran in Python before from a result cache with the
+ *   bounds that `application.conf` of the runtime ships. Off by default, so a benchmark measures the calls of Python.
  */
 class Scenario(
     private val metamodel: String,
@@ -43,7 +47,8 @@ class Scenario(
     private val attached: Map<String, String>,
     private val definitions: List<String> = emptyList(),
     private val features: List<KClass<out Feature>> = emptyList(),
-    private val eventTtlMs: Long = 0L
+    private val eventTtlMs: Long = 0L,
+    private val resultCaching: Boolean = false
 ) {
 
     /**
@@ -62,10 +67,17 @@ class Scenario(
             eventBus = EventBus(eventTtlMs),
             traceLogger = EngineTraceLogger("benchmark", logFilePath = null, consoleOutput = false),
             featureManager = featureManager,
-            stateMachineDefinitions = definitions.map { stateMachine(it, "definition") }.associateBy { it.name!! }
+            stateMachineDefinitions = definitions.map { stateMachine(it, "definition") }.associateBy { it.name!! },
+            resultCache = if (resultCaching) LruResultCache(CACHE_ENTRIES, CACHE_BYTES) else ResultCache.NONE
         )
     }
 
     private fun stateMachine(text: String, source: String) =
         KstatesReader().read(text.trimIndent()).modelOrThrow("benchmark state machine of $source")
+
+    private companion object {
+        /** The bounds of the result cache in the `application.conf` of the runtime. */
+        const val CACHE_ENTRIES = 10_000
+        const val CACHE_BYTES = 64L * 1024 * 1024
+    }
 }

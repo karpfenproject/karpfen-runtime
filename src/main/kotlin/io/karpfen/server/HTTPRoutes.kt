@@ -117,6 +117,20 @@ object HTTPRoutes {
                 }
             }
 
+            // Switch the result cache of an environment on or off before its activation.
+            post("/setResultCaching") {
+                try {
+                    val envKey = call.request.queryParameters["envKey"]
+                        ?: throw IllegalArgumentException("Missing required parameter: envKey")
+                    val enabled = call.request.queryParameters["enabled"]?.toBooleanStrictOrNull()
+                        ?: throw IllegalArgumentException("Missing or invalid required parameter: enabled")
+                    APIService.updateResultCaching(envKey, enabled)
+                    call.respond(HttpStatusCode.OK, "")
+                } catch (e: Exception) {
+                    respondWithError(call, e)
+                }
+            }
+
             // Force a running machine into a given leaf state and clear its pending events (manual resync).
             post("/setActiveState") {
                 try {

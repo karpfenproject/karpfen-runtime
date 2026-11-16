@@ -61,11 +61,13 @@ class FakeEnvironments : EnvironmentLookup {
  * @property phase the phase the environment reports.
  * @property snapshot the snapshot answered, or `null` to act as an environment whose tick never ends.
  * @property metrics the numbers answered by [metrics]; by default none, as before the first tick.
+ * @property resultCaching the answer of [ObservedEnvironment.resultCaching]; on by default, as in the runtime.
  */
 class FakeObservedEnvironment(
     override val phase: EnvironmentPhase,
     private val snapshot: ModelSnapshot?,
-    private val metrics: RunMetricsSnapshot = NO_METRICS
+    private val metrics: RunMetricsSnapshot = NO_METRICS,
+    override val resultCaching: Boolean = true
 ) : ObservedEnvironment {
 
     /** The timeouts of every snapshot request, in request order. */

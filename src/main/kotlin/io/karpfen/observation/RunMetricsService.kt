@@ -47,7 +47,7 @@ class RunMetricsService(private val environments: EnvironmentLookup) {
         }
         val environment = environments.observed(envKey)
             ?: throw IllegalStateException("Environment with key $envKey is not active")
-        return RunMetricsAnswer(envKey, environment.phase, environment.metrics())
+        return RunMetricsAnswer(envKey, environment.phase, environment.metrics(), environment.resultCaching)
     }
 }
 
@@ -57,17 +57,19 @@ class RunMetricsService(private val environments: EnvironmentLookup) {
  * @property environmentKey the environment the numbers belong to.
  * @property phase the phase of the environment when the numbers were read.
  * @property metrics the numbers of its engine.
+ * @property resultCaching whether its engine answers code it ran in Python before from its result cache.
  */
 data class RunMetricsAnswer(
     val environmentKey: String,
     val phase: EnvironmentPhase,
-    val metrics: RunMetricsSnapshot
+    val metrics: RunMetricsSnapshot,
+    val resultCaching: Boolean
 ) {
 
     /**
      * Writes the answer as one JSON object with the members `environmentKey`, `phase`, `ticks`, `tickMs`, `pythonMs`,
-     * `outsidePythonMs` and `calls` in this order and without whitespace. `tickMs` holds `total`, `mean`, `max` and
-     * `recent`; `calls` holds an object with `count` and `ms` for each way code runs. Durations are milliseconds, exact
+     * `outsidePythonMs`, `calls` and `resultCaching` in this order and without whitespace. `tickMs` holds `total`,
+     * `mean`, `max` and `recent`; `calls` holds an object with `count` and `ms` for each way code runs. Durations are milliseconds, exact
      * to the nanosecond, written as plain decimal numbers without trailing zeros.
      */
     fun toJson(): String {
@@ -86,7 +88,8 @@ data class RunMetricsAnswer(
             "\"recent\":[$recent]}," +
             "\"pythonMs\":${ms(metrics.pythonNanos)}," +
             "\"outsidePythonMs\":${ms(metrics.outsidePythonNanos)}," +
-            "\"calls\":{$calls}}"
+            "\"calls\":{$calls}," +
+            "\"resultCaching\":$resultCaching}"
     }
 
     private fun ms(nanos: Long): String = ms(BigDecimal.valueOf(nanos))

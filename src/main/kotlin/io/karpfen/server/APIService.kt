@@ -167,6 +167,18 @@ object APIService {
         EnvironmentHandler.getEnv(envKey)!!.tickDelayMS = tickDelayMS
     }
 
+    /**
+     * Switches the result cache of the environment [envKey] on or off. The engine takes the setting when the environment
+     * is activated, which is why the call is refused for an active environment.
+     *
+     * @throws IllegalArgumentException when the environment does not exist.
+     * @throws IllegalStateException when the environment is active.
+     */
+    fun updateResultCaching(envKey: String, enabled: Boolean) {
+        assertEnv(envKey)
+        EnvironmentHandler.getEnv(envKey)!!.resultCaching = enabled
+    }
+
     fun updateEventTtl(envKey: String, ttlMs: Long) {
         assertEnv(envKey)
         EnvironmentHandler.getEnv(envKey)!!.eventTtlMs = ttlMs

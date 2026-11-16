@@ -22,12 +22,16 @@ import org.openjdk.jmh.annotations.OperationsPerInvocation
 /**
  * Many state machine instances: a room with ten, fifty or two hundred lamps whose type `behaves after` the attachable
  * state machine `glowing`, so every lamp runs an instance of its own. Each instance looks at one condition in Python
- * in every tick. The score is the time of one tick of all instances.
+ * in every tick, with the result cache of the engine off or on. Since all lamps have the same watts, the instances
+ * share the results of the cache. The score is the time of one tick of all instances.
  */
 open class InstancesBenchmark : EngineBenchmark() {
 
     @Param("10", "50", "200")
     var lamps: Int = 10
+
+    @Param("off", "on")
+    var cache: String = "off"
 
     override fun scenario() = Scenario(
         METAMODEL,
@@ -37,7 +41,8 @@ open class InstancesBenchmark : EngineBenchmark() {
             }
         """,
         attached = emptyMap(),
-        definitions = listOf(GLOWING)
+        definitions = listOf(GLOWING),
+        resultCaching = cache == "on"
     )
 
     @Benchmark

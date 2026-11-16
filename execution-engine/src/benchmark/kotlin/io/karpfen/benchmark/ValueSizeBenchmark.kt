@@ -29,7 +29,8 @@ import org.openjdk.jmh.annotations.OperationsPerInvocation
  * - `manyObjects`: a wing whose `$(wing)` reaches 200 lamps with a bulb each.
  *
  * The code measures the length of the text of the value, so Python reads all of it. With `plain` the code calls no
- * macro, with `macro` it also calls one. The score is the time of one tick.
+ * macro, with `macro` it also calls one. The result cache of the engine is off or on. The score is the time of one
+ * tick.
  */
 open class ValueSizeBenchmark : EngineBenchmark() {
 
@@ -38,6 +39,9 @@ open class ValueSizeBenchmark : EngineBenchmark() {
 
     @Param("plain", "macro")
     var way: String = "plain"
+
+    @Param("off", "on")
+    var cache: String = "off"
 
     override fun scenario(): Scenario {
         val path = when (value) {
@@ -49,7 +53,7 @@ open class ValueSizeBenchmark : EngineBenchmark() {
             else -> throw IllegalArgumentException("Unknown value: $value")
         }
         val code = if (way == "macro") "return len(str($path)) < @zero()" else "return len(str($path)) < 0"
-        return Scenario(METAMODEL, MODEL, mapOf("house" to house(code)))
+        return Scenario(METAMODEL, MODEL, mapOf("house" to house(code)), resultCaching = cache == "on")
     }
 
     @Benchmark
