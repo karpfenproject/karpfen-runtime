@@ -78,6 +78,9 @@ object EnvironmentHandler {
     /** The most memory in bytes the results of the cache of an environment may take, loaded from application.conf. */
     var resultCacheMaxBytes: Long = 64L * 1024 * 1024
 
+    /** Whether the code of new environments may start processes, loaded from application.conf. */
+    var allowProcessCalls: Boolean = false
+
     /** Creates an environment under [key] with the configured defaults, replacing any environment of that key. */
     fun createEnv(key: String): Environment {
         val env = newEnvironment(key)
@@ -113,6 +116,7 @@ object EnvironmentHandler {
             resultCaching = defaultResultCaching,
             resultCacheMaxEntries = resultCacheMaxEntries,
             resultCacheMaxBytes = resultCacheMaxBytes,
+            allowProcessCalls = allowProcessCalls,
             featureManager = FeatureManager()
         )
 

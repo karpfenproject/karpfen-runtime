@@ -69,6 +69,22 @@ class EnvironmentActivationTest {
     }
 
     @Test
+    fun `the engine of an environment refuses process calls unless the runtime allows them`() {
+        val refusing = CleaningRobotExample.createEnvironment()
+        APIService.runEnvironment(refusing)
+        assertFalse(assertNotNull(EnvironmentHandler.executionThreads[refusing]).engine.allowProcessCalls)
+
+        EnvironmentHandler.allowProcessCalls = true
+        try {
+            val allowing = CleaningRobotExample.createEnvironment()
+            APIService.runEnvironment(allowing)
+            assertTrue(assertNotNull(EnvironmentHandler.executionThreads[allowing]).engine.allowProcessCalls)
+        } finally {
+            EnvironmentHandler.allowProcessCalls = false
+        }
+    }
+
+    @Test
     fun `runEnvironment refuses state machines attached to objects missing from the model`() {
         val envKey = CleaningRobotExample.createEnvironment()
         APIService.receiveStateMachine(envKey, "ghost", CleaningRobotExample.idleStepMachine)

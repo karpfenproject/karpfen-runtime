@@ -33,6 +33,7 @@ fun main() {
         "[Main]   Result caching: ${config.engine.resultCaching} (at most ${config.engine.resultCacheMaxEntries} " +
             "results and ${config.engine.resultCacheMaxMegabytes} MB per environment)"
     )
+    println("[Main]   Process calls allowed: ${config.engine.allowProcessCalls}")
 
     // Apply engine tracing configuration
     if (config.engineTracing.enabled) {
@@ -48,6 +49,7 @@ fun main() {
     EnvironmentHandler.defaultResultCaching = config.engine.resultCaching
     EnvironmentHandler.resultCacheMaxEntries = config.engine.resultCacheMaxEntries
     EnvironmentHandler.resultCacheMaxBytes = config.engine.resultCacheMaxMegabytes * 1024 * 1024
+    EnvironmentHandler.allowProcessCalls = config.engine.allowProcessCalls
 
     val sessionManager = EnvironmentHandler.clientSessionManager
     val server = KtorServer(

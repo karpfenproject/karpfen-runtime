@@ -55,6 +55,11 @@ data class Environment(
     val resultCacheMaxEntries: Int = 10_000,
     /** The most memory, in bytes, the results of the cache of [resultCaching] may take. */
     val resultCacheMaxBytes: Long = 64L * 1024 * 1024,
+    /**
+     * True to let the code of the environment use the ways to start a process and the generic ways to run code, which
+     * its Python processes refuse otherwise. Taken from `engine.allowProcessCalls` in `application.conf`.
+     */
+    val allowProcessCalls: Boolean = false,
     val objectObservations: MutableList<Observation> = mutableListOf(),
     val domainListeners: MutableList<DomainListener> = mutableListOf(),
     /** The features of this environment, switched on and off through the feature routes and asked by its engine. */

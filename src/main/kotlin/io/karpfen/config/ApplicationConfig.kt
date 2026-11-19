@@ -58,7 +58,12 @@ data class EngineConfig(
     /** The most results the cache of one environment holds. */
     val resultCacheMaxEntries: Int = 10_000,
     /** The most memory, in megabytes, the results of the cache of one environment may take. */
-    val resultCacheMaxMegabytes: Long = 64
+    val resultCacheMaxMegabytes: Long = 64,
+    /**
+     * Whether code may use the ways to start a process, such as `subprocess` or `os.system`, and the generic ways to
+     * run code, such as `eval` and `__import__`. False by default, which refuses such code when it is about to run.
+     */
+    val allowProcessCalls: Boolean = false
 )
 
 data class ApplicationConfig(
@@ -106,6 +111,7 @@ data class ApplicationConfig(
             var resultCaching = true
             var resultCacheMaxEntries = 10_000
             var resultCacheMaxMegabytes = 64L
+            var allowProcessCalls = false
 
             // Simple parsing logic for the conf file
             content.lines().forEach { line ->
@@ -171,6 +177,9 @@ data class ApplicationConfig(
                     normalized.contains("resultCacheMaxMegabytes =") -> {
                         resultCacheMaxMegabytes = extractValue(normalized).toLongOrNull()?.takeIf { it > 0 } ?: 64L
                     }
+                    normalized.contains("allowProcessCalls =") -> {
+                        allowProcessCalls = extractValue(normalized).toBoolean()
+                    }
                 }
             }
 
@@ -190,7 +199,8 @@ data class ApplicationConfig(
                     eventConsumptionOnFire = eventConsumptionOnFire,
                     resultCaching = resultCaching,
                     resultCacheMaxEntries = resultCacheMaxEntries,
-                    resultCacheMaxMegabytes = resultCacheMaxMegabytes
+                    resultCacheMaxMegabytes = resultCacheMaxMegabytes,
+                    allowProcessCalls = allowProcessCalls
                 )
             )
         }

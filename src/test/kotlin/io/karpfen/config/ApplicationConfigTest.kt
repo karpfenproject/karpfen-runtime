@@ -21,8 +21,8 @@ import java.io.File
 import kotlin.test.assertEquals
 
 /**
- * The keys of the result cache in `application.conf`: their defaults, the values of the file of the repository, and
- * values that are no positive number.
+ * The keys of the result cache and of the process calls in `application.conf`: their defaults, the values of the file of
+ * the repository, and values that are no positive number.
  */
 class ApplicationConfigTest {
 
@@ -73,6 +73,25 @@ class ApplicationConfigTest {
         assertEquals(true, engine.resultCaching)
         assertEquals(10_000, engine.resultCacheMaxEntries)
         assertEquals(64L, engine.resultCacheMaxMegabytes)
+    }
+
+    @Test
+    fun `without the key process calls are refused`() {
+        assertEquals(false, load("engine {\n  defaultTickDelayMs = 5\n}").engine.allowProcessCalls)
+    }
+
+    @Test
+    fun `the key allows process calls, also between other keys of the engine`() {
+        val engine = load("engine {\n  resultCaching = false\n  allowProcessCalls   = true\n  defaultTickDelayMs = 5\n}").engine
+
+        assertEquals(true, engine.allowProcessCalls)
+        assertEquals(false, engine.resultCaching)
+        assertEquals(5, engine.defaultTickDelayMs)
+    }
+
+    @Test
+    fun `the file of the repository refuses process calls`() {
+        assertEquals(false, ApplicationConfig.loadFromFile("application.conf").engine.allowProcessCalls)
     }
 
     private fun load(text: String): ApplicationConfig {

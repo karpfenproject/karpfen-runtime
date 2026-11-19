@@ -120,7 +120,8 @@ class EnvironmentThread(
             LruResultCache(environment.resultCacheMaxEntries, environment.resultCacheMaxBytes)
         } else {
             ResultCache.NONE
-        }
+        },
+        allowProcessCalls = environment.allowProcessCalls
     )
 
     /**
