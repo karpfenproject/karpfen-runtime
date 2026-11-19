@@ -174,7 +174,7 @@ class PythonFailuresTest {
         assertEquals(41.0, processor.executeInlineMacro("x = $(watts)\nreturn x + 1", "number"))
         val dyingProcess = newPythonProcesses().single()
         val inline = assertFailsWith<PythonExecutionException> {
-            processor.executeInlineMacro("__import__(\"os\")._exit(3)\nreturn 1", "number")
+            processor.executeInlineMacro("import os\nos._exit(3)\nreturn 1", "number")
         }
         assertEquals("The Python process ended during the call", inline.message)
         PythonFixtures.await("the dead process is gone") { dyingProcess !in PythonFixtures.pythonProcesses() }

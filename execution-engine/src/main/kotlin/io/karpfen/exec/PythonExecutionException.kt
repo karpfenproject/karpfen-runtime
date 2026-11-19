@@ -16,10 +16,13 @@
 package io.karpfen.io.karpfen.exec
 
 /**
- * Code of an `EVAL` or a macro failed in Python: it raised an exception, did not compile, or its process ended during
- * the call. The message is what a modeler reads in the trace log and the console, so it is one line:
+ * Code of an `EVAL` or a macro failed in Python: it raised an exception, did not compile, was refused by the check of
+ * the process calls, or its process ended during the call. The message is what a modeler reads in the trace log and
+ * the console, so it is one line:
  * - `Python error: <type>: <message>` for an exception, the last line Python writes for it, such as
  *   `Python error: ZeroDivisionError: division by zero` or `Python error: SyntaxError: invalid syntax`;
+ * - the reason of the check for refused code, such as `Code may not use 'subprocess' (line 2). Process calls are
+ *   switched off; engine.allowProcessCalls = true in application.conf allows them.`;
  * - `The Python process ended during the call` for a persistent process that is gone.
  *
  * Action processing reports it as an error of the action, a condition takes it as false.

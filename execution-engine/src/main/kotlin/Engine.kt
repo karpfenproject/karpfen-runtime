@@ -105,6 +105,11 @@ class Engine(
      * Every instance consults it before it runs code in Python. [ResultCache.NONE], the default, stores nothing.
      */
     val resultCache: ResultCache = ResultCache.NONE,
+    /**
+     * True to let code use the ways to start a process and the generic ways to run code that the Python processes of
+     * the engine otherwise refuse; see [PersistentPythonSession.startPython]. False by default.
+     */
+    val allowProcessCalls: Boolean = false,
 ) {
 
     /** Parses incoming event payloads into the runtime object model against [eventMetamodel]. */
@@ -223,9 +228,11 @@ class Engine(
     /**
      * The Python processes of the environment. Every state machine instance runs its code in them, so their number
      * follows the calls that run at the same time and not the number of instances; see [PythonSessionPool]. They end
-     * with the engine in [close].
+     * with the engine in [close]. They refuse code that uses a way to start a process unless [allowProcessCalls] is true.
      */
-    private val pythonSessions = PythonSessionPool(::PersistentPythonSession)
+    private val pythonSessions = PythonSessionPool {
+        PersistentPythonSession { PersistentPythonSession.startPython(allowProcessCalls) }
+    }
 
     /** The owner of the state machine instances; see [StateMachineLifecycle]. */
     private val lifecycle = StateMachineLifecycle(

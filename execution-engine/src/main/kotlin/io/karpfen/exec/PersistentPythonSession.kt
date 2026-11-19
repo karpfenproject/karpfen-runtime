@@ -28,8 +28,8 @@ import java.util.concurrent.TimeUnit
  * base64, runs the code with `exec` in a fresh dictionary of globals and answers with three lines:
  *
  * 1. `__SENTINEL__OK` when the code left a result, `__SENTINEL__NONE` when it left none, `__SENTINEL__ERROR` when it
- *    failed;
- * 2. the result as text, or the last line of the error, encoded in base64 (empty for `NONE`);
+ *    failed, `__SENTINEL__REFUSED` when the check of the process calls refused it;
+ * 2. the result as text, the last line of the error or the refusal, encoded in base64 (empty for `NONE`);
  * 3. everything the code wrote to `sys.stdout` and `sys.stderr` during the call, encoded in base64.
  *
  * The result is the value the code assigns to the global `__karpfen_result__`, which is the last line of the code that
@@ -54,6 +54,11 @@ import java.util.concurrent.TimeUnit
  * state machine sends the same text again and again when its values do not change and the result cache is off.
  * Running a kept compiled form is the same as compiling the text again, except that a warning of the compiler, such as
  * a `SyntaxWarning`, comes only with the call that compiled the text.
+ *
+ * Unless the process was started with `allowProcessCalls` (see [startPython]), the loop checks a code text that it has
+ * not kept compiled with [PROCESS_CALL_CHECK] before it compiles it. A refused text is neither compiled nor kept, and
+ * nothing of it runs. The answer is REFUSED with the reason, and the process goes on. Since only a text that passed is
+ * kept, a kept text is not checked again.
  *
  * An exception of any kind in the code, `SystemExit` included, is answered with ERROR and the last line of Python's text
  * for it, such as `ZeroDivisionError: division by zero`, and the process goes on.
@@ -84,9 +89,9 @@ import java.util.concurrent.TimeUnit
  * [PythonSessionPool] gives threads that call at the same time a session each.
  *
  * @property start starts the process with the loop; by default Python with [LOOP], unbuffered and with UTF-8 for its
- *   streams. Tests of the handling of the process on the Kotlin side pass a process that answers from fixed text.
+ *   streams, which refuses process calls. Tests of the handling of the process on the Kotlin side pass a process that answers from fixed text.
  */
-class PersistentPythonSession(private val start: () -> Process = ::startPython) : PythonSession {
+class PersistentPythonSession(private val start: () -> Process = { startPython() }) : PythonSession {
 
     @Volatile
     private var process: Process? = null
@@ -145,6 +150,7 @@ class PersistentPythonSession(private val start: () -> Process = ::startPython) 
             "OK" -> PythonAnswer(text, printed)
             "NONE" -> PythonAnswer(null, printed)
             "ERROR" -> PythonAnswer(null, printed, error = text.trim())
+            "REFUSED" -> PythonAnswer(null, printed, refusal = text.trim())
             else -> throw PythonExecutionException("The Python process answered outside the protocol: $sentinel")
         }
     }
@@ -221,9 +227,15 @@ class PersistentPythonSession(private val start: () -> Process = ::startPython) 
 
     companion object {
 
-        /** Starts Python with the loop of [LOOP], unbuffered and with UTF-8 for its streams. */
-        fun startPython(): Process {
-            val processBuilder = ProcessBuilder(PythonCommand.find(), "-u", "-c", LOOP)
+        /**
+         * Starts Python with the loop of [LOOP], unbuffered and with UTF-8 for its streams.
+         *
+         * @param allowProcessCalls true to run every code text without the check of [PROCESS_CALL_CHECK]; false, the
+         *   default, to refuse code that uses a way to start a process.
+         */
+        fun startPython(allowProcessCalls: Boolean = false): Process {
+            val mode = if (allowProcessCalls) ALLOW_PROCESS_CALLS else REFUSE_PROCESS_CALLS
+            val processBuilder = ProcessBuilder(PythonCommand.find(), "-u", "-c", LOOP, mode)
             processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD)
             processBuilder.environment()["PYTHONIOENCODING"] = "utf-8"
             processBuilder.environment()["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -240,9 +252,187 @@ class PersistentPythonSession(private val start: () -> Process = ::startPython) 
         /** The longest encoded code text, in characters, whose compiled form the loop keeps. */
         private const val MAX_COMPILED_LINE = 16_384
 
+        /** The argument of the loop that lets every code text run without the check of [PROCESS_CALL_CHECK]. */
+        private const val ALLOW_PROCESS_CALLS = "allow-process-calls"
+
+        /** The argument of the loop that checks every new code text with [PROCESS_CALL_CHECK]; any other does too. */
+        private const val REFUSE_PROCESS_CALLS = "refuse-process-calls"
+
+        /**
+         * The Python of the check that refuses code which can start a process, part of [LOOP].
+         *
+         * `process_call_check(ast, warnings, compile)` returns a function that takes a code text and gives the text of
+         * the refusal, or None when the code may run. It parses the text into its syntax tree and walks the tree, so
+         * the text inside string literals, where the runtime writes the values of the model, never counts, while the
+         * expressions inside an f-string do. A text that does not parse gives None, and compiling it then raises the
+         * usual `SyntaxError`. The warnings of the parser are ignored, because compiling the text gives them again.
+         *
+         * Refused are:
+         * - an `import` or `from ... import` of a module of `forbidden_modules` or of a submodule of one, under any
+         *   name;
+         * - a process function of `os`, `posix` or `nt` (`system`, `popen`, `startfile` and every name that begins with
+         *   `exec`, `spawn`, `fork` or `posix_spawn`), reached as an attribute of the module, of another name bound to
+         *   it by `import ... as` or by an assignment, of an attribute named like the module (`os.path.os`), through
+         *   `getattr` with the name as a string literal, or imported by name or with `*`;
+         * - an attribute of `forbidden_attributes` of any object, also through `getattr` with a string literal, and an
+         *   import of such a name;
+         * - every use of a name of `forbidden_names`, and a subscript with the string literal `'__builtins__'`.
+         *
+         * The refusal names the first use in the code, by line and column, and its line. Since the runtime wraps the
+         * code of an `EVAL` or a directly called macro in the function `__karpfen_main__` and every macro the code
+         * calls in a function named after the macro, a line inside such a function is counted from the line after its
+         * `def`, which is the first line of the code of the `EVAL` or the macro. A line in a macro also names the
+         * macro.
+         *
+         * The function holds every name it needs, the classes of `ast` included, in its own variables, so code that
+         * changes the module `ast` or `warnings` in one call does not change the check of a later call.
+         */
+        private val PROCESS_CALL_CHECK = """
+def process_call_check(ast, warnings, compile):
+    forbidden_modules = (
+        'subprocess', '_posixsubprocess', '_winapi', 'pty', 'multiprocessing', 'pip', 'ensurepip', 'importlib',
+        'runpy', 'ctypes', '_ctypes', 'builtins', 'code', 'codeop', 'distutils',
+    )
+    os_modules = ('os', 'posix', 'nt')
+    os_functions = ('system', 'popen', 'startfile')
+    os_function_prefixes = ('exec', 'spawn', 'fork', 'posix_spawn')
+    forbidden_attributes = (
+        'subprocess', '_posixsubprocess', 'pty', 'multiprocessing', 'create_subprocess_exec',
+        'create_subprocess_shell', 'subprocess_exec', 'subprocess_shell', '__builtins__', '__globals__',
+        '__subclasses__',
+    )
+    forbidden_names = ('eval', 'exec', 'compile', '__import__', '__builtins__')
+    only_tree = ast.PyCF_ONLY_AST
+    walk = ast.walk
+    Import, ImportFrom, Name, Attribute = ast.Import, ast.ImportFrom, ast.Name, ast.Attribute
+    Call, Subscript, Constant = ast.Call, ast.Subscript, ast.Constant
+    Assign, NamedExpr = ast.Assign, ast.NamedExpr
+    FunctionDef, AsyncFunctionDef = ast.FunctionDef, ast.AsyncFunctionDef
+    catch_warnings, simplefilter = warnings.catch_warnings, warnings.simplefilter
+
+    def forbidden_module(name):
+        for module in forbidden_modules:
+            if name == module or name.startswith(module + '.'):
+                return module
+        return None
+
+    def is_os_function(name):
+        return name in os_functions or name.startswith(os_function_prefixes)
+
+    def os_module(node, aliases):
+        if isinstance(node, Name):
+            return aliases.get(node.id)
+        if isinstance(node, Attribute) and node.attr in os_modules:
+            return node.attr
+        return None
+
+    def os_aliases(tree):
+        aliases = {module: module for module in os_modules}
+        bindings = []
+        for node in walk(tree):
+            if isinstance(node, Import):
+                for alias in node.names:
+                    if alias.name in os_modules and alias.asname:
+                        aliases[alias.asname] = alias.name
+            elif isinstance(node, Assign):
+                bindings.extend((target, node.value) for target in node.targets)
+            elif isinstance(node, NamedExpr):
+                bindings.append((node.target, node.value))
+        grown = True
+        while grown:
+            grown = False
+            for target, value in bindings:
+                module = os_module(value, aliases)
+                if module is not None and isinstance(target, Name) and target.id not in aliases:
+                    aliases[target.id] = module
+                    grown = True
+        return aliases
+
+    def attribute_use(owner, name, aliases):
+        module = os_module(owner, aliases)
+        if module is not None and is_os_function(name):
+            return module + '.' + name
+        if name in forbidden_attributes:
+            return name
+        return None
+
+    def import_use(node):
+        for alias in node.names:
+            module = forbidden_module(alias.name)
+            if module is not None:
+                return module
+        return None
+
+    def import_from_use(node):
+        module = forbidden_module(node.module or '')
+        if module is not None:
+            return module
+        for alias in node.names:
+            if node.module in os_modules and (alias.name == '*' or is_os_function(alias.name)):
+                return node.module + '.' + alias.name
+            if alias.name in forbidden_attributes or alias.name in forbidden_names:
+                return alias.name
+        return None
+
+    def getattr_use(node, aliases):
+        if isinstance(node.func, Name) and node.func.id == 'getattr' and len(node.args) >= 2:
+            name = node.args[1]
+            if isinstance(name, Constant) and isinstance(name.value, str):
+                return attribute_use(node.args[0], name.value, aliases)
+        return None
+
+    def node_use(node, aliases):
+        if isinstance(node, Import):
+            return import_use(node)
+        if isinstance(node, ImportFrom):
+            return import_from_use(node)
+        if isinstance(node, Name):
+            return node.id if node.id in forbidden_names else None
+        if isinstance(node, Attribute):
+            return attribute_use(node.value, node.attr, aliases)
+        if isinstance(node, Call):
+            return getattr_use(node, aliases)
+        if isinstance(node, Subscript):
+            key = node.slice
+            if isinstance(key, Constant) and key.value == '__builtins__':
+                return '__builtins__'
+        return None
+
+    def place(statement, line):
+        if isinstance(statement, (FunctionDef, AsyncFunctionDef)):
+            line = line - statement.lineno
+            if statement.name != '__karpfen_main__':
+                return "line %d of macro '%s'" % (line, statement.name)
+        return 'line %d' % line
+
+    def refusal_of(source):
+        try:
+            with catch_warnings():
+                simplefilter('ignore')
+                tree = compile(source, '<string>', 'exec', only_tree)
+        except (SyntaxError, ValueError):
+            return None
+        aliases = os_aliases(tree)
+        for statement in tree.body:
+            found = []
+            for node in walk(statement):
+                use = node_use(node, aliases)
+                if use is not None:
+                    found.append((node.lineno, node.col_offset, use))
+            if found:
+                line, column, use = min(found)
+                return (
+                    "Code may not use '%s' (%s). Process calls are switched off; "
+                    "engine.allowProcessCalls = true in application.conf allows them." % (use, place(statement, line))
+                )
+        return None
+
+    return refusal_of
+""".trimIndent()
+
         /** The loop the process runs; see the class description for its protocol. */
         private val LOOP = """
-import sys, os, base64, io, json, traceback, builtins
+import sys, os, base64, io, json, traceback, builtins, ast, warnings
 
 def __karpfen_loop__():
     def encode(text):
@@ -277,6 +467,16 @@ def __karpfen_loop__():
     os.dup2(empty, 0)
     os.close(empty)
     os.dup2(2, 1)
+${PROCESS_CALL_CHECK.prependIndent("    ")}
+
+    def no_refusal(source):
+        return None
+
+    if sys.argv[1:] == ['$ALLOW_PROCESS_CALLS']:
+        refusal_of = no_refusal
+    else:
+        refusal_of = process_call_check(ast, warnings, compile)
+
     stdout, stderr = CallOutput(), CallOutput()
     sys.stdout, sys.stderr = stdout, stderr
     compiled_texts = {}
@@ -293,17 +493,24 @@ def __karpfen_loop__():
         CallOutput.call = printed
         try:
             compiled = compiled_texts.get(line)
+            refusal = None
             if compiled is None:
-                compiled = compile(base64.b64decode(line).decode('utf-8'), '<string>', 'exec')
-                if len(line) <= $MAX_COMPILED_LINE:
-                    if len(compiled_texts) >= $MAX_COMPILED:
-                        compiled_texts.clear()
-                    compiled_texts[line] = compiled
-            namespace = {'__name__': '__main__', '__builtins__': builtins}
-            exec(compiled, namespace)
-            result = namespace.get('__karpfen_result__')
-            if result is not None:
-                status, text = 'OK', as_text(result)
+                source = base64.b64decode(line).decode('utf-8')
+                refusal = refusal_of(source)
+                if refusal is None:
+                    compiled = compile(source, '<string>', 'exec')
+                    if len(line) <= $MAX_COMPILED_LINE:
+                        if len(compiled_texts) >= $MAX_COMPILED:
+                            compiled_texts.clear()
+                        compiled_texts[line] = compiled
+            if refusal is not None:
+                status, text = 'REFUSED', refusal
+            else:
+                namespace = {'__name__': '__main__', '__builtins__': builtins}
+                exec(compiled, namespace)
+                result = namespace.get('__karpfen_result__')
+                if result is not None:
+                    status, text = 'OK', as_text(result)
         except BaseException as e:
             lines = [l.strip() for l in traceback.format_exception_only(type(e), e) if l.strip()]
             status, text = 'ERROR', lines[-1] if lines else type(e).__name__

@@ -37,9 +37,13 @@ class PersistentPythonSessionTest {
 
     private val session = PersistentPythonSession()
 
+    /** A session whose code may start child processes, for the tests of what a child process finds. */
+    private val allowing = PersistentPythonSession { PersistentPythonSession.startPython(allowProcessCalls = true) }
+
     @AfterEach
     fun tearDown() {
         session.close()
+        allowing.close()
     }
 
     // ---- Results ----
@@ -142,7 +146,7 @@ class PersistentPythonSessionTest {
         val answers = runBounded {
             listOf(
                 session.execute("__karpfen_result__ = input()"),
-                session.execute(
+                allowing.execute(
                     "import subprocess, sys\n" +
                         "child = subprocess.run([sys.executable, '-c', 'import sys; print(len(sys.stdin.read()))'], " +
                         "capture_output=True, text=True)\n" +
@@ -231,8 +235,8 @@ class PersistentPythonSessionTest {
         val code = "import os, subprocess, sys\nos.write(1, b'raw\\n')\n" +
             "subprocess.run([sys.executable, '-c', 'print(1)'])\n__karpfen_result__ = 3"
 
-        assertEquals(PythonAnswer("3", ""), session.execute(code))
-        assertEquals("4", session.execute("__karpfen_result__ = 4").result)
+        assertEquals(PythonAnswer("3", ""), allowing.execute(code))
+        assertEquals("4", allowing.execute("__karpfen_result__ = 4").result)
     }
 
     @Test

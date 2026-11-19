@@ -190,11 +190,13 @@ class MacroProcessor(
      * Runs the complete code text [code] in a Python process of [pythonSessions] and returns its result as text, or
      * null when it left none. What the code printed goes to [output], also when the code failed.
      *
-     * @throws PythonExecutionException when the code fails or its process ends during the call.
+     * @throws PythonExecutionException when the code fails, is refused by the check of the process calls, or its process
+     *   ends during the call.
      */
     fun runPython(code: String): String? {
         val answer = pythonSessions.execute(code)
         if (answer.printed.isNotEmpty()) output.printed(currentContextModelElement, answer.printed)
+        answer.refusal?.let { throw PythonExecutionException(it) }
         answer.error?.let { throw PythonExecutionException.raised(it) }
         return answer.result
     }

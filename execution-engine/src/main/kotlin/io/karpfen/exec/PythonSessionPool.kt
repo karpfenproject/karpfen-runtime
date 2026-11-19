@@ -21,9 +21,16 @@ package io.karpfen.io.karpfen.exec
  * @property result the result as text, or null when the code left no result.
  * @property printed everything the code wrote to stdout and stderr during the call, empty when it wrote nothing.
  * @property error the last line of the Python error when the code failed, such as `ZeroDivisionError: division by
- *   zero`, or null when it succeeded.
+ *   zero`, or null when it succeeded or was refused.
+ * @property refusal the reason why the check of the process calls refused the code before it ran, such as
+ *   `Code may not use 'subprocess' (line 2). ...`, or null when the code ran.
  */
-data class PythonAnswer(val result: String?, val printed: String, val error: String? = null)
+data class PythonAnswer(
+    val result: String?,
+    val printed: String,
+    val error: String? = null,
+    val refusal: String? = null
+)
 
 /**
  * A Python process that runs one piece of code at a time and stays open between calls.
