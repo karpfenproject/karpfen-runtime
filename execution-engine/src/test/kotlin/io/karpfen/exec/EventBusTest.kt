@@ -277,5 +277,25 @@ class EventBusTest {
         // Just assert no exception; count is non-deterministic due to race
         assertTrue(readCount >= 0)
     }
+
+    @Test
+    fun `marking the live events adds every given id to every live event of every domain, and to no other event`() {
+        var clock = 1_000L
+        val bus = EventBus { clock }
+        val here = Event("a", "go", timestamp = clock).also { bus.publish(it) }
+        val there = Event("b", "go", timestamp = clock).also { bus.publish(it) }
+        val expired = Event("a", "old", timestamp = clock, ttlMs = 10L).also { bus.publish(it) }
+        clock += 100
+
+        bus.markLiveEventsProcessedBy(setOf("branch", "join"))
+        val later = Event("a", "go", timestamp = clock).also { bus.publish(it) }
+
+        listOf(here, there).forEach { event ->
+            assertTrue(event.wasProcessedBy("branch") && event.wasProcessedBy("join"), "$event")
+        }
+        assertFalse(expired.wasProcessedBy("branch") || expired.wasProcessedBy("join"))
+        assertFalse(later.wasProcessedBy("branch") || later.wasProcessedBy("join"))
+        assertFalse(here.wasProcessedBy("other"))
+    }
 }
 

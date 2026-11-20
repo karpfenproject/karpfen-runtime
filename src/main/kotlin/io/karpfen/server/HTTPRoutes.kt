@@ -131,7 +131,7 @@ object HTTPRoutes {
                 }
             }
 
-            // Force a running machine into a given leaf state and clear its pending events (manual resync).
+            // Force a running machine into a given state (manual resync); see Engine.forceActiveState for the events.
             post("/setActiveState") {
                 try {
                     val envKey = call.request.queryParameters["envKey"]

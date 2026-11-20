@@ -286,15 +286,25 @@ class Engine(
     }
 
     /**
-     * Forces the state machine attached to [modelElementId] into the leaf state [leaf], dropping any
-     * pending events on its domain. The work is queued and executed on the engine thread at the next
-     * tick boundary (the contexts are not visible/safe off-thread). A pure SNAP: the target's
+     * Forces the state machine instance on the object [modelElementId] into the state [leaf]. The work is queued and
+     * executed on the engine thread at the next tick boundary (the contexts are not visible/safe off-thread). While the
+     * engine is stopped, that is the first tick after the next [start]. A pure SNAP: the target's
      * ENTRY/DO blocks are NOT re-run, so it does not publish further events. Unknown ids/states are
      * logged and ignored (the HTTP layer validates the state name up front for a clean error). A container state is
      * gone down into as by a transition (see [StateEntry]), so the instance rests on a state inside it.
      *
      * The forced state starts a new path: the paths the instance ran end, and its single new branch runs on the next
      * path number of the object. The `INITIAL_STATE` entry names both, as `ends` and `path`.
+     *
+     * The force removes no event and looks at no domain name. Every event that is on the bus when the engine applies
+     * the force counts as handled by the forced instance, on every domain, so none of them moves it out of the forced
+     * state; see [SMContext.newForcedBranch]. Every other instance sees these events as before. An event published
+     * after the force is offered to the forced instance as any event is. While the feature EventRecording records, the
+     * events it kept go onto the bus at the start of the tick before the force is applied, so they count as handled too.
+     *
+     * A tick that a breakpoint halted when the engine was stopped finishes after the next [start] and a resume, before
+     * the next tick boundary applies the force. The instances that had not stepped in that tick yet, the instance to be
+     * forced among them, step with the events that reached the bus meanwhile and can fire on them.
      */
     fun forceActiveState(modelElementId: String, leaf: String) {
         commandQueue.add { contexts ->
@@ -309,11 +319,8 @@ class Engine(
                 return@add
             }
             val newStack = stateEntry.restingStack(ctx, targetStack)
-            eventBus.clearDomain(modelElementId)
-            // Empty notEnteredSubstack => pure snap, no ENTRY/DO re-run; empty lineage is safe because
-            // the domain bucket was just cleared.
             val ended = ctx.pathList()
-            ctx.branches = mutableListOf(ctx.newBranch(newStack, mutableListOf(), null, emptySet()))
+            ctx.branches = mutableListOf(ctx.newForcedBranch(newStack))
             traceLogger?.log(
                 modelElementId,
                 EngineTraceLogger.TraceEventType.INITIAL_STATE,
@@ -453,22 +460,17 @@ class Engine(
     }
 
     /**
-     * Runs one tick inside the [tickGate]: the queued engine commands, the purge of expired events, for each state
-     * machine instance that has not ended its tick followed by its active-stack notification when the stack changed,
-     * and at the end the changes of instances the tick asked for ([StateMachineLifecycle.applyChanges]). Every model
-     * write and every push of the tick happens here, on the engine thread or on the threads of branches. Whether
-     * [TrueParallelFeature] is on is read once at the start, so a switch takes effect at a tick boundary; at the end the
-     * threads of branches that no longer step in parallel end.
+     * Runs one tick inside the [tickGate]: the events that EventRecording kept and EventInjection has due go onto the
+     * bus, then the queued engine commands run (so a forced state counts these events as handled), then the purge of
+     * expired events, for each state machine instance that has not ended its tick followed by its active-stack
+     * notification when the stack changed, and at the end the changes of instances the tick asked for
+     * ([StateMachineLifecycle.applyChanges]). Every model write and every push of the tick happens here, on the engine
+     * thread or on the threads of branches. Whether [TrueParallelFeature] is on is read once at the start, so a switch
+     * takes effect at a tick boundary; at the end the threads of branches that no longer step in parallel end.
      */
     private fun runTick(tickCount: Long) {
         val trueParallel = featureManager.getActiveFeatureOrNull<TrueParallelFeature>() != null
         val contexts = lifecycle.instances
-
-        // Run queued engine-thread commands (e.g. forced resync) before ticking.
-        while (true) {
-            val cmd = commandQueue.poll() ?: break
-            cmd(contexts)
-        }
 
         featureManager.executeIfPresent<EventRecordingFeature> { feature ->
             //Record all events queued during this tick
@@ -478,6 +480,12 @@ class Engine(
         featureManager.executeIfPresent<EventInjectionFeature> { feature ->
             //Inject Events recorded for this tick (or earlier) and consume them
             feature.evalEventInjection(tickCount, eventProcessor)
+        }
+
+        // Run queued engine-thread commands (e.g. forced resync) after the events of the features are on the bus.
+        while (true) {
+            val cmd = commandQueue.poll() ?: break
+            cmd(contexts)
         }
 
         featureManager.executeIfPresent<TickLimitFeature> { feature ->

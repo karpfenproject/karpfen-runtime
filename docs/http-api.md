@@ -375,7 +375,8 @@ to the run is explained in [3.1.11 Forcing a state](reference/3.1-execution-sema
 Before `runEnvironment` the call answers 409 with `Environment with key <envKey> is not active`. An object without a
 state machine instance gives 400 with `No state machine for model element '<modelElement>' in environment <envKey>`.
 A state that the instance does not have gives 400 with `Unknown state '<state>' for model element '<modelElement>'`.
-While the environment is stopped, the forced state takes effect at the first tick after the start.
+While the environment is stopped, the forced state takes effect at the first tick after the start. The force removes
+no event. The events on the bus when it takes effect count as handled by the forced state machine and by no other.
 
 A state inside a container state is named with its qualified name, such as `self test/lit`. Forcing a container
 state goes down into its fragment. Qualified names are explained in

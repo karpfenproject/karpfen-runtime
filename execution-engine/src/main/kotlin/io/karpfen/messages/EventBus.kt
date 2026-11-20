@@ -238,12 +238,17 @@ class EventBus(
     // ---- Maintenance ------------------------------------------------------
 
     /**
-     * Removes ALL events from a single [domain] bucket regardless of TTL/processing.
-     * Used by the force-set/resync API to drop pending events for one machine so they
-     * cannot immediately transition it away from the snapped state.
+     * Marks every event of every domain that has not expired as processed by each of [engineIds], whatever its domain
+     * and name. Each bucket is gone through once under its lock, which adds all [engineIds] to an event together, so an
+     * event that is published meanwhile is marked by all of them or by none. An event published after the bucket was
+     * gone through is not marked. Another reader sees the marked events as before, because only [engineIds] are added
+     * to their markers.
      */
-    fun clearDomain(domain: String) {
-        buckets[domain]?.clear()
+    fun markLiveEventsProcessedBy(engineIds: Set<String>) {
+        val now = now()
+        for (bucket in buckets.values) {
+            bucket.forEach { event -> if (!event.isExpired(now)) engineIds.forEach(event::markProcessedBy) }
+        }
     }
 
     /**
@@ -371,12 +376,6 @@ private class Bucket {
     @Synchronized
     fun removeIf(drop: (Event) -> Boolean) {
         entries.removeAll { drop(it.event) }
-    }
-
-    @Synchronized
-    fun clear() {
-        entries.clear()
-        sizeAtLastSweep = 0
     }
 
     /** The index of the first entry whose number is greater than [seq]. */

@@ -112,7 +112,7 @@ class EventLineageTest {
     }
 
     @Test
-    fun `events of other names, expired events and a cleared domain do not confuse a reader`() {
+    fun `events of other names and expired events do not confuse a reader`() {
         val reader = EventProcessor("p0", bus)
         bus.publish(Event("d", "other", timestamp = clock))
         val expiring = Event("d", "go", timestamp = clock, ttlMs = 100L).also { bus.publish(it) }
@@ -123,10 +123,25 @@ class EventLineageTest {
         bus.purgeExpired()
         val fresh = Event("d", "go", timestamp = clock).also { bus.publish(it) }
         assertEquals(listOf(fresh), reader.getEvents("d", "go"))
+    }
 
-        bus.clearDomain("d")
-        assertEquals(emptyList<Event>(), reader.getEvents("d", "go"))
-        val again = Event("d", "go", timestamp = clock).also { bus.publish(it) }
-        assertEquals(listOf(again), reader.getEvents("d", "go"))
+    @Test
+    fun `a processor whose id marked all live events skips them on every domain, while others and later events stay apart`() {
+        val other = EventProcessor("o0", bus)
+        val here = publish("go")
+        val elsewhere = Event("e", "go", timestamp = clock).also { bus.publish(it) }
+        val forced = EventProcessor("p0", bus)
+        bus.markLiveEventsProcessedBy(setOf(forced.engineId))
+
+        assertEquals(emptyList<Event>(), forced.getEvents("d", "go"))
+        assertEquals(emptyList<Event>(), forced.getEvents("e", "go"))
+        assertEquals(listOf(here), other.getEvents("d", "go"))
+        assertEquals(listOf(elsewhere), other.getEvents("e", "go"))
+
+        clock++
+        val later = publish("go")
+        assertEquals(listOf(later), forced.getEvents("d", "go"))
+        val child = EventProcessor("p1", bus, forced.lineage())
+        assertEquals(listOf(later), child.getEvents("d", "go"), "a descendant skips what the processor handled")
     }
 }

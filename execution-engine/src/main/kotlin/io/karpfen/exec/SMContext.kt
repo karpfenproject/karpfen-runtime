@@ -112,4 +112,21 @@ class SMContext(
         val processor = EventProcessor("$branchIdBase-p$path", eventBus, inheritedIds)
         return Branch(processor, path, stateStack, notEnteredSubstack, lastFiredTransition)
     }
+
+    /**
+     * Creates the single branch of a forced state: a new branch on [stateStack] with an empty lineage, whose ENTRY
+     * blocks count as run and which has fired no transition yet.
+     *
+     * Every event that is on the bus at this moment, on every domain, counts as handled by the new branch and by the
+     * [joinEventProcessor]. Both ids are added to each event in one pass (see [EventBus.markLiveEventsProcessedBy]),
+     * so none of these events can fire a transition, a split or a join of this instance. The branches that later splits
+     * and joins create from the new branch inherit its lineage and count these events as handled too. An event
+     * published afterwards is offered to the instance as any event is. Other instances see all events as before, and no
+     * event is removed.
+     */
+    fun newForcedBranch(stateStack: List<String>): Branch {
+        val branch = newBranch(stateStack, mutableListOf(), null, emptySet())
+        eventBus.markLiveEventsProcessedBy(setOf(branch.eventProcessor.engineId, joinEventProcessor.engineId))
+        return branch
+    }
 }

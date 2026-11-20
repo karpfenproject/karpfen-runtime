@@ -185,8 +185,9 @@ object APIService {
     }
 
     /**
-     * Forces the state machine [modelElement] of a RUNNING environment into the leaf [state] and clears
-     * its pending events (a manual "resync"). Unlike most setters this requires the env to be active. [state] is a name
+     * Forces the state machine [modelElement] of a RUNNING environment into the leaf [state] (a manual "resync"). The
+     * events on the bus when the engine applies the force count as handled by the forced state machine; see
+     * [io.karpfen.Engine.forceActiveState]. Unlike most setters this requires the env to be active. [state] is a name
      * of the flattened state machine, `<container>/<state>` for a state inside a container state; a container state
      * itself is gone down into as by a transition.
      */

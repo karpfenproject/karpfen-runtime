@@ -95,9 +95,6 @@ class EnvironmentThread(
     @Volatile
     private var runnerEndedOnItsOwn = false
 
-    /** The time of the latest [stop] that froze the environment, for the events that clients sent while it was frozen. */
-    private var frozenAt: Long = 0L
-
     /** True once [dispose] began; from then on [launch] and [stop] do nothing and events from clients are dropped. */
     @Volatile
     private var disposed = false
@@ -227,12 +224,11 @@ class EnvironmentThread(
     }
 
     /**
-     * Forces one state machine into [leaf], clearing its pending events. Drops any queued external
-     * events for the whole env first (so an in-flight event can't fight the snap), then dispatches the
-     * stack change onto the engine thread. Used by the manual "resync" API.
+     * Forces the state machine instance on [modelElement] into [leaf] at the next tick boundary; see
+     * [Engine.forceActiveState]. No event is removed: the events that wait in the queue of the runner reach the bus as
+     * every other event does. Used by the route `setActiveState`.
      */
     fun forceActiveState(modelElement: String, leaf: String) {
-        incomingExternalEvents.clear()
         engine.forceActiveState(modelElement, leaf)
     }
 
@@ -246,8 +242,10 @@ class EnvironmentThread(
      *   exists (so a stop can no longer be overwritten by the runner's first line), a new non-daemon runner named
      *   `EnvironmentThread-<key>` is started, and the run state becomes running once both have started (see [phase]);
      * - stopped, or running without a live runner: the same, but the engine continues the frozen run with the next
-     *   tick, the events that clients sent while the environment was stopped get back the time it was stopped, and
-     *   after a stop every connected client is told through `engineStatus` with the phase `running`.
+     *   tick, and after a stop every connected client is told through `engineStatus` with the phase `running`.
+     *
+     * When it starts or continues the engine, it first publishes the events that wait in the queue of the runner; see
+     * [publishWaitingEvents].
      *
      * A disposed environment starts nothing.
      *
@@ -264,10 +262,7 @@ class EnvironmentThread(
             return true
         }
         val continues = runState == RunState.STOPPED
-        if (continues) {
-            val thawedAt = System.currentTimeMillis()
-            incomingExternalEvents.forEach { it.creditFreeze(frozenAt, thawedAt) }
-        }
+        publishWaitingEvents()
         isRunning = true
         runnerEndedOnItsOwn = false
         engine.start()
@@ -278,6 +273,27 @@ class EnvironmentThread(
         runState = RunState.RUNNING
         if (continues) relay?.onPhaseChanged(EnvironmentPhase.RUNNING, engineStatus())
         return true
+    }
+
+    /**
+     * Publishes the events that wait in the queue of the runner, in the order in which they arrived: the events that
+     * clients sent before the first start, while the environment was stopped, or after its event loop ended on its own.
+     * It runs while no runner exists and before the engine starts, so each of them is handed to
+     * [Engine.receiveExternalEvent] before the engine goes on. That puts it on the bus, or, while the feature
+     * EventRecording records, into the queue of the feature, which puts it on the bus at the start of the next tick.
+     *
+     * A state forced before the start is applied at the next tick boundary, after these events are on the bus, so they
+     * count as handled by the forced instance; see [Engine.forceActiveState]. A tick that a breakpoint halted at the
+     * stop finishes before that boundary, and its remaining steps see these events.
+     *
+     * An event that enters a frozen bus is credited, when the start of the engine thaws the bus, with the frozen time
+     * after its arrival; see [EventBus.thaw]. An event that enters a bus that is not frozen, or the queue of
+     * EventRecording, gets no such credit.
+     */
+    private fun publishWaitingEvents() {
+        val waiting = mutableListOf<Event>()
+        incomingExternalEvents.drainTo(waiting)
+        waiting.forEach(engine::receiveExternalEvent)
     }
 
     /**
@@ -296,7 +312,6 @@ class EnvironmentThread(
         isRunning = false
         runner?.join(RUNNER_JOIN_MS)
         engine.stop()
-        frozenAt = System.currentTimeMillis()
         relay?.onPhaseChanged(EnvironmentPhase.STOPPED, engineStatus())
         return true
     }
